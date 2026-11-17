@@ -31,7 +31,7 @@ export async function sendEmail({ to, subject, text, html }) {
   }
 
   const socket = tls.connect({ host, port, servername: host });
-  socket.setTimeout(20_000, () => socket.destroy(new Error('SMTP connection timed out')));
+  socket.setTimeout(12_000, () => socket.destroy(new Error('SMTP connection timed out')));
   const lines = createInterface({ input: socket, crlfDelay: Infinity });
   const iterator = lines[Symbol.asyncIterator]();
 
