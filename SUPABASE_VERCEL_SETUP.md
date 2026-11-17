@@ -32,15 +32,22 @@ Set these values in `.env`:
 NODE_ENV=development
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_LEGACY_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_LEGACY_SERVICE_ROLE_KEY
 SUPABASE_DB_URL=postgresql://postgres.YOUR_PROJECT_REF:URL_ENCODED_PASSWORD@YOUR_POOLER_HOST:6543/postgres
 DB_POOL_MAX=5
 DB_SSL_REJECT_UNAUTHORIZED=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USER=your-sender@gmail.com
+SMTP_PASS=your-google-app-password
+SMTP_FROM_EMAIL=your-sender@gmail.com
+SMTP_FROM_NAME=Kestrel
 VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_LEGACY_ANON_KEY
 VITE_API_BASE_URL=/api
 ```
 
-`SUPABASE_DB_URL` is used by the server and migration script only. Never prefix it with `VITE_`.
+`SUPABASE_DB_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the SMTP credentials are server-only. Never prefix them with `VITE_` or expose them to the browser.
 
 Install and apply the schema:
 
