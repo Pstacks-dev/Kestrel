@@ -9,9 +9,10 @@ type Props = {
   projects: any[];
   runs: any[];
   setMessage: (message: string) => void;
+  message: string;
 };
 
-export default function ReleaseCenter({ api, accessToken, selectedProject, setSelectedProject, projects, runs, setMessage }: Props) {
+export default function ReleaseCenter({ api, accessToken, selectedProject, setSelectedProject, projects, runs, setMessage, message }: Props) {
   const [targets, setTargets] = useState<any[]>([]);
   const [deployments, setDeployments] = useState<any[]>([]);
   const [provider, setProvider] = useState('vercel');
@@ -162,6 +163,7 @@ export default function ReleaseCenter({ api, accessToken, selectedProject, setSe
           </div>) : <div className="empty-state"><ShieldCheck size={22} /><b>No releases yet</b><p>Deploy a successful run to create the first release record.</p></div>}
         </div>
       </>}
+      {message && <div className="action-message mt-4">{message}</div>}
     </div>
   );
 }
