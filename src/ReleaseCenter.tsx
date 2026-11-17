@@ -158,7 +158,7 @@ export default function ReleaseCenter({ api, accessToken, selectedProject, setSe
             <div className="flex gap-2 flex-wrap">
               {deployment.status === 'pending_approval' && ['owner', 'admin'].includes(deployment.role) && <><button className="btn btn-light" disabled={busy} onClick={() => action(deployment.id, 'approve')}><CheckCircle2 size={14} /> Approve</button><button className="btn btn-light" disabled={busy} onClick={() => action(deployment.id, 'reject')}><XCircle size={14} /> Reject</button></>}
               {deployment.status === 'deploying' && <button className="btn btn-light" disabled={busy} onClick={() => action(deployment.id, 'refresh')}><Clock3 size={14} /> Check status</button>}
-              {deployment.status === 'ready' && !(deployment.provider === 'netlify' && deployment.environment === 'preview') && <button className="btn btn-light" disabled={busy} onClick={() => action(deployment.id, 'rollback')}><RotateCcw size={14} /> Rollback</button>}
+              {deployment.status === 'ready' && ['owner', 'admin'].includes(deployment.role) && !(deployment.provider === 'netlify' && deployment.environment === 'preview') && <button className="btn btn-light" disabled={busy} onClick={() => action(deployment.id, 'rollback')}><RotateCcw size={14} /> Rollback</button>}
             </div>
           </div>) : <div className="empty-state"><ShieldCheck size={22} /><b>No releases yet</b><p>Deploy a successful run to create the first release record.</p></div>}
         </div>
