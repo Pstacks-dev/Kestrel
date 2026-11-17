@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
+import { deployNetlifyArtifacts } from './netlify-deploy.mjs';
 
 const BUCKET = 'kestrel-artifacts';
 const MAX_BYTES = Math.min(100 * 1024 * 1024, Number(process.env.KESTREL_MAX_ARTIFACT_BYTES || 100 * 1024 * 1024));
@@ -11,7 +12,7 @@ function safeName(value) {
 
 function parseProviderState(body) {
   const state = String(body.readyState || body.state || body.phase || body.lifecycle_state || '').toUpperCase();
-  if (['READY', 'PUBLISHED', 'LIVE', 'READY'].includes(state)) return 'ready';
+  if (['READY', 'PUBLISHED', 'LIVE', 'CURRENT'].includes(state)) return 'ready';
   if (['ERROR', 'FAILED', 'CANCELED', 'CANCELLED'].includes(state)) return 'failed';
   return 'deploying';
 }
@@ -32,6 +33,18 @@ export function registerReleaseRoutes(app, deps) {
     );
     if (!secret.rowCount) throw new Error('Provider access token is missing. Reconfigure this deployment target.');
     const token = decryptSecret(secret.rows[0].encrypted_value, secret.rows[0].iv, secret.rows[0].auth_tag);
+    if (d.provider === 'netlify' && !d.rollback_provider_id) {
+      await query("update public.deployments set status='deploying', error_message=null where id=$1", [deploymentId]);
+      try {
+        const deployed = await deployNetlifyArtifacts({ siteId: d.provider_site_id, token, branch: d.branch, commitSha: d.commit_sha, runId: d.run_id, query, supabaseAdmin, bucket: BUCKET });
+        const status = parseProviderState(deployed);
+        await query("update public.deployments set provider_deployment_id=$2, deployment_url=$3, status=$4, finished_at=case when $4='ready' then now() else null end where id=$1", [deploymentId, deployed.id, deployed.url, status]);
+        return { deploymentId, status, providerDeploymentId: deployed.id, deploymentUrl: deployed.url };
+      } catch (error) {
+        await query("update public.deployments set status='failed', error_message=$2, finished_at=now() where id=$1", [deploymentId, String(error.message || error).slice(0,1000)]);
+        throw error;
+      }
+    }
     let endpoint;
     let payload = {};
     const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
@@ -53,8 +66,7 @@ export function registerReleaseRoutes(app, deps) {
       if (d.rollback_provider_id) {
         endpoint = new URL('https://api.netlify.com/api/v1/sites/' + encodeURIComponent(d.provider_site_id) + '/deploys/' + encodeURIComponent(d.rollback_provider_id) + '/restore');
       } else {
-        endpoint = new URL('https://api.netlify.com/api/v1/sites/' + encodeURIComponent(d.provider_site_id) + '/builds');
-        payload = { clear_cache: false };
+        throw new Error('Netlify artifact deployment adapter was not selected.');
       }
     } else {
       throw new Error('Unsupported deployment provider');
