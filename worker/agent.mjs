@@ -6,9 +6,9 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { redactSecrets } from '../server/lib/security.mjs';
 
-const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
-const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
-const WORKER_ID = process.env.KESTREL_WORKER_ID || `${os.hostname()}-${crypto.randomUUID().slice(0, 5)}`;
+const API = process.env.KESTREL_API_URL || '';
+const TOKEN = process.env.KESTREL_WORKER_TOKEN || '';
+const WORKER_ID = process.env.KESTREL_WORKER_ID || '';
 const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KESTREL_WORKDIR || '.kestrel-worker');
 const REPO_URL = process.env.KESTREL_REPOSITORY_URL;
 const CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.KESTREL_CONCURRENCY || 1)));
@@ -17,7 +17,13 @@ const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK || 'none';
 const EXECUTOR = process.env.KESTREL_WORKER_EXECUTOR || 'docker'; // 'docker' | 'local' | 'mock'
 
-if (process.env.NODE_ENV === 'production' && !/@sha256:[a-f0-9]{64}$/i.test(JOB_IMAGE) && EXECUTOR === 'docker') {
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+if (!API) throw new Error('KESTREL_API_URL is required; refusing to default to localhost');
+if (!TOKEN || TOKEN.length < 32) throw new Error('A provisioned KESTREL_WORKER_TOKEN of at least 32 characters is required');
+if (!WORKER_ID || !/^[A-Za-z0-9_-]{3,128}$/.test(WORKER_ID)) throw new Error('A provisioned KESTREL_WORKER_ID is required');
+if (IS_PRODUCTION && new URL(API).protocol !== 'https:') throw new Error('Production workers require an HTTPS KESTREL_API_URL');
+if (IS_PRODUCTION && EXECUTOR !== 'docker') throw new Error('Production workers must use the isolated Docker executor');
+if (IS_PRODUCTION && !/@sha256:[a-f0-9]{64}$/i.test(JOB_IMAGE) && EXECUTOR === 'docker') {
   throw new Error('Production workers require KESTREL_JOB_IMAGE pinned by immutable sha256 digest');
 }
 
