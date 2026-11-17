@@ -2,8 +2,15 @@ import crypto from 'node:crypto';
 
 // Encryption key derivation: uses KESTREL_ENCRYPTION_KEY or a SHA-256 derived from server secret
 function getEncryptionKey() {
-  const secret = process.env.KESTREL_ENCRYPTION_KEY || process.env.SUPABASE_ANON_KEY || 'kestrel-default-dev-encryption-key-32';
-  return crypto.createHash('sha256').update(secret).digest();
+  const secret = process.env.KESTREL_ENCRYPTION_KEY;
+  if (!secret && process.env.NODE_ENV === 'production') {
+    throw new Error('KESTREL_ENCRYPTION_KEY is required in production; refusing to derive an encryption key from a public Supabase key');
+  }
+  if (!secret && process.env.NODE_ENV !== 'production') {
+    console.warn('[Kestrel] Using an ephemeral development encryption key. Stored secrets will not survive key changes.');
+  }
+  const material = secret || 'kestrel-local-development-only-key';
+  return crypto.createHash('sha256').update(material).digest();
 }
 
 /**
