@@ -23,6 +23,7 @@ import {
   Plus,
   Radio,
   RotateCcw,
+  Search,
   Server,
   ShieldCheck,
   Square,
@@ -528,6 +529,26 @@ function AppShell({ page }: { page: Page }) {
   const [webhookConfig, setWebhookConfig] = useState<{ webhookSecret: string; events: string[] } | null>(null);
 
   const active = nav.find((n) => n.id === page) || nav[0];
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const commandItems = [
+    ...nav.map((item) => ({ label: item.label, detail: item.group, page: item.id, icon: item.icon })),
+    { label: 'Documentation', detail: 'Learn Kestrel', page: 'docs' as Page, icon: CircleHelp },
+    { label: 'Pricing', detail: 'Plans and capacity', page: 'pricing' as Page, icon: Zap },
+  ].filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(commandQuery.toLowerCase()));
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+        setCommandQuery('');
+      }
+      if (event.key === 'Escape') setCommandOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   async function connect() {
     setLoading(true);
@@ -868,6 +889,11 @@ function AppShell({ page }: { page: Page }) {
             Workspace <span>/</span> <b>{active.label}</b>
           </div>
           <div className="top-actions">
+            <button className="command-trigger" onClick={() => { setCommandOpen(true); setCommandQuery(''); }} aria-label="Open command search">
+              <Search size={14} />
+              <span>Search anything</span>
+              <kbd>⌘ K</kbd>
+            </button>
             <span className={`connection ${health === 'Connected' ? 'connected' : ''}`}>
               <i /> {health}
             </span>
@@ -877,6 +903,29 @@ function AppShell({ page }: { page: Page }) {
             <div className="profile-avatar small">P</div>
           </div>
         </header>
+
+        {commandOpen && (
+          <div className="command-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCommandOpen(false); }}>
+            <section className="command-dialog" role="dialog" aria-modal="true" aria-label="Search Kestrel">
+              <div className="command-search">
+                <Search size={17} />
+                <input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder="Search pages and actions..." />
+                <kbd>ESC</kbd>
+              </div>
+              <div className="command-section-label">NAVIGATION</div>
+              <div className="command-results">
+                {commandItems.length ? commandItems.map((item) => (
+                  <button key={item.page} onClick={() => { setCommandOpen(false); go(item.page); }}>
+                    <span className="command-item-icon"><item.icon size={16} /></span>
+                    <span><b>{item.label}</b><small>{item.detail}</small></span>
+                    <span className="command-enter">↵</span>
+                  </button>
+                )) : <p className="command-empty">No matching pages. Try another search.</p>}
+              </div>
+              <footer><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Open page</span><span><kbd>ESC</kbd> Close</span></footer>
+            </section>
+          </div>
+        )}
 
         {/* OVERVIEW */}
         {page === 'overview' && !inspectedRun && (
