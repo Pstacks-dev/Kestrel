@@ -16,8 +16,8 @@ This document records what the repository can do and what must be configured bef
 
 ## Not complete / not certified
 
-- Artifact registration exists, but the current worker only sends artifact metadata. The worker does not upload artifact bytes to Supabase Storage and the UI does not yet provide a complete authenticated download path.
-- There is no complete Vercel/Netlify/Cloudflare deployment-provider adapter, deployment approval flow, or rollback implementation. Do not present the current pipeline as end-to-end continuous deployment.
+- Artifact byte transfer is implemented: worker uploads are lease-authorized, size-checked and SHA-256 verified in a private Supabase bucket; workspace members receive short-lived signed download links. This still requires a real worker upload/download test.
+- Vercel and Netlify provider adapters, deployment history, owner/admin approval/rejection, provider status refresh and rollback are implemented. They still require real provider credentials and end-to-end tests before CD is certified.
 - A worker agent is not a managed fleet. A Linux host, Docker Engine, network policy, monitoring, backup and a frequent lease-recovery scheduler must be provisioned separately.
 - Signup and workspace creation have not been live-tested against a newly created account in production Vercel.
 - Supabase leaked-password protection must be enabled in Authentication settings by a project owner.
@@ -55,8 +55,9 @@ Do not use `local` or `mock` executors in production.
 5. Provision a worker, start it on a dedicated Linux Docker host, and confirm it registers and reports heartbeats.
 6. Run a harmless test pipeline and verify logs, job completion, timeout, cancellation and retry.
 7. Kill a worker during a job; verify stale-lease recovery and that another worker can safely claim the retry.
-8. Complete an artifact-byte upload/download test before enabling artifact retention for customers.
-9. Add and test each deployment provider separately, including approvals and rollback, before advertising CD as supported.
+8. Upload a real artifact from a Docker worker, verify its SHA-256 and size, and download it as an authorized workspace member; confirm a second workspace cannot download it.
+9. Connect a Vercel project and a Netlify site, deploy a successful commit, verify provider status refresh, confirm a non-admin cannot approve, then approve/reject and rollback a release.
+
 10. Restore a database backup in a separate project and verify the restore.
 
 ## Known Supabase security follow-up
