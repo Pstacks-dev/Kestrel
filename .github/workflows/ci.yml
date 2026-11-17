@@ -2,7 +2,7 @@ name: Kestrel CI
 
 on:
   push:
-    branches: [main, production-hardening]
+    branches: [main, production-hardening, client-release-hardening]
   pull_request:
     branches: [main]
 
