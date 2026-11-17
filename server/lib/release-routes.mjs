@@ -143,7 +143,7 @@ export function registerReleaseRoutes(app, deps) {
     const claimedHash = String(req.body?.sha256 || '').toLowerCase();
     try {
       const found = await query(
-        "select a.object_key,a.size_bytes,a.uploaded_at from public.jobs j join public.artifacts a on a.run_id=j.run_id where j.id=$1 and a.id=$2 and j.lease_token=$3 and j.worker_id=$4 and j.status='running' and j.lease_expires_at>now()",
+        "select a.object_key,a.size_bytes,a.sha256 as expected_sha256,a.uploaded_at from public.jobs j join public.artifacts a on a.run_id=j.run_id where j.id=$1 and a.id=$2 and j.lease_token=$3 and j.worker_id=$4 and j.status='running' and j.lease_expires_at>now()",
         [req.params.jobId, req.params.artifactId, leaseToken, req.worker.id]
       );
       if (!found.rowCount) return res.status(409).json({ error: 'Artifact or worker lease not found' });
@@ -154,7 +154,7 @@ export function registerReleaseRoutes(app, deps) {
       const bytes = Buffer.from(await downloaded.data.arrayBuffer());
       const digest = crypto.createHash('sha256').update(bytes).digest('hex');
       if (bytes.length !== Number(found.rows[0].size_bytes)) return res.status(422).json({ error: 'Stored byte count does not match registered size' });
-      if (!/^[a-f0-9]{64}$/.test(claimedHash) || claimedHash !== digest) return res.status(422).json({ error: 'Stored artifact SHA-256 verification failed' });
+      if (!/^[a-f0-9]{64}$/.test(claimedHash) || claimedHash !== digest || (found.rows[0].expected_sha256 && found.rows[0].expected_sha256 !== digest)) return res.status(422).json({ error: 'Stored artifact SHA-256 verification failed' });
       await query('update public.artifacts set sha256=$2,uploaded_at=now(),checksum_verified_at=now() where id=$1', [req.params.artifactId, digest]);
       res.json({ ok: true, artifactId: req.params.artifactId, sizeBytes: bytes.length, sha256: digest });
     } catch (error) {
