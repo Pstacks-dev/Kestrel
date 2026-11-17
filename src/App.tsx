@@ -1598,8 +1598,7 @@ function AppShell({ page }: { page: Page }) {
                     <div className="flex-1">
                       <b>{a.name || a.id}</b>
                       <small>
-                        Key: {a.objectKey} · Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content:{' '}
-                        {a.contentType || 'application/octet-stream'}
+                        Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content: {a.contentType || 'application/octet-stream'} · SHA-256: {String(a.sha256 || '').slice(0, 12)}…
                       </small>
                     </div>
                     <span className="text-xs text-neutral-400 font-mono">
