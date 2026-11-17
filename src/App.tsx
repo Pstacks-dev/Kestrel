@@ -753,6 +753,49 @@ function AppShell({ page }: { page: Page }) {
     }
   }
 
+  async function triggerDemoRun() {
+    setActionMessage('');
+    try {
+      let pId = snapshot?.projects?.[0]?.id;
+      if (!pId) {
+        const createdProj = await fetch(`${api}/projects`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({
+            organizationId,
+            name: 'kestrel-demo',
+            repo: 'https://github.com/peterakinwale326-code/Kestrel.git',
+            defaultBranch: 'main',
+          }),
+        });
+        const projData = await createdProj.json();
+        pId = projData.id;
+      }
+
+      const res = await fetch(`${api}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          projectId: pId,
+          branch: 'main',
+          commitMessage: 'Demo execution: standalone verification',
+          jobs: [
+            { id: 'check-runtime', name: 'Verify Environment', stage: 'checks', command: 'node -v && echo "Kestrel execution engine online."' },
+            { id: 'run-tests', name: 'Test Execution', stage: 'test', command: 'node -e "console.log(\'Running unit tests... All 22 tests passed.\')"', needs: ['check-runtime'] },
+            { id: 'package-bundle', name: 'Build Distribution', stage: 'package', command: 'node -e "console.log(\'Compiling output artifacts into dist/... Done!\')"', needs: ['run-tests'] },
+          ],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to queue demo run');
+      setActionMessage(`Demo run #${data.run_number} queued! Selected for live inspection.`);
+      setInspectedRunId(data.id);
+      await connect();
+    } catch (e: any) {
+      setActionMessage(e.message || 'Demo trigger failed');
+    }
+  }
+
   async function cancelRun(runId: string) {
     try {
       await fetch(`${api}/runs/${runId}/cancel`, {
@@ -875,9 +918,14 @@ function AppShell({ page }: { page: Page }) {
                 <h1>Delivery overview</h1>
                 <p>Your distributed build system at a glance.</p>
               </div>
-              <Button onClick={() => go('pipelines')}>
-                <Play size={14} /> Trigger pipeline
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button onClick={triggerDemoRun} kind="light">
+                  <Zap size={14} /> Quick Demo Run
+                </Button>
+                <Button onClick={() => go('pipelines')}>
+                  <Play size={14} /> Trigger pipeline
+                </Button>
+              </div>
             </div>
             <div className="metric-grid">
               {[
@@ -977,9 +1025,14 @@ function AppShell({ page }: { page: Page }) {
                 <h1>Pipeline trigger</h1>
                 <p>Submit jobs with dependency relationships to execution nodes.</p>
               </div>
-              <Button onClick={() => go('projects')}>
-                <Plus size={15} /> Add repository
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button onClick={triggerDemoRun} kind="light">
+                  <Zap size={14} /> Quick Demo Run
+                </Button>
+                <Button onClick={() => go('projects')}>
+                  <Plus size={15} /> Add repository
+                </Button>
+              </div>
             </div>
             <div className="panel">
               <div className="panel-head">

@@ -12,6 +12,12 @@ import {
   verifyGitHubSignature,
   redactSecrets,
 } from './lib/security.mjs';
+import {
+  hashPassword,
+  verifyPassword,
+  signJwt,
+  verifyJwt,
+} from './lib/auth.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -74,7 +80,7 @@ const sensitiveLimiter = rateLimit({
 const now = () => new Date().toISOString();
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
-// User Authentication Middleware
+// User Authentication Middleware (supports built-in JWT and Supabase Auth)
 async function userAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization || '';
@@ -82,15 +88,29 @@ async function userAuth(req, res, next) {
       return res.status(401).json({ error: 'Authentication required' });
     }
     const token = authHeader.slice(7);
-    if (!supabase) {
-      return res.status(503).json({ error: 'Authentication service not configured' });
+
+    // 1. Check built-in signed JWT first
+    const builtInPayload = verifyJwt(token);
+    if (builtInPayload) {
+      req.user = {
+        id: builtInPayload.sub,
+        email: builtInPayload.email,
+        app_metadata: builtInPayload.app_metadata || {},
+        user_metadata: builtInPayload.user_metadata || {},
+      };
+      return next();
     }
-    const { data, error } = await supabase.auth.getUser(token);
-    if (error || !data.user) {
-      return res.status(401).json({ error: 'Session expired or invalid' });
+
+    // 2. Check Supabase Auth if configured
+    if (supabase) {
+      const { data, error } = await supabase.auth.getUser(token);
+      if (!error && data?.user) {
+        req.user = data.user;
+        return next();
+      }
     }
-    req.user = data.user;
-    next();
+
+    return res.status(401).json({ error: 'Session expired or invalid' });
   } catch (e) {
     next(e);
   }
@@ -154,6 +174,114 @@ async function orgAccess(req, res, next) {
     next(e);
   }
 }
+
+// ==========================================
+// Built-in Authentication (Standalone Mode)
+// ==========================================
+app.post('/api/auth/signup', sensitiveLimiter, async (req, res) => {
+  const { email, password, fullName } = req.body || {};
+  if (!email || !email.includes('@') || !password || password.length < 8) {
+    return res.status(400).json({ error: 'Valid email and password (minimum 8 chars) required' });
+  }
+
+  try {
+    const { salt, hash } = hashPassword(password);
+    const existing = await query('select id from auth.users where lower(email) = lower($1)', [email]);
+    if (existing.rowCount) {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+
+    // First registered user is automatically promoted to platform_admin
+    const countRes = await query('select count(*)::int n from auth.users');
+    const isFirstUser = countRes.rows[0].n === 0;
+    const appMeta = isFirstUser ? { platform_role: 'platform_admin' } : {};
+    const userMeta = { full_name: fullName || email.split('@')[0] };
+
+    const newUser = await transaction(async (c) => {
+      const u = await c.query(
+        `insert into auth.users(email, encrypted_password, raw_app_meta_data, raw_user_meta_data)
+         values(lower($1), $2, $3, $4)
+         returning id, email, raw_app_meta_data, raw_user_meta_data`,
+        [email, `${salt}:${hash}`, JSON.stringify(appMeta), JSON.stringify(userMeta)]
+      );
+      const user = u.rows[0];
+      await c.query(
+        'insert into public.profiles(id, full_name) values($1, $2) on conflict (id) do nothing',
+        [user.id, userMeta.full_name]
+      );
+      return user;
+    });
+
+    const token = signJwt({
+      sub: newUser.id,
+      email: newUser.email,
+      app_metadata: appMeta,
+      user_metadata: userMeta,
+    });
+
+    res.status(201).json({
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        app_metadata: appMeta,
+        user_metadata: userMeta,
+      },
+      session: {
+        access_token: token,
+        token_type: 'bearer',
+      },
+    });
+  } catch (e) {
+    console.error('Signup error:', e);
+    res.status(500).json({ error: 'Could not create account' });
+  }
+});
+
+app.post('/api/auth/login', sensitiveLimiter, async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password required' });
+  }
+
+  try {
+    const r = await query('select * from auth.users where lower(email) = lower($1)', [email]);
+    if (!r.rowCount) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const user = r.rows[0];
+    const [salt, storedHash] = (user.encrypted_password || '').split(':');
+    if (!salt || !storedHash || !verifyPassword(password, salt, storedHash)) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const appMeta = user.raw_app_meta_data || {};
+    const userMeta = user.raw_user_meta_data || {};
+
+    const token = signJwt({
+      sub: user.id,
+      email: user.email,
+      app_metadata: appMeta,
+      user_metadata: userMeta,
+    });
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        app_metadata: appMeta,
+        user_metadata: userMeta,
+      },
+      session: {
+        access_token: token,
+        token_type: 'bearer',
+      },
+    });
+  } catch (e) {
+    console.error('Login error:', e);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+});
 
 // ==========================================
 // Health & System Info
