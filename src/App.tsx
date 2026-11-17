@@ -394,7 +394,6 @@ function Footer() {
 }
 
 function Auth({ mode }: { mode: 'login' | 'signup' }) {
-  const api = (import.meta.env.VITE_API_BASE_URL as string) || '/api';
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -402,36 +401,6 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [otp, setOtp] = useState('');
-  const [awaitingOtp, setAwaitingOtp] = useState(false);
-
-  async function apiRequest(path: string, body: Record<string, unknown>) {
-    const response = await fetch(`${api}/auth/${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Authentication request failed.');
-    return result;
-  }
-
-  async function saveSession(result: any) {
-    const session = result?.session;
-    const token = session?.access_token;
-    if (!token) throw new Error('Kestrel did not return a valid sign-in session.');
-    if (session.refresh_token) {
-      try {
-        const sb = requireSupabase();
-        const { error } = await sb.auth.setSession({ access_token: token, refresh_token: session.refresh_token });
-        if (!error) {
-          localStorage.setItem('kestrel_access_token', token);
-          return;
-        }
-      } catch {}
-    }
-    localStorage.setItem('kestrel_access_token', token);
-  }
 
   async function submit(e: any) {
     e.preventDefault();
@@ -439,48 +408,33 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     setError('');
     setMessage('');
     try {
-      if (awaitingOtp) {
-        if (!/^\d{6}$/.test(otp.trim())) throw new Error('Enter the complete 6-digit verification code.');
-        await apiRequest('verify-otp', { email: email.trim().toLowerCase(), code: otp.trim() });
-        const session = await apiRequest('login', { email: email.trim().toLowerCase(), password });
-        await saveSession(session);
-        go('overview');
-        return;
-      }
+      const sb = requireSupabase();
+      const normalizedEmail = email.trim().toLowerCase();
 
       if (mode === 'signup') {
-        const result = await apiRequest('signup', {
-          fullName: name.trim(),
-          email: email.trim().toLowerCase(),
+        const { data, error: authError } = await sb.auth.signUp({
+          email: normalizedEmail,
           password,
+          options: { data: { full_name: name.trim() } },
         });
-        setAwaitingOtp(true);
-        setMessage(result.message || 'A six-digit verification code has been sent to your email. It expires in 5 minutes.');
+        if (authError) throw authError;
+        if (!data.session) {
+          throw new Error('Account created, but Supabase is still requiring email confirmation. Disable email confirmations in Supabase Authentication settings, then try again.');
+        }
+        localStorage.setItem('kestrel_access_token', data.session.access_token);
+        go('overview');
       } else {
-        const result = await apiRequest('login', {
-          email: email.trim().toLowerCase(),
+        const { data, error: authError } = await sb.auth.signInWithPassword({
+          email: normalizedEmail,
           password,
         });
-        await saveSession(result);
+        if (authError) throw authError;
+        if (!data.session) throw new Error('Supabase did not return a valid sign-in session.');
+        localStorage.setItem('kestrel_access_token', data.session.access_token);
         go('overview');
       }
     } catch (e: any) {
-      if (mode === 'signup' && /signup is saved/i.test(e.message || '')) setAwaitingOtp(true);
       setError(e.message || 'Authentication failed.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resendCode() {
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      const result = await apiRequest('resend-otp', { email: email.trim().toLowerCase() });
-      setMessage(result.message || 'A new verification code has been sent.');
-    } catch (e: any) {
-      setError(e.message || 'Could not resend verification code.');
     } finally {
       setBusy(false);
     }
@@ -508,52 +462,34 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
       <main className="auth-main">
         <button className="back-home" onClick={() => go('home')}>← Back to home</button>
         <div className="auth-form-wrap">
-          <div className="auth-kicker">{awaitingOtp ? 'EMAIL VERIFICATION' : mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
-          <h2>{awaitingOtp ? 'Check your inbox' : mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
-          <p>{awaitingOtp ? `Enter the 6-digit code sent to ${email}.` : mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
+          <div className="auth-kicker">{mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
+          <h2>{mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
+          <p>{mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
           <form onSubmit={submit}>
-            {!awaitingOtp && mode === 'signup' && (
+            {mode === 'signup' && (
               <label>Full name<input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" /></label>
             )}
-            {!awaitingOtp && (
-              <label>Work email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" /></label>
-            )}
-            {!awaitingOtp && (
-              <label>
-                Password
-                <div className="password-input">
-                  <input value={password} onChange={(e) => setPassword(e.target.value)} type={show ? 'text' : 'password'} required minLength={8} placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
-                  <button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
-                </div>
-              </label>
-            )}
-            {awaitingOtp && (
-              <label>6-digit email code
-                <input value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required placeholder="000000" />
-              </label>
-            )}
-            {!awaitingOtp && mode === 'signup' && (
+            <label>Work email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" /></label>
+            <label>
+              Password
+              <div className="password-input">
+                <input value={password} onChange={(e) => setPassword(e.target.value)} type={show ? 'text' : 'password'} required minLength={8} placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+                <button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
+              </div>
+            </label>
+            {mode === 'signup' && (
               <label className="checkline"><input type="checkbox" required /> I agree to the terms and privacy policy.</label>
             )}
             {error && <div className="notice text-red-600">{error}</div>}
             {message && <div className="notice text-green-600">{message}</div>}
             <button disabled={busy} className="btn btn-dark auth-submit">
-              {busy ? 'Please wait…' : awaitingOtp ? 'Verify email' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
+              {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
             </button>
           </form>
-          {awaitingOtp && (
-            <div className="auth-switch">
-              Didn't receive it? <button disabled={busy} onClick={resendCode}>Resend code</button>
-              <span> · </span>
-              <button onClick={() => { setAwaitingOtp(false); setOtp(''); setError(''); setMessage(''); }}>Change details</button>
-            </div>
-          )}
-          {!awaitingOtp && (
-            <div className="auth-switch">
-              {mode === 'login' ? <>New to Kestrel? <button onClick={() => go('signup')}>Create an account</button></> : <>Already have an account? <button onClick={() => go('login')}>Sign in</button></>}
-            </div>
-          )}
-          <div className="auth-security"><LockKeyhole size={14} /> Email verification and account sessions are managed securely by Kestrel.</div>
+          <div className="auth-switch">
+            {mode === 'login' ? <>New to Kestrel? <button onClick={() => go('signup')}>Create an account</button></> : <>Already have an account? <button onClick={() => go('login')}>Sign in</button></>}
+          </div>
+          <div className="auth-security"><LockKeyhole size={14} /> Passwords and sessions are managed by Supabase Auth.</div>
         </div>
         <div className="auth-copyright">© 2026 Kestrel Systems <span>·</span> <button onClick={() => go('docs')}>Help centre</button></div>
       </main>
