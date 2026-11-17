@@ -22,9 +22,10 @@ SMTP_USER=your-sender@gmail.com
 SMTP_PASS=your-google-app-password
 SMTP_FROM_EMAIL=your-sender@gmail.com
 SMTP_FROM_NAME=Kestrel
+SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key
 ```
 
-Keep `SMTP_PASS` server-side. Never add it to a `VITE_*` variable, commit it, or paste it into chat. If an App Password was previously exposed, revoke it in Google Account → Security → App passwords and create a replacement.
+Keep `SMTP_PASS` server-side. Never add it to a `VITE_*` variable, commit it, or paste it into chat. Kestrel also needs the legacy Supabase `service_role` key as `SUPABASE_SERVICE_ROLE_KEY` so the backend can create accounts and mark them verified through Supabase's server-only Auth Admin API. Never expose this key in the browser or commit it. If an App Password was previously exposed, revoke it in Google Account → Security → App passwords and create a replacement.
 
 ## Database migration
 
@@ -55,10 +56,11 @@ This applies `004_kestrel_email_otp.sql`, which creates a private pending-signup
 ## Production deployment checklist
 
 1. Configure all six SMTP variables in Vercel for Production and Preview.
-2. Ensure `KESTREL_ENCRYPTION_KEY` is set to a stable secret of at least 32 characters; it also protects OTP hashes.
-3. Ensure `SUPABASE_DB_URL` points to the correct Supabase PostgreSQL database.
-4. Run `npm run migrate` once from a trusted environment connected to that database.
-5. Redeploy the Vercel project after changing environment variables.
-6. Test a new signup using an inbox you can access, then test an incorrect code, an expired code, resend cooldown, successful verification, and login.
+2. Configure `SUPABASE_SERVICE_ROLE_KEY` using the legacy service_role secret from Supabase Project Settings → API Keys. Keep it server-side only.
+3. Ensure `KESTREL_ENCRYPTION_KEY` is set to a stable secret of at least 32 characters; it also protects OTP hashes.
+4. Ensure `SUPABASE_DB_URL` points to the correct Supabase PostgreSQL database.
+5. Run `npm run migrate` once from a trusted environment connected to that database.
+6. Redeploy the Vercel project after changing environment variables.
+7. Test a new signup using an inbox you can access, then test an incorrect code, an expired code, resend cooldown, successful verification, and login.
 
 A deployment cannot send OTP email until the SMTP variables are configured and the migration has been applied.
