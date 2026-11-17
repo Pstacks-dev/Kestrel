@@ -3,55 +3,51 @@ import 'dotenv/config';
 const isProduction = process.env.NODE_ENV === 'production';
 const errors = [];
 const warnings = [];
+const has = (name) => Boolean(String(process.env[name] || '').trim());
 
-// Node version check (v20+ recommended)
-const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
-if (nodeMajor < 20) {
-  errors.push(`Node.js version >= 20 is required (currently ${process.version})`);
-}
+const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10);
+if (nodeMajor < 20) errors.push(`Node.js >= 20 is required (currently ${process.version})`);
 
 const dbUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
-if (!dbUrl || /\[PASSWORD\]/i.test(dbUrl)) {
-  errors.push('SUPABASE_DB_URL or DATABASE_URL is missing or contains placeholder values');
+if (!dbUrl) {
+  errors.push('SUPABASE_DB_URL (or DATABASE_URL) is required');
+} else {
+  try {
+    const parsed = new URL(dbUrl);
+    if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) errors.push('Database URL must use postgres:// or postgresql://');
+    if (!parsed.hostname || !parsed.username || !parsed.password || !parsed.pathname || parsed.pathname === '/') {
+      errors.push('Database URL must include host, username, password, and database name');
+    }
+    if (isProduction && parsed.searchParams.get('sslmode') === 'disable') errors.push('Production database connections must not disable TLS');
+  } catch {
+    errors.push('Database URL is malformed');
+  }
 }
 
-// Check auth provider mode
-const hasSupabase = Boolean(
-  process.env.SUPABASE_URL &&
-  process.env.SUPABASE_ANON_KEY &&
-  !process.env.SUPABASE_URL.includes('YOUR_PROJECT')
-);
-
-if (!hasSupabase) {
-  warnings.push('No external Supabase cloud configured; running in standalone self-hosted mode with built-in JWT authentication.');
+if (!has('SUPABASE_URL') || !has('SUPABASE_ANON_KEY')) {
+  warnings.push('Supabase Auth API credentials are not configured; verify that standalone authentication is intentionally enabled.');
 }
-
-// Security checks for worker tokens and encryption keys
 if (isProduction) {
-  if (process.env.KESTREL_WORKER_TOKEN && process.env.KESTREL_WORKER_TOKEN.length < 16) {
-    errors.push('KESTREL_WORKER_TOKEN must be at least 16 characters in production');
+  for (const name of ['SUPABASE_URL','SUPABASE_ANON_KEY','KESTREL_ENCRYPTION_KEY']) {
+    if (!has(name)) errors.push(`${name} is required in production`);
   }
-  if (!process.env.KESTREL_ENCRYPTION_KEY) {
-    warnings.push('KESTREL_ENCRYPTION_KEY is unset; using default derived encryption key');
-  }
-  if (process.env.DB_SSL === 'disable') {
-    warnings.push('DB_SSL is disabled');
-  }
+  if ((process.env.KESTREL_ENCRYPTION_KEY || '').length < 32) errors.push('KESTREL_ENCRYPTION_KEY must contain at least 32 characters');
+  if (!has('CRON_SECRET') || (process.env.CRON_SECRET || '').length < 32) errors.push('CRON_SECRET must contain at least 32 characters in production');
+  if (process.env.DB_SSL === 'disable') errors.push('DB_SSL=disable is forbidden in production');
+  if (process.env.DB_SSL_REJECT_UNAUTHORIZED === 'false') errors.push('DB_SSL_REJECT_UNAUTHORIZED=false is forbidden in production');
+  if (has('KESTREL_WORKER_TOKEN')) errors.push('Do not configure a shared KESTREL_WORKER_TOKEN on the control plane; provision individual worker credentials through the admin API');
+}
+if (has('KESTREL_WORKER_EXECUTOR') && isProduction && process.env.KESTREL_WORKER_EXECUTOR !== 'docker') {
+  errors.push('Production worker executor must be docker');
 }
 
 if (warnings.length) {
-  console.log('ℹ️  Configuration notes:');
-  for (const w of warnings) {
-    console.log(`   - ${w}`);
-  }
+  console.log('Configuration warnings:');
+  for (const warning of warnings) console.log(` - ${warning}`);
 }
-
 if (errors.length) {
-  console.error('❌ Preflight failed with configuration errors:');
-  for (const e of errors) {
-    console.error(`   - ${e}`);
-  }
+  console.error('Preflight failed:');
+  for (const error of errors) console.error(` - ${error}`);
   process.exit(1);
 }
-
-console.log('✅ Kestrel environment preflight passed successfully.');
+console.log('Kestrel environment preflight passed.');
