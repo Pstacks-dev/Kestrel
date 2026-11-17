@@ -259,6 +259,7 @@ app.get('/api/health', async (_req, res) => {
       time: now(),
     });
   } catch (e) {
+    console.error('[health] database probe failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(503).json({
       ok: false,
       database: 'unavailable',
@@ -308,6 +309,7 @@ app.post('/api/workspaces', sensitiveLimiter, userAuth, async (req, res) => {
     });
     res.status(201).json(result);
   } catch (e) {
+    console.error('[workspaces:create] failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(500).json({ error: 'Could not create workspace' });
   }
 });
@@ -324,6 +326,7 @@ app.get('/api/workspaces', userAuth, async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
+    console.error('[workspaces:list] failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(500).json({ error: 'Could not fetch workspaces' });
   }
 });
