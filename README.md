@@ -1,197 +1,85 @@
-# Kestrel — Distributed CI/CD Platform
+# Kestrel — Distributed CI/CD
 
-Kestrel is a production-hardened, distributed CI/CD platform built with:
-- **Frontend**: React 19, Vite, and TypeScript.
-- **Control Plane**: Express.js REST API with rate limiting, security headers, and webhook receivers.
-- **Persistence & Auth**: Supabase PostgreSQL with Row Level Security (RLS) and Supabase Auth.
-- **Build Workers**: Independent, sandboxed Docker workers with non-root UID, dropped Linux capabilities, and resource limits.
-- **Deployments**: Vercel-ready serverless API / static frontend, with separate Linux hosts for always-on Docker execution.
+Kestrel is a CI/CD control plane with a React/Vite dashboard, an Express API, PostgreSQL-backed job queue, and independently hosted Docker workers.
 
----
+## Current architecture
 
-## Architecture Overview
+- **Web app:** React 19 + Vite, deployed as static assets.
+- **Control plane:** Express API routed through Vercel functions or a standalone Node process.
+- **Database:** Supabase PostgreSQL.
+- **Execution:** Linux worker agents poll for jobs and run them in Docker containers.
+- **Queue:** PostgreSQL transactions and `FOR UPDATE SKIP LOCKED` coordinate claims.
+- **Security:** HMAC-signed GitHub webhooks, one-way worker-token hashes, AES-GCM encrypted project secrets, per-job container limits.
 
-```
-                                      +------------------------+
-                                      |   GitHub / Git Host    |
-                                      +------------------------+
-                                        |               ^
-                   Webhook (HMAC-SHA256)|               | Git Clone
-                                        v               |
-+---------------------+           +------------------------+           +--------------------------+
-|  React 19 Frontend  |  <=====>  | Express Control Plane  |  <=====>  | Dedicated Docker Workers |
-|   (Vite / Vercel)   |   JWT     |   (Vercel / Node.js)   |  Signed   |      (Linux VM Host)     |
-+---------------------+           +------------------------+  Leases   +--------------------------+
-                                              |
-                                              | Pooled PostgreSQL & RLS
-                                              v
-                                  +------------------------+
-                                  |   Supabase PostgreSQL  |
-                                  +------------------------+
-```
+## Current capabilities
 
----
+The repository currently includes account and organization flows, project management, manually configured GitHub webhooks, a default npm build/test pipeline, a PostgreSQL job queue, worker registration/heartbeat/claim/complete APIs, log ingestion and retrieval, retry/cancel endpoints, basic artifact metadata registration, worker provisioning, and stale-lease recovery.
 
-## Completed & Production-Hardened Features
+The webhook receiver queues a built-in npm pipeline. It does **not** yet load a user-defined YAML workflow file. Artifact metadata registration is present, but end-to-end object upload/download is not yet complete. Deployment-provider integrations and rollback are not yet complete. Do not treat those as finished product capabilities.
 
-1. **Authentication & Session Security**:
-   - Supabase Auth sign-up / sign-in with server-side JWT verification on every authenticated request.
-   - Strict tenant isolation: organizations, projects, runs, jobs, and audit events verify membership and role (`owner`, `admin`, `developer`, `viewer`).
-2. **Project Secrets Management**:
-   - Secrets encrypted at rest using **AES-256-GCM** with authenticated encryption tags (`server/lib/security.mjs`).
-   - Secrets decrypted only in memory when claimed by the assigned worker and passed directly into container environment.
-   - Comprehensive **secret redaction**: bearer tokens, JWTs, private keys, URLs with basic auth, and project secret values are masked in logs and client outputs.
-3. **GitHub Signed Webhook Integration**:
-   - Receiver at `POST /api/webhooks/github` verifies GitHub `X-Hub-Signature-256` HMAC signatures using project-specific webhook secrets.
-   - Handles `ping`, `push`, and `pull_request` events to automatically queue pipeline runs with commit SHA, branch, and author.
-4. **Resilient Job Scheduling & DAG Validation**:
-   - Transactional run queuing with dependency cycle detection (Kahn's / DFS algorithm) and resource limits.
-   - Atomic job claiming with PostgreSQL `FOR UPDATE SKIP LOCKED`.
-   - Timeout handling (`timeout_seconds`), bounded retry attempts (`max_retries`), and cancellation tracking.
-5. **Worker Execution Protocol**:
-   - Provisioned credentials stored as one-way SHA-256 hashes.
-   - Heartbeat leases (45s duration) with automatic extension on log upload.
-   - Atomic lease recovery function `recover_stale_leases()` cleans up orphaned jobs and flags offline workers.
-   - Per-job Docker container execution: dropped Linux capabilities (`--cap-drop=ALL`), `--read-only` root filesystem, `no-new-privileges`, memory and CPU limits, scoped temporary filesystem, and non-root UID (`1000:1000`).
-   - Support for `KESTREL_WORKER_EXECUTOR=docker|local|mock` for dry-run testing and diverse environments.
-6. **Live Log Viewer & Real-time Feedback**:
-   - Database-backed streaming log ingest and query endpoint (`GET /api/jobs/:jobId/logs`).
-   - Interactive log viewer with stdout/stderr filtering, substring search, auto-scroll, copy-to-clipboard, and live polling.
-7. **Build Artifacts**:
-   - Automatic scanning of `dist/`, `build/`, and `artifacts/` directories on job completion.
-   - Artifact registration with SHA-256 checksums and MIME type classification.
-8. **Automated Migrations & Preflights**:
-   - `scripts/migrate.mjs` applies ordered, transactional SQL migrations with idempotency tracking.
-   - `scripts/check-env.mjs` verifies database URLs, SSL policies, and production security rules.
+## Local development
 
----
+Requirements: Node.js 22+, PostgreSQL/Supabase, and Docker Engine for real worker execution.
 
-## 1. Quick Start / Local Development
-
-### Prerequisites
-- Node.js >= 20.x
-- Docker Engine (for running containerized worker jobs)
-
-### Step 1: Clone and Configure Environment
 ```bash
+npm ci
 cp .env.example .env
-```
-Fill in your Supabase project settings (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_DB_URL`).
-
-### Step 2: Install and Verify
-```bash
-npm install
 npm run preflight
-npm test
 npm run migrate
+npm test
+npm run check
 ```
 
-### Step 3: Run the Control Plane and Frontend
-In terminal 1 (Control Plane API):
+Start the API and frontend in separate terminals:
+
 ```bash
 npm run start:api
-```
-
-In terminal 2 (Vite Frontend):
-```bash
 npm run dev
 ```
-Open `http://localhost:3000` in your browser.
 
----
+Start a worker on a separate Linux Docker host after provisioning its unique worker ID and token:
 
-## 2. Provisioning Workers
-
-1. Create a user account via the web UI and promote the user to `platform_admin`:
-```sql
-update auth.users
-set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
-  || '{"platform_role":"platform_admin"}'::jsonb
-where id = 'YOUR_USER_UUID';
-```
-
-2. Provision a worker token using the platform admin endpoint:
-```bash
-curl -X POST http://localhost:4000/api/admin/workers \
-  -H "Authorization: Bearer YOUR_SUPABASE_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"organizationId":"YOUR_WORKSPACE_UUID","name":"worker-linux-01","region":"us-east","maxConcurrency":2}'
-```
-This returns a `workerId` and a one-time secret `token`.
-
-3. On your dedicated worker host, configure `.env`:
-```bash
-KESTREL_API_URL=https://your-api-domain.com
-KESTREL_WORKER_ID=wrk_...
-KESTREL_WORKER_TOKEN=your-provisioned-token
-KESTREL_WORKER_WORKDIR=/srv/kestrel-worker
-KESTREL_JOB_IMAGE=node:22-bookworm-slim
-```
-
-4. Start the worker agent:
 ```bash
 npm run start:worker
 ```
 
----
+Never run untrusted build jobs using the local executor in production.
 
-## 3. Vercel + Supabase Deployment
+## Database migrations
 
-Deploying the frontend and short-lived HTTP API to Vercel:
+Migrations are stored in `db/migrations` and applied in lexical order by `npm run migrate`. The runner records applied filenames in `public.kestrel_schema_migrations`. Run migrations once from a trusted environment with a production database connection before switching production traffic.
 
-1. Import the repository in Vercel. Leave Root Directory as `.` (repository root).
-2. Set Environment Variables in Vercel:
-   - `VITE_SUPABASE_URL`: Supabase Project URL
-   - `VITE_SUPABASE_ANON_KEY`: Supabase publishable/anon key
-   - `SUPABASE_URL`: Supabase Project URL
-   - `SUPABASE_ANON_KEY`: Supabase anon key
-   - `SUPABASE_DB_URL`: Supabase transaction pooler URL (port 6543)
-   - `DB_POOL_MAX`: `1`
-   - `DB_SSL_REJECT_UNAUTHORIZED`: `true`
-   - `KESTREL_ENCRYPTION_KEY`: 32-character secret key for AES-256-GCM
-   - `CRON_SECRET`: Secret token for Vercel Cron
-3. Vercel Cron automatically calls `/api/cron/recovery` every minute to clean up stale worker leases.
-4. **Important**: Build workers must run on a separate, dedicated Linux host with Docker Engine, never inside Vercel Serverless Functions.
+## Vercel and Supabase
 
----
+Vercel can host the static frontend and short-lived API functions. Use the Supabase transaction pooler and keep the database connection string server-side. Required server variables include:
 
-## 4. Environment Variables Reference
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_DB_URL`
+- `KESTREL_ENCRYPTION_KEY`
+- `CRON_SECRET`
+- `DB_POOL_MAX=1`
+- `DB_SSL_REJECT_UNAUTHORIZED=true`
 
-| Variable | Required In | Purpose |
-| :--- | :--- | :--- |
-| `SUPABASE_URL` | Server | Supabase API URL |
-| `SUPABASE_ANON_KEY` | Server | Supabase public/anon key (used for server-side user JWT validation) |
-| `SUPABASE_DB_URL` | Server | PostgreSQL connection string |
-| `KESTREL_ENCRYPTION_KEY` | Server | AES-256-GCM key for encrypting project secrets at rest |
-| `CRON_SECRET` | Server (Vercel) | Optional secret protecting `/api/cron/recovery` |
-| `KESTREL_GIT_ALLOWED_HOSTS`| Server | Comma-separated list of allowed Git hostnames (`github.com,gitlab.com`) |
-| `VITE_SUPABASE_URL` | Web Frontend | Supabase Project URL |
-| `VITE_SUPABASE_ANON_KEY`| Web Frontend | Supabase public key for frontend auth |
-| `VITE_API_BASE_URL` | Web Frontend | API route prefix (`/api`) |
-| `KESTREL_API_URL` | Worker | URL to control plane |
-| `KESTREL_WORKER_ID` | Worker | Worker identifier assigned during provisioning |
-| `KESTREL_WORKER_TOKEN` | Worker | Secret token for worker authentication |
-| `KESTREL_WORKER_WORKDIR` | Worker | Path on worker machine where job workspaces are staged |
-| `KESTREL_JOB_IMAGE` | Worker | Base container image (pin by `@sha256:...` digest in production) |
-| `KESTREL_WORKER_EXECUTOR`| Worker | `docker` (production), `local` (host shell), or `mock` (unit testing) |
+Use separate high-entropy values for the encryption and cron secrets. Keep the encryption key stable and backed up: rotating it without re-encrypting stored project secrets makes those secrets unreadable.
 
----
+### Important Vercel Hobby limitation
 
-## 5. Testing & Verification
+Vercel Hobby only supports daily Cron Jobs. The configured daily recovery endpoint is a fallback check, not suitable for timely recovery of 45-second worker leases. For dependable queue recovery, run the standalone control plane (which includes a five-second recovery loop) or provide an external scheduler that calls `GET /api/cron/recovery` frequently. Dedicated Docker workers must run on a separate Linux host; Vercel functions cannot host them.
 
-Run the test suite:
-```bash
-npm test
-```
-Run type-checking and production frontend build:
-```bash
-npm run check
-```
+## Production readiness gates
 
----
+Do not call this service production-ready until all of the following are proven in the target environment:
 
-## 6. Known Limitations & Production Notes
+1. CI tests, TypeScript checks and production build pass.
+2. Migrations apply successfully and a backup restore has been tested.
+3. Signup, login, password handling and tenant isolation pass security tests.
+4. A real GitHub webhook is signature-verified and deduplicated.
+5. A provisioned worker pulls a real commit and runs the queued job in Docker.
+6. Logs are streamed and retained correctly, including after worker restarts.
+7. Artifact bytes can be uploaded, checksum-verified, authorized and downloaded.
+8. Failed jobs recover after worker termination; concurrent workers do not claim the same job.
+9. Secrets never appear in logs, process output, client responses or unrelated tenants.
+10. Deployment approvals, provider integrations and rollback are implemented and tested before offering CD as a complete feature.
 
-- **Kernel Sharing**: Docker containers share the host Linux kernel. For untrusted, hostile multi-tenant public PRs, deploy workers with microVM isolation (e.g. Firecracker, Kata Containers, or gVisor).
-- **Network Egress**: Jobs default to `--network none` for security. Workloads requiring dependency downloads should configure a controlled egress proxy.
-- **Serverless API Timeout**: On Vercel Hobby plans, function maximum duration is 15 seconds. Heavy control plane workflows should be sized accordingly.
+See [DEPLOYMENT_READINESS.md](./DEPLOYMENT_READINESS.md) for release configuration and Google Search Console instructions.
