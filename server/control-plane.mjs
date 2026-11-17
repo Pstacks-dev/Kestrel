@@ -33,6 +33,14 @@ if (supabaseUrl && supabaseAnonKey) {
   });
 }
 
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let supabaseAdmin = null;
+if (supabaseUrl && supabaseServiceRoleKey) {
+  supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 app.disable('x-powered-by');
 app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
 
@@ -224,29 +232,54 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || password.length > 256) {
     return res.status(400).json({ error: 'Enter a valid email address and a password of at least 8 characters.' });
   }
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Kestrel account creation is not configured. Add the server-only SUPABASE_SERVICE_ROLE_KEY.' });
+  }
 
   try {
-    const existing = await query('select id from auth.users where lower(email) = lower($1)', [email]);
-    if (existing.rowCount) {
-      return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+    const pendingExisting = await query(
+      'select user_id from public.kestrel_pending_signups where email = $1',
+      [email]
+    );
+    let userId;
+    if (pendingExisting.rowCount) {
+      userId = pendingExisting.rows[0].user_id;
+      const updatedUser = await supabaseAdmin.auth.admin.updateUserById(userId, {
+        password,
+        user_metadata: { full_name: fullName },
+      });
+      if (updatedUser.error) throw updatedUser.error;
+    } else {
+      const created = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: false,
+        user_metadata: { full_name: fullName },
+      });
+      if (created.error) {
+        if (/already|registered|exists/i.test(created.error.message || '')) {
+          return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+        }
+        throw created.error;
+      }
+      userId = created.data.user.id;
     }
 
-    const { salt, hash } = hashPassword(password);
     const code = String(crypto.randomInt(100000, 1000000));
     await query(
-      `insert into public.kestrel_pending_signups
-         (email, password_hash, full_name, otp_hash, expires_at, attempts, resend_count, last_sent_at, created_at)
+      \`insert into public.kestrel_pending_signups
+         (email, user_id, full_name, otp_hash, expires_at, attempts, resend_count, last_sent_at, created_at)
        values ($1, $2, $3, $4, now() + interval '5 minutes', 0, 0, now(), now())
        on conflict (email) do update set
-         password_hash = excluded.password_hash,
+         user_id = excluded.user_id,
          full_name = excluded.full_name,
          otp_hash = excluded.otp_hash,
          expires_at = excluded.expires_at,
          attempts = 0,
          resend_count = 0,
          last_sent_at = now(),
-         created_at = now()`,
-      [email, `${salt}:${hash}`, fullName, otpDigest(email, code)]
+         created_at = now()\`,
+      [email, userId, fullName, otpDigest(email, code)]
     );
 
     try {
@@ -317,6 +350,9 @@ app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code)) {
     return res.status(400).json({ error: 'Enter a valid email address and the complete six-digit code.' });
   }
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Kestrel account verification is not configured.' });
+  }
 
   try {
     const result = await transaction(async (c) => {
@@ -342,54 +378,33 @@ app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
         return { status: 'invalid', attemptsLeft: 5 - nextAttempts };
       }
 
-      await c.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', ['kestrel-first-account']);
-      const existing = await c.query('select id from auth.users where lower(email) = lower($1)', [email]);
-      if (existing.rowCount) {
-        await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
-        return { status: 'exists' };
-      }
-
-      const countRes = await c.query('select count(*)::int n from auth.users');
-      const appMeta = countRes.rows[0].n === 0 ? { platform_role: 'platform_admin' } : {};
-      const userMeta = { full_name: pending.full_name };
-      const [salt, passwordHash] = pending.password_hash.split(':');
-      const inserted = await c.query(
-        `insert into auth.users(email, encrypted_password, raw_app_meta_data, raw_user_meta_data, email_confirmed_at)
-         values(lower($1), $2, $3, $4, now())
-         returning id, email, raw_app_meta_data, raw_user_meta_data`,
-        [email, `${salt}:${passwordHash}`, JSON.stringify(appMeta), JSON.stringify(userMeta)]
+      const countRes = await c.query(
+        'select count(*)::int n from auth.users where email_confirmed_at is not null and id <> $1',
+        [pending.user_id]
       );
-      const user = inserted.rows[0];
-      await c.query(
-        'insert into public.profiles(id, full_name) values($1, $2) on conflict (id) do nothing',
-        [user.id, userMeta.full_name]
-      );
-      await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
-      return { status: 'verified', user, appMeta, userMeta };
+      return {
+        status: 'verified',
+        userId: pending.user_id,
+        appMeta: countRes.rows[0].n === 0 ? { platform_role: 'platform_admin' } : {},
+      };
     });
 
     if (result.status === 'missing') return res.status(400).json({ error: 'No pending signup was found. Please create your account again.' });
     if (result.status === 'expired') return res.status(400).json({ error: 'That code has expired. Request a new code.' });
     if (result.status === 'locked') return res.status(429).json({ error: 'Too many incorrect codes. Start registration again to receive a new code.' });
-    if (result.status === 'invalid') return res.status(400).json({ error: `Incorrect verification code. ${result.attemptsLeft} attempt(s) remaining.` });
-    if (result.status === 'exists') return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+    if (result.status === 'invalid') return res.status(400).json({ error: \`Incorrect verification code. \${result.attemptsLeft} attempt(s) remaining.\` });
 
-    const user = result.user;
-    const token = signJwt({
-      sub: user.id,
-      email: user.email,
+    const confirmed = await supabaseAdmin.auth.admin.updateUserById(result.userId, {
+      email_confirm: true,
       app_metadata: result.appMeta,
-      user_metadata: result.userMeta,
     });
-    return res.status(201).json({
-      user: {
-        id: user.id,
-        email: user.email,
-        app_metadata: result.appMeta,
-        user_metadata: result.userMeta,
-      },
-      session: { access_token: token, token_type: 'bearer' },
-    });
+    if (confirmed.error) {
+      console.error('Supabase email confirmation failed:', confirmed.error.message);
+      return res.status(503).json({ error: 'The code is valid, but Kestrel could not activate the account. Please try verifying again.' });
+    }
+
+    await query('delete from public.kestrel_pending_signups where email = $1', [email]);
+    return res.json({ verified: true, message: 'Your email is verified. Sign in to continue.' });
   } catch (e) {
     console.error('OTP verification error:', e);
     return res.status(500).json({ error: 'Could not verify your email address.' });
@@ -402,9 +417,28 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
 
   try {
+    // New Kestrel accounts use Supabase Auth for password hashing and signed sessions.
+    if (supabase) {
+      const signedIn = await supabase.auth.signInWithPassword({ email, password });
+      if (!signedIn.error && signedIn.data?.session) {
+        return res.json({
+          user: signedIn.data.user,
+          session: {
+            access_token: signedIn.data.session.access_token,
+            token_type: signedIn.data.session.token_type || 'bearer',
+            expires_in: signedIn.data.session.expires_in,
+            refresh_token: signedIn.data.session.refresh_token,
+          },
+        });
+      }
+      if (signedIn.error && /email not confirmed/i.test(signedIn.error.message || '')) {
+        return res.status(403).json({ error: 'Please verify your email address before signing in.' });
+      }
+    }
+
+    // Backward compatibility for accounts created by the previous Kestrel PBKDF2 flow.
     const r = await query('select * from auth.users where lower(email) = lower($1)', [email]);
     if (!r.rowCount) return res.status(401).json({ error: 'Invalid email or password.' });
-
     const user = r.rows[0];
     const [salt, storedHash] = (user.encrypted_password || '').split(':');
     if (!salt || !storedHash || !verifyPassword(password, salt, storedHash)) {
@@ -416,19 +450,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     const appMeta = user.raw_app_meta_data || {};
     const userMeta = user.raw_user_meta_data || {};
-    const token = signJwt({
-      sub: user.id,
-      email: user.email,
-      app_metadata: appMeta,
-      user_metadata: userMeta,
-    });
+    const token = signJwt({ sub: user.id, email: user.email, app_metadata: appMeta, user_metadata: userMeta });
     return res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        app_metadata: appMeta,
-        user_metadata: userMeta,
-      },
+      user: { id: user.id, email: user.email, app_metadata: appMeta, user_metadata: userMeta },
       session: { access_token: token, token_type: 'bearer' },
     });
   } catch (e) {
