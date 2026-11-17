@@ -310,8 +310,7 @@ export function registerReleaseRoutes(app, deps) {
       if (!found.rowCount) return res.status(404).json({ error: 'Deployment not found' });
       const d = found.rows[0];
       if (!d.provider_deployment_id) return res.status(409).json({ error: 'Provider has not returned a deployment ID yet' });
-      const tokenRow = await query('select encrypted_value,iv,auth_tag from public.project_secrets where project_id=$1 and name=$2', [d.project_id, secretName(d.id)]);
-      // Target-specific credential lookup is done by target ID, not deployment ID.
+      // Resolve the encrypted credential using the deployment target ID.
       const targetId = await query('select target_id from public.deployments where id=$1', [d.id]);
       const credential = await query('select encrypted_value,iv,auth_tag from public.project_secrets where project_id=$1 and name=$2', [d.project_id, secretName(targetId.rows[0].target_id)]);
       if (!credential.rowCount) return res.status(503).json({ error: 'Provider credential is missing' });
