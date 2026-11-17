@@ -28,7 +28,7 @@ if (!has('SUPABASE_URL') || !has('SUPABASE_ANON_KEY')) {
   warnings.push('Supabase Auth API credentials are not configured; verify that standalone authentication is intentionally enabled.');
 }
 if (isProduction) {
-  for (const name of ['SUPABASE_URL','SUPABASE_ANON_KEY','KESTREL_ENCRYPTION_KEY','SMTP_HOST','SMTP_USER','SMTP_PASS','SMTP_FROM_EMAIL']) {
+  for (const name of ['SUPABASE_URL','SUPABASE_ANON_KEY','SUPABASE_SERVICE_ROLE_KEY','KESTREL_ENCRYPTION_KEY','SMTP_HOST','SMTP_USER','SMTP_PASS','SMTP_FROM_EMAIL']) {
     if (!has(name)) errors.push(`${name} is required in production`);
   }
   if ((process.env.KESTREL_ENCRYPTION_KEY || '').length < 32) errors.push('KESTREL_ENCRYPTION_KEY must contain at least 32 characters');
