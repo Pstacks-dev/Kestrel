@@ -1,13 +1,6 @@
 -- Kestrel-managed email verification codes.
--- Pending credentials are stored only until the email address is verified.
-alter table auth.users
-  add column if not exists email_confirmed_at timestamptz;
-
--- Preserve accounts created before Kestrel-managed OTP verification was introduced.
-update auth.users
-set email_confirmed_at = coalesce(email_confirmed_at, created_at, now())
-where email_confirmed_at is null;
-
+-- Supabase Auth owns auth.users; Kestrel never alters that schema directly.
+-- Pending signup records contain only the Auth user ID and a keyed OTP digest.
 create table if not exists public.kestrel_pending_signups (
   email text primary key,
   user_id uuid not null unique references auth.users(id) on delete cascade,
