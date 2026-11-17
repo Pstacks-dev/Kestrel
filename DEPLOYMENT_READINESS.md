@@ -43,6 +43,7 @@ Worker host configuration:
 - `KESTREL_WORKER_EXECUTOR=docker`
 - `KESTREL_JOB_IMAGE=node:22-bookworm-slim@sha256:<verified-digest>`
 - `KESTREL_WORKER_WORKDIR`
+- `SUPABASE_URL` and `SUPABASE_ANON_KEY` (public project URL/key; signed upload tokens authorize individual artifact uploads)
 
 Do not use `local` or `mock` executors in production.
 
@@ -57,7 +58,6 @@ Do not use `local` or `mock` executors in production.
 7. Kill a worker during a job; verify stale-lease recovery and that another worker can safely claim the retry.
 8. Upload a real artifact from a Docker worker, verify its SHA-256 and size, and download it as an authorized workspace member; confirm a second workspace cannot download it.
 9. Connect a Vercel project and a Netlify site, deploy a successful commit, verify provider status refresh, confirm a non-admin cannot approve, then approve/reject and rollback a release.
-
 10. Restore a database backup in a separate project and verify the restore.
 
 ## Known Supabase security follow-up
