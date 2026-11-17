@@ -1,0 +1,62 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    command: ["node", "server/control-plane.mjs"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      TRUST_PROXY: "true"
+      KESTREL_WORKER_TOKEN: ""
+    expose: ["4000"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+        VITE_API_BASE_URL: /api
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["8080:80"]
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    command: ["node", "worker/agent.mjs"]
+    environment:
+      NODE_ENV: production
+      KESTREL_API_URL: http://api:4000
+      KESTREL_WORKER_ID: ${KESTREL_WORKER_ID}
+      KESTREL_WORKER_TOKEN: ${KESTREL_WORKER_TOKEN}
+      KESTREL_WORKER_WORKDIR: ${KESTREL_WORKER_HOST_WORKDIR:-/srv/kestrel-worker}
+      KESTREL_REGION: ${KESTREL_REGION:-local}
+      KESTREL_CONCURRENCY: ${KESTREL_CONCURRENCY:-2}
+      KESTREL_JOB_IMAGE: ${KESTREL_JOB_IMAGE}
+      KESTREL_JOB_NETWORK: ${KESTREL_JOB_NETWORK:-none}
+      KESTREL_JOB_DEFAULT_MEMORY_MB: ${KESTREL_JOB_DEFAULT_MEMORY_MB:-2048}
+      KESTREL_JOB_PIDS_LIMIT: ${KESTREL_JOB_PIDS_LIMIT:-256}
+      KESTREL_JOB_TIMEOUT_MS: ${KESTREL_JOB_TIMEOUT_MS:-1800000}
+      KESTREL_GIT_TIMEOUT_MS: ${KESTREL_GIT_TIMEOUT_MS:-300000}
+      KESTREL_DOCKER_BIN: ${KESTREL_DOCKER_BIN:-docker}
+    volumes:
+      - ${KESTREL_WORKER_HOST_WORKDIR:-/srv/kestrel-worker}:${KESTREL_WORKER_HOST_WORKDIR:-/srv/kestrel-worker}
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["workers"]
