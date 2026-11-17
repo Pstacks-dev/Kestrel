@@ -9,7 +9,7 @@ Kestrel is a CI/CD control plane with a React/Vite dashboard, an Express API, Po
 - **Database:** Supabase PostgreSQL.
 - **Execution:** Linux worker agents poll for jobs and run them in Docker containers.
 - **Queue:** PostgreSQL transactions and `FOR UPDATE SKIP LOCKED` coordinate claims.
-- **Security:** Kestrel-managed six-digit email OTP verification, PBKDF2 password hashes, signed JWT sessions, HMAC-signed GitHub webhooks, one-way worker-token hashes, AES-GCM encrypted project secrets, per-job container limits.
+- **Security:** Supabase Auth email confirmation, password handling and JWT sessions, HMAC-signed GitHub webhooks, one-way worker-token hashes, AES-GCM encrypted project secrets, per-job container limits.
 
 ## Current capabilities
 
@@ -87,4 +87,4 @@ See [DEPLOYMENT_READINESS.md](./DEPLOYMENT_READINESS.md) for release configurati
 
 ## Email verification
 
-New accounts use Kestrel-managed email OTP instead of Supabase Auth email delivery. Configure the server-side SMTP variables and apply migration `004_kestrel_email_otp.sql` before accepting registrations. See [EMAIL_OTP_SETUP.md](./EMAIL_OTP_SETUP.md) for Gmail SMTP and Vercel setup.
+New accounts use Supabase Auth signup with email confirmation. Configure SMTP in the Supabase project's Authentication settings and use the signup verification-code form in the web app. The API validates Supabase access tokens; keep the Supabase service-role key and database URL server-side only. Do not disable email confirmation in production.
