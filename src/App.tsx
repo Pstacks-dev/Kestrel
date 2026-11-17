@@ -620,7 +620,10 @@ function AppShell({ page }: { page: Page }) {
         go('login');
         throw new Error('Your session expired. Please sign in again.');
       }
-      if (!ws.ok) throw new Error('Could not load workspaces');
+      if (!ws.ok) {
+        const failure = await ws.json().catch(() => ({}));
+        throw new Error(failure.error || `Workspace service returned HTTP ${ws.status}. Check the API health endpoint or contact your workspace administrator.`);
+      }
       let list = await ws.json();
 
       if (!list.length) {
