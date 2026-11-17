@@ -12,11 +12,12 @@ This document records what the repository can do and what must be configured bef
 - Encrypted project secrets and log redaction.
 - Worker enrollment issues a one-time credential; only a hash is stored.
 - Docker worker agent supports isolated execution, bounded concurrency, job timeouts and graceful draining.
-- Security hardening migration is tracked in `db/migrations/005_internal_access_and_artifact_bucket.sql`.
+- Security hardening and private artifact bucket are tracked in `db/migrations/005_internal_access_and_artifact_bucket.sql`.
+- Artifact checksum columns and deployment target/history schema are tracked in migrations `006_artifact_integrity_and_deployments.sql` and `007_deployment_rollback_source.sql`.
 
 ## Not complete / not certified
 
-- Artifact byte transfer is implemented: worker uploads are lease-authorized, size-checked and SHA-256 verified in a private Supabase bucket; workspace members receive short-lived signed download links. This still requires a real worker upload/download test.
+- Artifact byte transfer is implemented: workers receive lease-bound signed upload tokens, upload directly to private Supabase Storage, and the control plane verifies size and SHA-256 before making files downloadable; workspace members receive short-lived signed download links. This still requires a real worker upload/download test.
 - Vercel and Netlify provider adapters, deployment history, owner/admin approval/rejection, provider status refresh and rollback are implemented. They still require real provider credentials and end-to-end tests before CD is certified.
 - A worker agent is not a managed fleet. A Linux host, Docker Engine, network policy, monitoring, backup and a frequent lease-recovery scheduler must be provisioned separately.
 - Signup and workspace creation have not been live-tested against a newly created account in production Vercel.
