@@ -413,6 +413,9 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     try {
       const sb = requireSupabase();
       if (awaitingOtp) {
+        if (!/^\\d{6}$/.test(otp.trim())) {
+          throw new Error('Enter the complete 6-digit verification code.');
+        }
         const { data, error } = await sb.auth.verifyOtp({
           email: email.trim().toLowerCase(),
           token: otp.trim(),
