@@ -405,7 +405,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [awaitingOtp, setAwaitingOtp] = useState(false);
 
   async function apiRequest(path: string, body: Record<string, unknown>) {
-    const response = await fetch(\`\${api}/auth/\${path}\`, {
+    const response = await fetch(`${api}/auth/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -496,7 +496,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
         <div className="auth-form-wrap">
           <div className="auth-kicker">{awaitingOtp ? 'EMAIL VERIFICATION' : mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
           <h2>{awaitingOtp ? 'Check your inbox' : mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
-          <p>{awaitingOtp ? \`Enter the 6-digit code sent to \${email}.\` : mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
+          <p>{awaitingOtp ? `Enter the 6-digit code sent to ${email}.` : mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
           <form onSubmit={submit}>
             {!awaitingOtp && mode === 'signup' && (
               <label>Full name<input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" /></label>
@@ -589,8 +589,8 @@ function AppShell({ page }: { page: Page }) {
       }
       setAccessToken(token);
 
-      let ws = await fetch(\`\${api}/workspaces\`, {
-        headers: { Authorization: \`Bearer \${token}\` },
+      let ws = await fetch(`${api}/workspaces`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (ws.status === 401) {
         localStorage.removeItem('kestrel_access_token');
@@ -601,9 +601,9 @@ function AppShell({ page }: { page: Page }) {
       let list = await ws.json();
 
       if (!list.length) {
-        const created = await fetch(\`\${api}/workspaces\`, {
+        const created = await fetch(`${api}/workspaces`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: \`Bearer \${token}\` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ name: 'Personal Workspace' }),
         });
         if (!created.ok) throw new Error('Could not create your workspace');
@@ -612,8 +612,8 @@ function AppShell({ page }: { page: Page }) {
 
       const org = list[0].id;
       setOrganizationId(org);
-      const s = await fetch(\`\${api}/snapshot?organizationId=\${org}\`, {
-        headers: { Authorization: \`Bearer \${token}\` },
+      const s = await fetch(`${api}/snapshot?organizationId=${org}`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (!s.ok) throw new Error('Could not load workspace data');
       const snapData = await s.json();
