@@ -465,6 +465,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
         go('overview');
       }
     } catch (e: any) {
+      if (mode === 'signup' && /signup is saved/i.test(e.message || '')) setAwaitingOtp(true);
       setError(e.message || 'Authentication failed.');
     } finally {
       setBusy(false);
