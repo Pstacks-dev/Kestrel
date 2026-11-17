@@ -602,7 +602,9 @@ app.get('/api/projects/:projectId/webhook-config', userAuth, async (req, res) =>
        where p.id = $1 and m.user_id = $2`,
       [projectId, req.user.id]
     );
-    if (!authCheck.rowCount) return res.status(403).json({ error: 'Project access denied' });
+    if (!authCheck.rowCount || !['owner', 'admin', 'developer'].includes(authCheck.rows[0].role)) {
+      return res.status(403).json({ error: 'Developer access required to view webhook signing credentials' });
+    }
 
     let r = await query(
       'select id, webhook_secret as "webhookSecret", events, active, last_triggered_at as "lastTriggeredAt" from public.github_webhooks where project_id = $1',
@@ -714,8 +716,10 @@ app.post('/api/webhooks/github', async (req, res) => {
       );
       if (!delivery.rowCount) return { duplicate: true };
 
+      // Serialize run-number allocation per project. Locking an aggregate SELECT is invalid in PostgreSQL.
+      await c.query('select id from public.projects where id = $1 for update', [project.id]);
       const n = await c.query(
-        'select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1 for update',
+        'select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1',
         [project.id]
       );
       const rr = await c.query(
