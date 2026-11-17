@@ -35,16 +35,16 @@ After setting `SUPABASE_DB_URL` to the Supabase transaction-pooler connection st
 npm run migrate
 ```
 
-This applies `004_kestrel_email_otp.sql`, which creates a private pending-signup table and adds the email confirmation timestamp. Existing accounts are preserved; new accounts are created only after a valid code is submitted.
+This applies `004_kestrel_email_otp.sql`, which creates a private pending-signup table and preserves existing accounts. New users are created as unconfirmed Supabase Auth users; Kestrel only confirms them after a valid code is submitted.
 
 ## Signup behavior
 
 1. The user submits their name, email and password.
-2. Kestrel stores a salted password hash and an HMAC of a cryptographically generated six-digit code. It does not store the plaintext code.
+2. Kestrel creates an unconfirmed account through Supabase's server-only Auth Admin API and stores an HMAC of a cryptographically generated six-digit code. It never stores the plaintext code or a second copy of the password.
 3. Kestrel sends a branded verification email.
 4. The code expires after five minutes. Five incorrect attempts invalidate the pending signup.
 5. Resending is limited to once per 60 seconds and five resends per pending signup.
-6. After successful verification, Kestrel creates the account and returns a signed session token.
+6. After successful verification, Kestrel marks the Supabase Auth account as email-confirmed. The user then signs in and receives a normal Supabase access/refresh-token session.
 
 ## API endpoints
 
