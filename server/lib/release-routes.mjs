@@ -216,7 +216,7 @@ export function registerReleaseRoutes(app, deps) {
           'select m.role from public.projects p join public.organization_members m on m.organization_id=p.organization_id where p.id=$1 and m.user_id=$2',
           [req.params.projectId, req.user.id]
         );
-        if (!access.rowCount || !['owner','admin','developer'].includes(access.rows[0].role)) throw Object.assign(new Error('Developer access required'), { status: 403 });
+        if (!access.rowCount || !['owner','admin'].includes(access.rows[0].role)) throw Object.assign(new Error('Workspace owner or admin access required to configure provider credentials'), { status: 403 });
         const target = await client.query(
           'insert into public.deployment_targets(project_id,provider,name,provider_site_id,provider_team_id,target_environment,approval_required,created_by) values($1,$2,$3,$4,$5,$6,$7,$8) returning id,project_id as "projectId",provider,name,provider_site_id as "providerSiteId",target_environment as environment,approval_required as "approvalRequired",active,created_at as "createdAt"',
           [req.params.projectId, body.provider, body.name.trim().slice(0,120), body.providerSiteId.trim(), body.providerTeamId ? String(body.providerTeamId).trim() : null, body.environment || 'production', body.approvalRequired !== false, req.user.id]
