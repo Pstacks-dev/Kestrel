@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-export async function deployNetlifyArtifacts({ siteId, token, branch, commitSha, runId, query, supabaseAdmin, bucket }) {
+export async function deployNetlifyArtifacts({ siteId, token, branch, commitSha, runId, environment = 'production', query, supabaseAdmin, bucket }) {
   if (!supabaseAdmin) throw new Error('Private artifact storage is not configured for Netlify deployments.');
   const result = await query(
     "select name,object_key,content_type from public.artifacts where run_id=$1 and uploaded_at is not null and (name like 'dist/%' or name like 'build/%') order by name",
@@ -28,7 +28,7 @@ export async function deployNetlifyArtifacts({ siteId, token, branch, commitSha,
       files,
       branch,
       title: 'Kestrel release ' + String(commitSha).slice(0, 8),
-      draft: false
+      draft: environment === 'preview'
     })
   });
   const text = await response.text();
