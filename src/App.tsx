@@ -1630,6 +1630,7 @@ function AppShell({ page }: { page: Page }) {
             projects={snapshot?.projects || []}
             runs={snapshot?.runs || []}
             setMessage={setActionMessage}
+            message={actionMessage}
           />
         )}
 
