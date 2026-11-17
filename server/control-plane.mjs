@@ -18,6 +18,7 @@ import {
   signJwt,
   verifyJwt,
 } from './lib/auth.mjs';
+import { sendEmail } from './lib/email.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -184,110 +185,255 @@ async function orgAccess(req, res, next) {
 }
 
 // ==========================================
-// Built-in Authentication (Standalone Mode)
+// Kestrel-managed email OTP authentication
 // ==========================================
+function otpDigest(email, code) {
+  const pepper = process.env.KESTREL_OTP_PEPPER || process.env.KESTREL_ENCRYPTION_KEY;
+  if (!pepper || pepper.length < 32) {
+    throw new Error('KESTREL_ENCRYPTION_KEY (or KESTREL_OTP_PEPPER) must contain at least 32 characters.');
+  }
+  return crypto.createHmac('sha256', pepper).update(\`\${email}:\${code}\`).digest('hex');
+}
+
+function safeDigestEqual(left, right) {
+  const a = Buffer.from(String(left || ''), 'hex');
+  const b = Buffer.from(String(right || ''), 'hex');
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
+function escapeEmailHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char]);
+}
+
+function otpEmail({ fullName, code }) {
+  const safeName = escapeEmailHtml(fullName || 'there');
+  return {
+    subject: 'Your Kestrel verification code',
+    text: \`Hi \${fullName || 'there'},\n\nYour Kestrel verification code is \${code}.\n\nThis code expires in 5 minutes. If you did not request this, you can ignore this email.\n\n— Kestrel Systems\`,
+    html: \`<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:32px 12px;font-family:Arial,sans-serif;color:#172033"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:36px"><tr><td><div style="font-size:20px;font-weight:700;letter-spacing:-.5px">kestrel<span style="color:#64748b">.</span></div><p style="margin:28px 0 8px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:1px">EMAIL VERIFICATION</p><h1 style="font-size:24px;margin:0 0 12px">Confirm your email</h1><p style="font-size:15px;line-height:1.6">Hi \${safeName}, use the verification code below to finish creating your Kestrel account.</p><div style="margin:28px 0;padding:18px;text-align:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;font-size:32px;font-weight:700;letter-spacing:9px">\${code}</div><p style="font-size:13px;color:#64748b;line-height:1.6">This code expires in <strong>5 minutes</strong>. Kestrel will never ask you to share this code with anyone.</p><p style="font-size:13px;color:#64748b;margin-top:28px">If you did not create a Kestrel account, you can safely ignore this message.</p><p style="font-size:13px;color:#64748b;margin-top:24px">— Kestrel Systems</p></td></tr></table></td></tr></table></body></html>\`,
+  };
+}
+
 app.post('/api/auth/signup', authLimiter, async (req, res) => {
-  const { email, password, fullName } = req.body || {};
-  if (!email || !email.includes('@') || !password || password.length < 8) {
-    return res.status(400).json({ error: 'Valid email and password (minimum 8 chars) required' });
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  const fullName = String(req.body?.fullName || '').trim().slice(0, 120) || email.split('@')[0];
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || password.length > 256) {
+    return res.status(400).json({ error: 'Enter a valid email address and a password of at least 8 characters.' });
   }
 
   try {
-    const { salt, hash } = hashPassword(password);
     const existing = await query('select id from auth.users where lower(email) = lower($1)', [email]);
     if (existing.rowCount) {
-      return res.status(409).json({ error: 'An account with this email already exists' });
+      return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
     }
 
-    // First registered user is automatically promoted to platform_admin
-    const countRes = await query('select count(*)::int n from auth.users');
-    const isFirstUser = countRes.rows[0].n === 0;
-    const appMeta = isFirstUser ? { platform_role: 'platform_admin' } : {};
-    const userMeta = { full_name: fullName || email.split('@')[0] };
+    const { salt, hash } = hashPassword(password);
+    const code = String(crypto.randomInt(100000, 1000000));
+    await query(
+      \`insert into public.kestrel_pending_signups
+         (email, password_hash, full_name, otp_hash, expires_at, attempts, resend_count, last_sent_at, created_at)
+       values ($1, $2, $3, $4, now() + interval '5 minutes', 0, 0, now(), now())
+       on conflict (email) do update set
+         password_hash = excluded.password_hash,
+         full_name = excluded.full_name,
+         otp_hash = excluded.otp_hash,
+         expires_at = excluded.expires_at,
+         attempts = 0,
+         resend_count = 0,
+         last_sent_at = now(),
+         created_at = now()\`,
+      [email, \`\${salt}:\${hash}\`, fullName, otpDigest(email, code)]
+    );
 
-    const newUser = await transaction(async (c) => {
-      const u = await c.query(
-        `insert into auth.users(email, encrypted_password, raw_app_meta_data, raw_user_meta_data)
-         values(lower($1), $2, $3, $4)
-         returning id, email, raw_app_meta_data, raw_user_meta_data`,
-        [email, `${salt}:${hash}`, JSON.stringify(appMeta), JSON.stringify(userMeta)]
+    try {
+      await sendEmail({ to: email, ...otpEmail({ fullName, code }) });
+    } catch (mailError) {
+      console.error('Signup OTP email delivery failed:', mailError.message);
+      return res.status(503).json({ error: 'Your signup is saved, but Kestrel could not send the verification email. Check the email settings and try Resend code.' });
+    }
+
+    return res.status(202).json({
+      requiresVerification: true,
+      message: 'A six-digit verification code has been sent to your email. It expires in 5 minutes.',
+    });
+  } catch (e) {
+    console.error('Signup error:', e);
+    return res.status(500).json({ error: 'Could not start account registration.' });
+  }
+});
+
+app.post('/api/auth/resend-otp', authLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Enter a valid email address.' });
+  }
+
+  try {
+    const result = await transaction(async (c) => {
+      const pending = await c.query(
+        'select email, full_name, resend_count, last_sent_at from public.kestrel_pending_signups where email = $1 for update',
+        [email]
       );
-      const user = u.rows[0];
+      if (!pending.rowCount) return { status: 'not_found' };
+      const row = pending.rows[0];
+      if (Date.now() - new Date(row.last_sent_at).getTime() < 60_000) return { status: 'cooldown' };
+      if (row.resend_count >= 5) return { status: 'limit' };
+
+      const code = String(crypto.randomInt(100000, 1000000));
+      await c.query(
+        \`update public.kestrel_pending_signups
+         set otp_hash = $2, expires_at = now() + interval '5 minutes',
+             attempts = 0, resend_count = resend_count + 1, last_sent_at = now()
+         where email = $1\`,
+        [email, otpDigest(email, code)]
+      );
+      return { status: 'sent', code, fullName: row.full_name };
+    });
+
+    if (result.status === 'cooldown') return res.status(429).json({ error: 'Please wait 60 seconds before requesting another code.' });
+    if (result.status === 'limit') return res.status(429).json({ error: 'You have reached the resend limit. Please try again later.' });
+    if (result.status === 'not_found') return res.status(404).json({ error: 'No pending signup was found. Start registration again.' });
+
+    try {
+      await sendEmail({ to: email, ...otpEmail({ fullName: result.fullName, code: result.code }) });
+    } catch (mailError) {
+      console.error('Resend OTP email delivery failed:', mailError.message);
+      return res.status(503).json({ error: 'Kestrel could not send the email. Please check the SMTP settings and try again shortly.' });
+    }
+    return res.json({ message: 'A new verification code has been sent. It expires in 5 minutes.' });
+  } catch (e) {
+    console.error('Resend OTP error:', e);
+    return res.status(500).json({ error: 'Could not resend verification code.' });
+  }
+});
+
+app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const code = String(req.body?.code || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Enter a valid email address and the complete six-digit code.' });
+  }
+
+  try {
+    const result = await transaction(async (c) => {
+      const pendingResult = await c.query(
+        'select * from public.kestrel_pending_signups where email = $1 for update',
+        [email]
+      );
+      if (!pendingResult.rowCount) return { status: 'missing' };
+      const pending = pendingResult.rows[0];
+
+      if (new Date(pending.expires_at).getTime() <= Date.now()) {
+        await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
+        return { status: 'expired' };
+      }
+
+      if (!safeDigestEqual(pending.otp_hash, otpDigest(email, code))) {
+        const nextAttempts = pending.attempts + 1;
+        if (nextAttempts >= 5) {
+          await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
+          return { status: 'locked' };
+        }
+        await c.query('update public.kestrel_pending_signups set attempts = $2 where email = $1', [email, nextAttempts]);
+        return { status: 'invalid', attemptsLeft: 5 - nextAttempts };
+      }
+
+      await c.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', ['kestrel-first-account']);
+      const existing = await c.query('select id from auth.users where lower(email) = lower($1)', [email]);
+      if (existing.rowCount) {
+        await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
+        return { status: 'exists' };
+      }
+
+      const countRes = await c.query('select count(*)::int n from auth.users');
+      const appMeta = countRes.rows[0].n === 0 ? { platform_role: 'platform_admin' } : {};
+      const userMeta = { full_name: pending.full_name };
+      const [salt, passwordHash] = pending.password_hash.split(':');
+      const inserted = await c.query(
+        \`insert into auth.users(email, encrypted_password, raw_app_meta_data, raw_user_meta_data, email_confirmed_at)
+         values(lower($1), $2, $3, $4, now())
+         returning id, email, raw_app_meta_data, raw_user_meta_data\`,
+        [email, \`\${salt}:\${passwordHash}\`, JSON.stringify(appMeta), JSON.stringify(userMeta)]
+      );
+      const user = inserted.rows[0];
       await c.query(
         'insert into public.profiles(id, full_name) values($1, $2) on conflict (id) do nothing',
         [user.id, userMeta.full_name]
       );
-      return user;
+      await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
+      return { status: 'verified', user, appMeta, userMeta };
     });
 
+    if (result.status === 'missing') return res.status(400).json({ error: 'No pending signup was found. Please create your account again.' });
+    if (result.status === 'expired') return res.status(400).json({ error: 'That code has expired. Request a new code.' });
+    if (result.status === 'locked') return res.status(429).json({ error: 'Too many incorrect codes. Start registration again to receive a new code.' });
+    if (result.status === 'invalid') return res.status(400).json({ error: \`Incorrect verification code. \${result.attemptsLeft} attempt(s) remaining.\` });
+    if (result.status === 'exists') return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+
+    const user = result.user;
     const token = signJwt({
-      sub: newUser.id,
-      email: newUser.email,
-      app_metadata: appMeta,
-      user_metadata: userMeta,
+      sub: user.id,
+      email: user.email,
+      app_metadata: result.appMeta,
+      user_metadata: result.userMeta,
     });
-
-    res.status(201).json({
+    return res.status(201).json({
       user: {
-        id: newUser.id,
-        email: newUser.email,
-        app_metadata: appMeta,
-        user_metadata: userMeta,
+        id: user.id,
+        email: user.email,
+        app_metadata: result.appMeta,
+        user_metadata: result.userMeta,
       },
-      session: {
-        access_token: token,
-        token_type: 'bearer',
-      },
+      session: { access_token: token, token_type: 'bearer' },
     });
   } catch (e) {
-    console.error('Signup error:', e);
-    res.status(500).json({ error: 'Could not create account' });
+    console.error('OTP verification error:', e);
+    return res.status(500).json({ error: 'Could not verify your email address.' });
   }
 });
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password required' });
-  }
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
 
   try {
     const r = await query('select * from auth.users where lower(email) = lower($1)', [email]);
-    if (!r.rowCount) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
+    if (!r.rowCount) return res.status(401).json({ error: 'Invalid email or password.' });
 
     const user = r.rows[0];
     const [salt, storedHash] = (user.encrypted_password || '').split(':');
     if (!salt || !storedHash || !verifyPassword(password, salt, storedHash)) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+    if (!user.email_confirmed_at) {
+      return res.status(403).json({ error: 'Please verify your email address before signing in.' });
     }
 
     const appMeta = user.raw_app_meta_data || {};
     const userMeta = user.raw_user_meta_data || {};
-
     const token = signJwt({
       sub: user.id,
       email: user.email,
       app_metadata: appMeta,
       user_metadata: userMeta,
     });
-
-    res.json({
+    return res.json({
       user: {
         id: user.id,
         email: user.email,
         app_metadata: appMeta,
         user_metadata: userMeta,
       },
-      session: {
-        access_token: token,
-        token_type: 'bearer',
-      },
+      session: { access_token: token, token_type: 'bearer' },
     });
   } catch (e) {
     console.error('Login error:', e);
-    res.status(500).json({ error: 'Authentication failed' });
+    return res.status(500).json({ error: 'Authentication failed.' });
   }
 });
 
