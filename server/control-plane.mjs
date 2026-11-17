@@ -63,7 +63,7 @@ app.use(
 // General rate limiter
 const generalLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 3000,
+  limit: 600,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -72,7 +72,15 @@ app.use(generalLimiter);
 // Stricter limiter for sensitive auth and admin actions
 const sensitiveLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 120,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Password and account-creation endpoints need a much tighter per-IP ceiling.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -178,7 +186,7 @@ async function orgAccess(req, res, next) {
 // ==========================================
 // Built-in Authentication (Standalone Mode)
 // ==========================================
-app.post('/api/auth/signup', sensitiveLimiter, async (req, res) => {
+app.post('/api/auth/signup', authLimiter, async (req, res) => {
   const { email, password, fullName } = req.body || {};
   if (!email || !email.includes('@') || !password || password.length < 8) {
     return res.status(400).json({ error: 'Valid email and password (minimum 8 chars) required' });
@@ -237,7 +245,7 @@ app.post('/api/auth/signup', sensitiveLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', sensitiveLimiter, async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password required' });
