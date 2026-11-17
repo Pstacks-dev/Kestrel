@@ -401,6 +401,9 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [otp, setOtp] = useState('');
+  const [awaitingOtp, setAwaitingOtp] = useState(false);
+  const [canResend, setCanResend] = useState(false);
 
   async function submit(e: any) {
     e.preventDefault();
@@ -409,21 +412,66 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     setMessage('');
     try {
       const sb = requireSupabase();
+      if (awaitingOtp) {
+        const { data, error } = await sb.auth.verifyOtp({
+          email: email.trim().toLowerCase(),
+          token: otp.trim(),
+          type: 'signup',
+        });
+        if (error) throw error;
+        if (!data.session) throw new Error('Your email was verified, but no session was created. Please sign in.');
+        go('overview');
+        return;
+      }
+
       if (mode === 'signup') {
-        const { data, error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
+        const { data, error } = await sb.auth.signUp({
+          email: email.trim().toLowerCase(),
+          password,
+          options: { data: { full_name: name.trim() } },
+        });
         if (error) throw error;
         if (!data.session) {
-          setMessage('Check your email to confirm your account, then sign in.');
+          setAwaitingOtp(true);
+          setCanResend(true);
+          setMessage('We sent a 6-digit verification code to your email. Enter it below to activate your Kestrel account.');
           return;
         }
         go('overview');
       } else {
-        const { error } = await sb.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        const { error } = await sb.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        });
+        if (error) {
+          if (/email not confirmed/i.test(error.message)) setCanResend(true);
+          throw error;
+        }
         go('overview');
       }
     } catch (e: any) {
       setError(e.message || 'Authentication failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendCode() {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const sb = requireSupabase();
+      const { error } = await sb.auth.resend({
+        type: 'signup',
+        email: email.trim().toLowerCase(),
+        options: { emailRedirectTo: window.location.origin + '/login' },
+      });
+      if (error) throw error;
+      setAwaitingOtp(true);
+      setMessage('A new verification code has been sent. Check your inbox and spam folder.');
+    } catch (e: any) {
+      setError(e.message || 'Could not resend verification code');
     } finally {
       setBusy(false);
     }
@@ -461,38 +509,64 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
           ← Back to home
         </button>
         <div className="auth-form-wrap">
-          <div className="auth-kicker">{mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
-          <h2>{mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
-          <p>{mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
+          <div className="auth-kicker">{awaitingOtp ? 'EMAIL VERIFICATION' : mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
+          <h2>{awaitingOtp ? 'Check your inbox' : mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
+          <p>
+            {awaitingOtp
+              ? `Enter the 6-digit code sent to ${email}.`
+              : mode === 'login'
+                ? 'Continue to your delivery workspace.'
+                : 'Start orchestrating builds across your infrastructure.'}
+          </p>
           <form onSubmit={submit}>
-            {mode === 'signup' && (
+            {!awaitingOtp && mode === 'signup' && (
               <label>
                 Full name
                 <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" />
               </label>
             )}
-            <label>
-              Work email
-              <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" />
-            </label>
-            <label>
-              Password
-              <div className="password-input">
+            {!awaitingOtp && (
+              <label>
+                Work email
+                <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" />
+              </label>
+            )}
+            {!awaitingOtp && (
+              <label>
+                Password
+                <div className="password-input">
+                  <input
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    type={show ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    placeholder="At least 8 characters"
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  />
+                  <button type="button" onClick={() => setShow(!show)}>
+                    {show ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </label>
+            )}
+            {awaitingOtp && (
+              <label>
+                6-digit email code
                 <input
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  type={show ? 'text' : 'password'}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\\D/g, '').slice(0, 6))}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  minLength={6}
+                  maxLength={6}
                   required
-                  minLength={8}
-                  placeholder="At least 8 characters"
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  placeholder="000000"
                 />
-                <button type="button" onClick={() => setShow(!show)}>
-                  {show ? 'Hide' : 'Show'}
-                </button>
-              </div>
-            </label>
-            {mode === 'signup' && (
+              </label>
+            )}
+            {!awaitingOtp && mode === 'signup' && (
               <label className="checkline">
                 <input type="checkbox" required /> I agree to the terms and privacy policy.
               </label>
@@ -500,22 +574,36 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
             {error && <div className="notice text-red-600">{error}</div>}
             {message && <div className="notice text-green-600">{message}</div>}
             <button disabled={busy} className="btn btn-dark auth-submit">
-              {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
+              {busy ? 'Please wait…' : awaitingOtp ? 'Verify email' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
             </button>
           </form>
-          <div className="auth-switch">
-            {mode === 'login' ? (
-              <>
-                New to Kestrel? <button onClick={() => go('signup')}>Create an account</button>
-              </>
-            ) : (
-              <>
-                Already have an account? <button onClick={() => go('login')}>Sign in</button>
-              </>
-            )}
-          </div>
+          {canResend && !awaitingOtp && (
+            <button className="text-cta" type="button" disabled={busy || !email.includes('@')} onClick={resendCode}>
+              Resend email verification code
+            </button>
+          )}
+          {awaitingOtp && (
+            <div className="auth-switch">
+              Didn't receive it? <button disabled={busy} onClick={resendCode}>Resend code</button>
+              <span> · </span>
+              <button onClick={() => { setAwaitingOtp(false); setOtp(''); setError(''); setMessage(''); }}>Change details</button>
+            </div>
+          )}
+          {!awaitingOtp && (
+            <div className="auth-switch">
+              {mode === 'login' ? (
+                <>
+                  New to Kestrel? <button onClick={() => go('signup')}>Create an account</button>
+                </>
+              ) : (
+                <>
+                  Already have an account? <button onClick={() => go('login')}>Sign in</button>
+                </>
+              )}
+            </div>
+          )}
           <div className="auth-security">
-            <LockKeyhole size={14} /> Authentication powered by Supabase Auth
+            <LockKeyhole size={14} /> Secure email verification · Kestrel
           </div>
         </div>
         <div className="auth-copyright">
