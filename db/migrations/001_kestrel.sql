@@ -1,18 +1,23 @@
 create extension if not exists pgcrypto;
-create schema if not exists auth;
 
-create table if not exists auth.users (
-  id uuid primary key default gen_random_uuid(),
-  email text unique,
-  encrypted_password text,
-  raw_app_meta_data jsonb default '{}'::jsonb,
-  raw_user_meta_data jsonb default '{}'::jsonb,
-  created_at timestamptz default now()
-);
-
-create or replace function auth.uid()
-returns uuid language sql stable as $$
-  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+do $$
+begin
+  if not exists (select 1 from pg_namespace where nspname = 'auth') then
+    execute 'create schema auth';
+    execute 'create table auth.users (
+      id uuid primary key default gen_random_uuid(),
+      email text unique,
+      encrypted_password text,
+      raw_app_meta_data jsonb default ''{}''::jsonb,
+      raw_user_meta_data jsonb default ''{}''::jsonb,
+      created_at timestamptz default now()
+    )';
+    execute 'create or replace function auth.uid()
+      returns uuid language sql stable as $f$
+        select nullif(current_setting(''request.jwt.claim.sub'', true), '''')::uuid;
+      $f$';
+  end if;
+end;
 $$;
 
 create table if not exists public.profiles (
@@ -164,19 +169,46 @@ alter table public.artifacts enable row level security;
 alter table public.audit_events enable row level security;
 alter table public.system_settings enable row level security;
 
+drop policy if exists "profile self read/update" on public.profiles;
 create policy "profile self read/update" on public.profiles for all using(id=auth.uid()) with check(id=auth.uid());
+
+drop policy if exists "members read organizations" on public.organizations;
 create policy "members read organizations" on public.organizations for select using(public.is_org_member(id));
+
+drop policy if exists "organization owner create" on public.organizations;
 create policy "organization owner create" on public.organizations for insert with check(created_by=auth.uid());
+
+drop policy if exists "members read membership" on public.organization_members;
 create policy "members read membership" on public.organization_members for select using(public.is_org_member(organization_id));
+
+drop policy if exists "admins manage members" on public.organization_members;
 create policy "admins manage members" on public.organization_members for all using(public.is_org_admin(organization_id)) with check(public.is_org_admin(organization_id));
+
+drop policy if exists "members read projects" on public.projects;
 create policy "members read projects" on public.projects for select using(public.is_org_member(organization_id));
+
+drop policy if exists "developers manage projects" on public.projects;
 create policy "developers manage projects" on public.projects for all using(exists(select 1 from public.organization_members m where m.organization_id=projects.organization_id and m.user_id=auth.uid() and m.role in ('owner','admin','developer'))) with check(exists(select 1 from public.organization_members m where m.organization_id=projects.organization_id and m.user_id=auth.uid() and m.role in ('owner','admin','developer')));
+
+drop policy if exists "members read pipelines" on public.pipelines;
 create policy "members read pipelines" on public.pipelines for select using(exists(select 1 from public.projects p where p.id=project_id and public.is_org_member(p.organization_id)));
+
+drop policy if exists "members read runs" on public.pipeline_runs;
 create policy "members read runs" on public.pipeline_runs for select using(exists(select 1 from public.projects p where p.id=project_id and public.is_org_member(p.organization_id)));
+
+drop policy if exists "members read jobs" on public.jobs;
 create policy "members read jobs" on public.jobs for select using(exists(select 1 from public.pipeline_runs r join public.projects p on p.id=r.project_id where r.id=run_id and public.is_org_member(p.organization_id)));
+
+drop policy if exists "members read logs" on public.job_logs;
 create policy "members read logs" on public.job_logs for select using(exists(select 1 from public.jobs j join public.pipeline_runs r on r.id=j.run_id join public.projects p on p.id=r.project_id where j.id=job_id and public.is_org_member(p.organization_id)));
+
+drop policy if exists "members read workers" on public.workers;
 create policy "members read workers" on public.workers for select using(public.is_org_member(organization_id));
+
+drop policy if exists "members read artifacts" on public.artifacts;
 create policy "members read artifacts" on public.artifacts for select using(exists(select 1 from public.pipeline_runs r join public.projects p on p.id=r.project_id where r.id=run_id and public.is_org_member(p.organization_id)));
+
+drop policy if exists "admins read audit" on public.audit_events;
 create policy "admins read audit" on public.audit_events for select using(organization_id is not null and public.is_org_admin(organization_id));
 
 -- Provision the first platform administrator manually after creating their Supabase Auth user:

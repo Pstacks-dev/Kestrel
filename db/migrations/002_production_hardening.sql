@@ -114,6 +114,7 @@ alter table public.project_secrets enable row level security;
 alter table public.github_webhooks enable row level security;
 
 -- Members can see secret names (not the decrypted values)
+drop policy if exists "members read secret names" on public.project_secrets;
 create policy "members read secret names" on public.project_secrets
   for select using (
     exists(
@@ -123,6 +124,7 @@ create policy "members read secret names" on public.project_secrets
   );
 
 -- Developers and admins can manage project secrets
+drop policy if exists "developers manage secrets" on public.project_secrets;
 create policy "developers manage secrets" on public.project_secrets
   for all using (
     exists(
@@ -140,6 +142,7 @@ create policy "developers manage secrets" on public.project_secrets
   );
 
 -- Developers and admins can manage webhooks
+drop policy if exists "developers manage webhooks" on public.github_webhooks;
 create policy "developers manage webhooks" on public.github_webhooks
   for all using (
     exists(
