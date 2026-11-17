@@ -211,6 +211,18 @@ export function registerReleaseRoutes(app, deps) {
       return res.status(400).json({ error: 'Provider, target name, provider project/site ID, access token and environment are required.' });
     }
     try {
+      let verifyUrl;
+      if (body.provider === 'vercel') {
+        verifyUrl = new URL('https://api.vercel.com/v9/projects/' + encodeURIComponent(body.providerSiteId.trim()));
+        if (body.providerTeamId) verifyUrl.searchParams.set('teamId', String(body.providerTeamId).trim());
+      } else {
+        verifyUrl = new URL('https://api.netlify.com/api/v1/sites/' + encodeURIComponent(body.providerSiteId.trim()));
+      }
+      const providerCheck = await fetch(verifyUrl, {
+        headers: { Authorization: 'Bearer ' + body.token },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!providerCheck.ok) return res.status(400).json({ error: 'Provider credentials or project/site ID could not be verified. Check the token scope and target ID.' });
       const result = await transaction(async (client) => {
         const access = await client.query(
           'select m.role from public.projects p join public.organization_members m on m.organization_id=p.organization_id where p.id=$1 and m.user_id=$2',
