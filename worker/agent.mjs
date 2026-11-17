@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 import { redactSecrets } from '../server/lib/security.mjs';
 
 const API = process.env.KESTREL_API_URL || '';
@@ -16,6 +17,12 @@ const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK || 'none';
 const EXECUTOR = process.env.KESTREL_WORKER_EXECUTOR || 'docker'; // 'docker' | 'local' | 'mock'
+
+const STORAGE_URL = process.env.SUPABASE_URL || '';
+const STORAGE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const storageClient = STORAGE_URL && STORAGE_ANON_KEY
+  ? createClient(STORAGE_URL, STORAGE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 if (!API) throw new Error('KESTREL_API_URL is required; refusing to default to localhost');
@@ -343,20 +350,21 @@ async function collectArtifacts(job, workspace) {
       });
       if (!registered?.id) throw new Error('Artifact registration did not return an artifact ID for ' + name);
 
-      const uploaded = await fetch(API + '/api/workers/jobs/' + job.id + '/artifacts/' + registered.id + '/content', {
-        method: 'PUT',
-        headers: {
-          ...headers,
-          'content-type': 'application/octet-stream',
-          'x-lease-token': job.leaseToken,
-          'x-artifact-sha256': digest,
-        },
-        body: bytes,
+      if (!storageClient) throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY are required on workers to upload artifacts.');
+      const signed = await api('/api/workers/jobs/' + job.id + '/artifacts/' + registered.id + '/upload-url', {
+        leaseToken: job.leaseToken,
       });
-      if (!uploaded.ok) {
-        const message = await uploaded.text();
-        throw new Error('Artifact upload failed for ' + name + ': ' + uploaded.status + ' ' + message);
-      }
+      const uploaded = await storageClient.storage.from('kestrel-artifacts').uploadToSignedUrl(
+        signed.path,
+        signed.token,
+        bytes,
+        { contentType: contentTypeFor(entry.name), upsert: false }
+      );
+      if (uploaded.error) throw new Error('Artifact upload failed for ' + name + ': ' + uploaded.error.message);
+      await api('/api/workers/jobs/' + job.id + '/artifacts/' + registered.id + '/complete', {
+        leaseToken: job.leaseToken,
+        sha256: digest,
+      });
       uploadedFiles += 1;
       totalBytes += bytes.length;
     }
