@@ -192,7 +192,7 @@ function otpDigest(email, code) {
   if (!pepper || pepper.length < 32) {
     throw new Error('KESTREL_ENCRYPTION_KEY (or KESTREL_OTP_PEPPER) must contain at least 32 characters.');
   }
-  return crypto.createHmac('sha256', pepper).update(\`\${email}:\${code}\`).digest('hex');
+  return crypto.createHmac('sha256', pepper).update(`${email}:${code}`).digest('hex');
 }
 
 function safeDigestEqual(left, right) {
@@ -211,8 +211,8 @@ function otpEmail({ fullName, code }) {
   const safeName = escapeEmailHtml(fullName || 'there');
   return {
     subject: 'Your Kestrel verification code',
-    text: \`Hi \${fullName || 'there'},\n\nYour Kestrel verification code is \${code}.\n\nThis code expires in 5 minutes. If you did not request this, you can ignore this email.\n\n— Kestrel Systems\`,
-    html: \`<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:32px 12px;font-family:Arial,sans-serif;color:#172033"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:36px"><tr><td><div style="font-size:20px;font-weight:700;letter-spacing:-.5px">kestrel<span style="color:#64748b">.</span></div><p style="margin:28px 0 8px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:1px">EMAIL VERIFICATION</p><h1 style="font-size:24px;margin:0 0 12px">Confirm your email</h1><p style="font-size:15px;line-height:1.6">Hi \${safeName}, use the verification code below to finish creating your Kestrel account.</p><div style="margin:28px 0;padding:18px;text-align:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;font-size:32px;font-weight:700;letter-spacing:9px">\${code}</div><p style="font-size:13px;color:#64748b;line-height:1.6">This code expires in <strong>5 minutes</strong>. Kestrel will never ask you to share this code with anyone.</p><p style="font-size:13px;color:#64748b;margin-top:28px">If you did not create a Kestrel account, you can safely ignore this message.</p><p style="font-size:13px;color:#64748b;margin-top:24px">— Kestrel Systems</p></td></tr></table></td></tr></table></body></html>\`,
+    text: `Hi ${fullName || 'there'},\n\nYour Kestrel verification code is ${code}.\n\nThis code expires in 5 minutes. If you did not request this, you can ignore this email.\n\n— Kestrel Systems`,
+    html: `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:32px 12px;font-family:Arial,sans-serif;color:#172033"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:36px"><tr><td><div style="font-size:20px;font-weight:700;letter-spacing:-.5px">kestrel<span style="color:#64748b">.</span></div><p style="margin:28px 0 8px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:1px">EMAIL VERIFICATION</p><h1 style="font-size:24px;margin:0 0 12px">Confirm your email</h1><p style="font-size:15px;line-height:1.6">Hi ${safeName}, use the verification code below to finish creating your Kestrel account.</p><div style="margin:28px 0;padding:18px;text-align:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;font-size:32px;font-weight:700;letter-spacing:9px">${code}</div><p style="font-size:13px;color:#64748b;line-height:1.6">This code expires in <strong>5 minutes</strong>. Kestrel will never ask you to share this code with anyone.</p><p style="font-size:13px;color:#64748b;margin-top:28px">If you did not create a Kestrel account, you can safely ignore this message.</p><p style="font-size:13px;color:#64748b;margin-top:24px">— Kestrel Systems</p></td></tr></table></td></tr></table></body></html>`,
   };
 }
 
@@ -234,7 +234,7 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
     const { salt, hash } = hashPassword(password);
     const code = String(crypto.randomInt(100000, 1000000));
     await query(
-      \`insert into public.kestrel_pending_signups
+      `insert into public.kestrel_pending_signups
          (email, password_hash, full_name, otp_hash, expires_at, attempts, resend_count, last_sent_at, created_at)
        values ($1, $2, $3, $4, now() + interval '5 minutes', 0, 0, now(), now())
        on conflict (email) do update set
@@ -245,8 +245,8 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
          attempts = 0,
          resend_count = 0,
          last_sent_at = now(),
-         created_at = now()\`,
-      [email, \`\${salt}:\${hash}\`, fullName, otpDigest(email, code)]
+         created_at = now()`,
+      [email, `${salt}:${hash}`, fullName, otpDigest(email, code)]
     );
 
     try {
@@ -285,10 +285,10 @@ app.post('/api/auth/resend-otp', authLimiter, async (req, res) => {
 
       const code = String(crypto.randomInt(100000, 1000000));
       await c.query(
-        \`update public.kestrel_pending_signups
+        `update public.kestrel_pending_signups
          set otp_hash = $2, expires_at = now() + interval '5 minutes',
              attempts = 0, resend_count = resend_count + 1, last_sent_at = now()
-         where email = $1\`,
+         where email = $1`,
         [email, otpDigest(email, code)]
       );
       return { status: 'sent', code, fullName: row.full_name };
@@ -354,10 +354,10 @@ app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
       const userMeta = { full_name: pending.full_name };
       const [salt, passwordHash] = pending.password_hash.split(':');
       const inserted = await c.query(
-        \`insert into auth.users(email, encrypted_password, raw_app_meta_data, raw_user_meta_data, email_confirmed_at)
+        `insert into auth.users(email, encrypted_password, raw_app_meta_data, raw_user_meta_data, email_confirmed_at)
          values(lower($1), $2, $3, $4, now())
-         returning id, email, raw_app_meta_data, raw_user_meta_data\`,
-        [email, \`\${salt}:\${passwordHash}\`, JSON.stringify(appMeta), JSON.stringify(userMeta)]
+         returning id, email, raw_app_meta_data, raw_user_meta_data`,
+        [email, `${salt}:${passwordHash}`, JSON.stringify(appMeta), JSON.stringify(userMeta)]
       );
       const user = inserted.rows[0];
       await c.query(
@@ -371,7 +371,7 @@ app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
     if (result.status === 'missing') return res.status(400).json({ error: 'No pending signup was found. Please create your account again.' });
     if (result.status === 'expired') return res.status(400).json({ error: 'That code has expired. Request a new code.' });
     if (result.status === 'locked') return res.status(429).json({ error: 'Too many incorrect codes. Start registration again to receive a new code.' });
-    if (result.status === 'invalid') return res.status(400).json({ error: \`Incorrect verification code. \${result.attemptsLeft} attempt(s) remaining.\` });
+    if (result.status === 'invalid') return res.status(400).json({ error: `Incorrect verification code. ${result.attemptsLeft} attempt(s) remaining.` });
     if (result.status === 'exists') return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
 
     const user = result.user;
