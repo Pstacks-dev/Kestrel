@@ -41,7 +41,22 @@ export function StatusIndicator({ status }: StatusIndicatorProps) {
           <span>Failed</span>
         </span>
       );
+    case 'canceled':
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#73736D] whitespace-nowrap shrink-0">
+          <XCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+          <span>Canceled</span>
+        </span>
+      );
+    case 'skipped':
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#A1A19A] whitespace-nowrap shrink-0">
+          <Clock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+          <span>Skipped</span>
+        </span>
+      );
     case 'queued':
+    default:
       return (
         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#6B6B66] whitespace-nowrap shrink-0">
           <Clock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />

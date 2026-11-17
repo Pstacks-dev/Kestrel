@@ -1,4 +1,4 @@
-export type JobStatus = 'succeeded' | 'running' | 'failed' | 'cached' | 'queued';
+export type JobStatus = 'succeeded' | 'running' | 'failed' | 'cached' | 'queued' | 'canceled' | 'skipped';
 
 export type NavSection = 'pipelines' | 'runs' | 'cache' | 'workers';
 
