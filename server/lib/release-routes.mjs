@@ -308,11 +308,12 @@ export function registerReleaseRoutes(app, deps) {
   app.post('/api/deployments/:deploymentId/rollback', sensitiveLimiter, userAuth, async (req, res) => {
     try {
       const current = await query(
-        "select d.*,t.approval_required,m.role from public.deployments d join public.deployment_targets t on t.id=d.target_id join public.projects p on p.id=t.project_id join public.organization_members m on m.organization_id=p.organization_id where d.id=$1 and m.user_id=$2",
+        "select d.*,t.approval_required,t.provider,t.target_environment,m.role from public.deployments d join public.deployment_targets t on t.id=d.target_id join public.projects p on p.id=t.project_id join public.organization_members m on m.organization_id=p.organization_id where d.id=$1 and m.user_id=$2",
         [req.params.deploymentId, req.user.id]
       );
       if (!current.rowCount || !['owner','admin'].includes(current.rows[0].role)) return res.status(403).json({ error: 'Workspace owner or admin access required to roll back' });
       if (current.rows[0].status !== 'ready') return res.status(409).json({ error: 'Only a successful deployment can be rolled back' });
+      if (current.rows[0].provider === 'netlify' && current.rows[0].target_environment === 'preview') return res.status(409).json({ error: 'Netlify preview drafts cannot be restored as production releases. Rollback is available for Netlify production targets.' });
       const previous = await query(
         "select * from public.deployments where target_id=$1 and status='ready' and id<>$2 and created_at<$3 order by created_at desc limit 1",
         [current.rows[0].target_id, current.rows[0].id, current.rows[0].created_at]
