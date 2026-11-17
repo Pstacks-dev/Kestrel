@@ -555,7 +555,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
                 6-digit email code
                 <input
                   value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\\D/g, '').slice(0, 6))}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   pattern="[0-9]{6}"
