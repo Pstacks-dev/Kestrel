@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
 import { validatePipelineJobs } from './lib/pipeline.mjs';
+import { registerReleaseRoutes } from './lib/release-routes.mjs';
 import {
   encryptSecret,
   decryptSecret,
@@ -1282,6 +1283,18 @@ app.get('/api/cron/recovery', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Lease recovery failed' });
   }
+});
+
+// Artifact and deployment lifecycle routes use the same verified user/worker auth.
+registerReleaseRoutes(app, {
+  userAuth,
+  workerAuth,
+  sensitiveLimiter,
+  query,
+  transaction,
+  encryptSecret,
+  decryptSecret,
+  supabaseAdmin,
 });
 
 // Safe Error Handling Middleware
