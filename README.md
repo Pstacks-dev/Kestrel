@@ -15,7 +15,7 @@ Kestrel is a CI/CD control plane with a React/Vite dashboard, an Express API, Po
 
 The repository includes account and organization flows, project management, signed GitHub webhooks, a PostgreSQL job queue, Docker worker registration and execution, log ingestion, retries/cancellation, and stale-lease recovery. Worker artifacts are uploaded as bytes to a private Supabase Storage bucket, checked against SHA-256, and downloaded through short-lived signed URLs after workspace membership checks. Deployment targets support Vercel and Netlify credentials encrypted at rest, deployment history, optional owner/admin approval, status refresh, and rollback to a previous successful release.
 
-The webhook receiver currently queues the built-in npm install/test/build pipeline. It does **not** yet load a user-defined YAML workflow file. Vercel deployments are created from the exact GitHub commit associated with a successful run. Netlify deployments use its site build API, and rollback uses Netlify's restore-deploy API. Provider credentials and project/site IDs must be supplied by the workspace owner.
+The webhook receiver currently queues the built-in npm install/test/build pipeline. It does **not** yet load a user-defined YAML workflow file. Vercel deployments are created from the exact GitHub commit associated with a successful run. Netlify deployments publish the verified build files from the successful run through its deploy API, and rollback uses Netlify's restore-deploy API. Provider credentials and project/site IDs must be supplied by the workspace owner.
 
 ## Local development
 
