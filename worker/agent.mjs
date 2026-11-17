@@ -290,30 +290,83 @@ async function runGit(args, cwd, onLine) {
 // Check for build artifacts produced in workspace and upload metadata
 async function collectArtifacts(job, workspace) {
   const candidateDirs = ['dist', 'build', 'artifacts'];
-  for (const dir of candidateDirs) {
-    const p = path.join(workspace, dir);
-    try {
-      const stat = await fs.stat(p);
-      if (stat.isDirectory()) {
-        const files = await fs.readdir(p);
-        for (const file of files.slice(0, 10)) {
-          const filePath = path.join(p, file);
-          const fstat = await fs.stat(filePath);
-          if (fstat.isFile()) {
-            await api(`/api/workers/jobs/${job.id}/artifacts`, {
-              leaseToken: job.leaseToken,
-              name: `${dir}/${file}`,
-              objectKey: `runs/${job.runId}/${job.id}/${dir}/${file}`,
-              sizeBytes: fstat.size,
-              contentType: file.endsWith('.html') ? 'text/html' : file.endsWith('.js') ? 'application/javascript' : 'application/octet-stream',
-            }).catch(() => {});
-          }
-        }
+  const maxFiles = 50;
+  const maxTotalBytes = 300 * 1024 * 1024;
+  let uploadedFiles = 0;
+  let totalBytes = 0;
+
+  const contentTypeFor = (file) => {
+    const ext = path.extname(file).toLowerCase();
+    return ({
+      '.html': 'text/html',
+      '.css': 'text/css',
+      '.js': 'application/javascript',
+      '.mjs': 'application/javascript',
+      '.json': 'application/json',
+      '.map': 'application/json',
+      '.txt': 'text/plain',
+      '.zip': 'application/zip',
+      '.pdf': 'application/pdf',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.svg': 'image/svg+xml',
+      '.wasm': 'application/wasm',
+    })[ext] || 'application/octet-stream';
+  };
+
+  async function walk(directory, relative, depth = 0) {
+    if (depth > 5 || uploadedFiles >= maxFiles || totalBytes >= maxTotalBytes) return;
+    let entries;
+    try { entries = await fs.readdir(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (uploadedFiles >= maxFiles || totalBytes >= maxTotalBytes) break;
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
+      const absolute = path.join(directory, entry.name);
+      const name = path.posix.join(relative, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolute, name, depth + 1);
+        continue;
       }
-    } catch {}
+      if (!entry.isFile()) continue;
+      const stat = await fs.stat(absolute);
+      if (stat.size <= 0 || stat.size > 100 * 1024 * 1024 || totalBytes + stat.size > maxTotalBytes) continue;
+
+      const bytes = await fs.readFile(absolute);
+      const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+      const registered = await api('/api/workers/jobs/' + job.id + '/artifacts', {
+        leaseToken: job.leaseToken,
+        name,
+        sizeBytes: bytes.length,
+        sha256: digest,
+        contentType: contentTypeFor(entry.name),
+      });
+      if (!registered?.id) throw new Error('Artifact registration did not return an artifact ID for ' + name);
+
+      const uploaded = await fetch(API + '/api/workers/jobs/' + job.id + '/artifacts/' + registered.id + '/content', {
+        method: 'PUT',
+        headers: {
+          ...headers,
+          'content-type': 'application/octet-stream',
+          'x-lease-token': job.leaseToken,
+          'x-artifact-sha256': digest,
+        },
+        body: bytes,
+      });
+      if (!uploaded.ok) {
+        const message = await uploaded.text();
+        throw new Error('Artifact upload failed for ' + name + ': ' + uploaded.status + ' ' + message);
+      }
+      uploadedFiles += 1;
+      totalBytes += bytes.length;
+    }
+  }
+
+  for (const dir of candidateDirs) {
+    await walk(path.join(workspace, dir), dir);
+    if (uploadedFiles >= maxFiles || totalBytes >= maxTotalBytes) break;
   }
 }
-
 async function execute(job) {
   const workspace = path.join(ROOT, String(job.runId), String(job.id));
   await fs.mkdir(workspace, { recursive: true });
