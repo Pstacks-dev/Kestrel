@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
@@ -41,7 +41,12 @@ if (supabaseUrl && supabaseServiceRoleKey) {
 }
 
 app.disable('x-powered-by');
-app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
+// Vercel terminates TLS at its edge and forwards the client address. Trust exactly
+// the platform proxy in serverless deployments; standalone hosts opt in explicitly.
+app.set('trust proxy', process.env.VERCEL ? 1 : process.env.TRUST_PROXY === 'true' ? 1 : false);
+
+// Use Express's resolved client IP; ipKeyGenerator preserves IPv6 subnet handling.
+const rateLimitKey = (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || '127.0.0.1');
 
 app.use(
   helmet({
@@ -74,6 +79,7 @@ const generalLimiter = rateLimit({
   limit: 600,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 app.use(generalLimiter);
 
@@ -83,6 +89,7 @@ const sensitiveLimiter = rateLimit({
   limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 
 // Password and account-creation endpoints need a much tighter per-IP ceiling.
@@ -91,6 +98,7 @@ const authLimiter = rateLimit({
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 
 const now = () => new Date().toISOString();
