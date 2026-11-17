@@ -37,7 +37,7 @@ npm run start:api
 npm run dev
 ```
 
-Start a worker on a separate Linux Docker host after provisioning its unique worker ID and token:
+Start a worker on a separate Linux Docker host after provisioning its unique worker ID and token. Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` on the worker as well; they are used with short-lived signed upload tokens, never with a service-role key:
 
 ```bash
 npm run start:worker
