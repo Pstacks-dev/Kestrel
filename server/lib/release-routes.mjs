@@ -35,7 +35,7 @@ export function registerReleaseRoutes(app, deps) {
     if (d.provider === 'netlify' && !d.rollback_provider_id) {
       await query("update public.deployments set status='deploying', error_message=null where id=$1", [deploymentId]);
       try {
-        const deployed = await deployNetlifyArtifacts({ siteId: d.provider_site_id, token, branch: d.branch, commitSha: d.commit_sha, runId: d.run_id, query, supabaseAdmin, bucket: BUCKET });
+        const deployed = await deployNetlifyArtifacts({ siteId: d.provider_site_id, token, branch: d.branch, commitSha: d.commit_sha, runId: d.run_id, environment: d.target_environment, query, supabaseAdmin, bucket: BUCKET });
         const status = parseProviderState(deployed);
         await query("update public.deployments set provider_deployment_id=$2, deployment_url=$3, status=$4, finished_at=case when $4='ready' then now() else null end where id=$1", [deploymentId, deployed.id, deployed.url, status]);
         return { deploymentId, status, providerDeploymentId: deployed.id, deploymentUrl: deployed.url };
@@ -57,9 +57,9 @@ export function registerReleaseRoutes(app, deps) {
       payload = {
         name: d.project_name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 52) || 'kestrel-project',
         project: d.provider_site_id,
-        target: d.target_environment,
         gitSource: { type: 'github', org: parts[0], repo: parts[1], ref: d.branch, sha: d.commit_sha }
       };
+      if (d.target_environment === 'production') payload.target = 'production';
       if (d.rollback_provider_id) payload.meta = { kestrelRollbackFrom: d.rollback_provider_id };
     } else if (d.provider === 'netlify') {
       if (d.rollback_provider_id) {
