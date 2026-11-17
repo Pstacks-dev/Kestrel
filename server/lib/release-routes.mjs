@@ -163,37 +163,6 @@ export function registerReleaseRoutes(app, deps) {
     }
   });
 
-  app.put('/api/workers/jobs/:jobId/artifacts/:artifactId/content', workerAuth,
-    express.raw({ type: 'application/octet-stream', limit: MAX_BYTES }),
-    async (req, res) => {
-      const leaseToken = String(req.headers['x-lease-token'] || '');
-      if (!Buffer.isBuffer(req.body)) return res.status(400).json({ error: 'Upload raw bytes as application/octet-stream' });
-      if (req.body.length > MAX_BYTES) return res.status(413).json({ error: 'Artifact exceeds the configured size limit' });
-      const digest = crypto.createHash('sha256').update(req.body).digest('hex');
-      const claimed = String(req.headers['x-artifact-sha256'] || '').toLowerCase();
-      if (claimed && claimed !== digest) return res.status(422).json({ error: 'SHA-256 checksum mismatch' });
-      try {
-        const found = await query(
-          "select j.run_id,a.object_key,a.size_bytes,a.uploaded_at from public.jobs j join public.artifacts a on a.run_id=j.run_id where j.id=$1 and a.id=$2 and j.lease_token=$3 and j.worker_id=$4 and j.status='running' and j.lease_expires_at>now()",
-          [req.params.jobId, req.params.artifactId, leaseToken, req.worker.id]
-        );
-        if (!found.rowCount) return res.status(409).json({ error: 'Artifact or worker lease not found' });
-        if (found.rows[0].uploaded_at) return res.status(409).json({ error: 'Artifact bytes have already been uploaded' });
-        if (Number(found.rows[0].size_bytes) !== req.body.length) return res.status(422).json({ error: 'Uploaded byte count does not match registered size' });
-        if (!supabaseAdmin) return res.status(503).json({ error: 'Private artifact storage is not configured' });
-        const stored = await supabaseAdmin.storage.from(BUCKET).upload(found.rows[0].object_key, req.body, {
-          contentType: String(req.headers['content-type'] || 'application/octet-stream'),
-          upsert: false
-        });
-        if (stored.error) throw stored.error;
-        await query('update public.artifacts set sha256=$2, uploaded_at=now(), checksum_verified_at=now() where id=$1', [req.params.artifactId, digest]);
-        res.status(201).json({ ok: true, artifactId: req.params.artifactId, sizeBytes: req.body.length, sha256: digest });
-      } catch (error) {
-        console.error('[artifact-upload]', error?.message || error);
-        res.status(500).json({ error: 'Artifact upload failed' });
-      }
-    }
-  );
 
   app.get('/api/projects/:projectId/artifacts', userAuth, async (req, res) => {
     const result = await query(
