@@ -1,4 +1,5 @@
 import Admin from './Admin';
+import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
@@ -415,9 +416,20 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     return result;
   }
 
-  function saveSession(result: any) {
-    const token = result?.session?.access_token;
+  async function saveSession(result: any) {
+    const session = result?.session;
+    const token = session?.access_token;
     if (!token) throw new Error('Kestrel did not return a valid sign-in session.');
+    if (session.refresh_token) {
+      try {
+        const sb = requireSupabase();
+        const { error } = await sb.auth.setSession({ access_token: token, refresh_token: session.refresh_token });
+        if (!error) {
+          localStorage.setItem('kestrel_access_token', token);
+          return;
+        }
+      } catch {}
+    }
     localStorage.setItem('kestrel_access_token', token);
   }
 
@@ -429,8 +441,9 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     try {
       if (awaitingOtp) {
         if (!/^\d{6}$/.test(otp.trim())) throw new Error('Enter the complete 6-digit verification code.');
-        const result = await apiRequest('verify-otp', { email: email.trim().toLowerCase(), code: otp.trim() });
-        saveSession(result);
+        await apiRequest('verify-otp', { email: email.trim().toLowerCase(), code: otp.trim() });
+        const session = await apiRequest('login', { email: email.trim().toLowerCase(), password });
+        await saveSession(session);
         go('overview');
         return;
       }
@@ -448,7 +461,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
           email: email.trim().toLowerCase(),
           password,
         });
-        saveSession(result);
+        await saveSession(result);
         go('overview');
       }
     } catch (e: any) {
@@ -582,7 +595,9 @@ function AppShell({ page }: { page: Page }) {
   async function connect() {
     setLoading(true);
     try {
-      const token = localStorage.getItem('kestrel_access_token');
+      const sb = requireSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token || localStorage.getItem('kestrel_access_token');
       if (!token) {
         go('login');
         throw new Error('Please sign in first.');
