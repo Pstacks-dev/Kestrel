@@ -119,6 +119,50 @@ export function registerReleaseRoutes(app, deps) {
     }
   });
 
+  app.post('/api/workers/jobs/:jobId/artifacts/:artifactId/upload-url', workerAuth, async (req, res) => {
+    const leaseToken = String(req.body?.leaseToken || '');
+    try {
+      const found = await query(
+        "select a.object_key,a.uploaded_at from public.jobs j join public.artifacts a on a.run_id=j.run_id where j.id=$1 and a.id=$2 and j.lease_token=$3 and j.worker_id=$4 and j.status='running' and j.lease_expires_at>now()",
+        [req.params.jobId, req.params.artifactId, leaseToken, req.worker.id]
+      );
+      if (!found.rowCount) return res.status(409).json({ error: 'Artifact or worker lease not found' });
+      if (found.rows[0].uploaded_at) return res.status(409).json({ error: 'Artifact is already uploaded' });
+      if (!supabaseAdmin) return res.status(503).json({ error: 'Private artifact storage is not configured' });
+      const signed = await supabaseAdmin.storage.from(BUCKET).createSignedUploadUrl(found.rows[0].object_key, { upsert: false });
+      if (signed.error) throw signed.error;
+      res.json({ path: signed.data.path, token: signed.data.token });
+    } catch (error) {
+      console.error('[artifact-upload-url]', error?.message || error);
+      res.status(500).json({ error: 'Could not authorize artifact upload' });
+    }
+  });
+
+  app.post('/api/workers/jobs/:jobId/artifacts/:artifactId/complete', workerAuth, async (req, res) => {
+    const leaseToken = String(req.body?.leaseToken || '');
+    const claimedHash = String(req.body?.sha256 || '').toLowerCase();
+    try {
+      const found = await query(
+        "select a.object_key,a.size_bytes,a.uploaded_at from public.jobs j join public.artifacts a on a.run_id=j.run_id where j.id=$1 and a.id=$2 and j.lease_token=$3 and j.worker_id=$4 and j.status='running' and j.lease_expires_at>now()",
+        [req.params.jobId, req.params.artifactId, leaseToken, req.worker.id]
+      );
+      if (!found.rowCount) return res.status(409).json({ error: 'Artifact or worker lease not found' });
+      if (found.rows[0].uploaded_at) return res.status(409).json({ error: 'Artifact is already finalized' });
+      if (!supabaseAdmin) return res.status(503).json({ error: 'Private artifact storage is not configured' });
+      const downloaded = await supabaseAdmin.storage.from(BUCKET).download(found.rows[0].object_key);
+      if (downloaded.error) throw downloaded.error;
+      const bytes = Buffer.from(await downloaded.data.arrayBuffer());
+      const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (bytes.length !== Number(found.rows[0].size_bytes)) return res.status(422).json({ error: 'Stored byte count does not match registered size' });
+      if (!/^[a-f0-9]{64}$/.test(claimedHash) || claimedHash !== digest) return res.status(422).json({ error: 'Stored artifact SHA-256 verification failed' });
+      await query('update public.artifacts set sha256=$2,uploaded_at=now(),checksum_verified_at=now() where id=$1', [req.params.artifactId, digest]);
+      res.json({ ok: true, artifactId: req.params.artifactId, sizeBytes: bytes.length, sha256: digest });
+    } catch (error) {
+      console.error('[artifact-finalize]', error?.message || error);
+      res.status(500).json({ error: 'Could not verify uploaded artifact' });
+    }
+  });
+
   app.put('/api/workers/jobs/:jobId/artifacts/:artifactId/content', workerAuth,
     express.raw({ type: 'application/octet-stream', limit: MAX_BYTES }),
     async (req, res) => {
