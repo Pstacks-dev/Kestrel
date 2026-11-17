@@ -247,7 +247,7 @@ export function registerReleaseRoutes(app, deps) {
     const projectId = String(req.query.projectId || '');
     if (!projectId) return res.status(400).json({ error: 'projectId is required' });
     const rows = await query(
-      'select d.id,d.target_id as "targetId",t.name as "targetName",t.provider,d.run_id as "runId",d.status,d.branch,d.commit_sha as "commitSha",d.provider_deployment_id as "providerDeploymentId",d.deployment_url as "deploymentUrl",d.error_message as "errorMessage",d.rollback_of as "rollbackOf",d.approved_by as "approvedBy",d.approved_at as "approvedAt",d.created_at as "createdAt",d.finished_at as "finishedAt",m.role from public.deployments d join public.deployment_targets t on t.id=d.target_id join public.projects p on p.id=t.project_id join public.organization_members m on m.organization_id=p.organization_id where p.id=$1 and m.user_id=$2 order by d.created_at desc limit 100',
+      'select d.id,d.target_id as "targetId",t.name as "targetName",t.provider,t.target_environment as environment,d.run_id as "runId",d.status,d.branch,d.commit_sha as "commitSha",d.provider_deployment_id as "providerDeploymentId",d.deployment_url as "deploymentUrl",d.error_message as "errorMessage",d.rollback_of as "rollbackOf",d.approved_by as "approvedBy",d.approved_at as "approvedAt",d.created_at as "createdAt",d.finished_at as "finishedAt",m.role from public.deployments d join public.deployment_targets t on t.id=d.target_id join public.projects p on p.id=t.project_id join public.organization_members m on m.organization_id=p.organization_id where p.id=$1 and m.user_id=$2 order by d.created_at desc limit 100',
       [projectId, req.user.id]
     );
     res.json(rows.rows);
