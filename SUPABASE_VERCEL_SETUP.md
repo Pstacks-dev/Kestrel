@@ -1,6 +1,6 @@
 # Kestrel: connect Supabase and deploy to Vercel
 
-This repository uses Supabase Auth for identity and Supabase PostgreSQL for durable application state. The Vite client only receives the project URL and publishable/legacy anon key. The database connection string is server-only.
+This repository uses Kestrel-managed email OTP and JWT sessions for account registration and sign-in, with Supabase PostgreSQL for durable application state. Supabase Auth email delivery is not used for new Kestrel signups. The database connection string is server-only.
 
 ## 1. Supabase project values
 
@@ -64,7 +64,7 @@ npm run start:api
 npm run dev
 ```
 
-Open `http://localhost:3000`. Register through Kestrel's signup page. Supabase Auth must have Email provider enabled. If email confirmation is enabled, confirm the registration email before signing in.
+Open `http://localhost:3000`. Register through Kestrel's signup page. Kestrel creates a six-digit code, sends it through the configured SMTP account, and verifies it on the control plane. Apply migration `004_kestrel_email_otp.sql` before testing signup. Configure the SMTP variables in `.env` as described in `EMAIL_OTP_SETUP.md`.
 
 ## 3. Provision the first platform administrator
 
