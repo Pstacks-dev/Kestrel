@@ -18,7 +18,6 @@ import {
   signJwt,
   verifyJwt,
 } from './lib/auth.mjs';
-import { sendEmail } from './lib/email.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -192,236 +191,7 @@ async function orgAccess(req, res, next) {
   }
 }
 
-// ==========================================
-// Kestrel-managed email OTP authentication
-// ==========================================
-function otpDigest(email, code) {
-  const pepper = process.env.KESTREL_OTP_PEPPER || process.env.KESTREL_ENCRYPTION_KEY;
-  if (!pepper || pepper.length < 32) {
-    throw new Error('KESTREL_ENCRYPTION_KEY (or KESTREL_OTP_PEPPER) must contain at least 32 characters.');
-  }
-  return crypto.createHmac('sha256', pepper).update(`${email}:${code}`).digest('hex');
-}
-
-function safeDigestEqual(left, right) {
-  const a = Buffer.from(String(left || ''), 'hex');
-  const b = Buffer.from(String(right || ''), 'hex');
-  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
-}
-
-function escapeEmailHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[char]);
-}
-
-function otpEmail({ fullName, code }) {
-  const safeName = escapeEmailHtml(fullName || 'there');
-  return {
-    subject: 'Your Kestrel verification code',
-    text: `Hi ${fullName || 'there'},\n\nYour Kestrel verification code is ${code}.\n\nThis code expires in 5 minutes. If you did not request this, you can ignore this email.\n\n— Kestrel Systems`,
-    html: `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:32px 12px;font-family:Arial,sans-serif;color:#172033"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:36px"><tr><td><div style="font-size:20px;font-weight:700;letter-spacing:-.5px">kestrel<span style="color:#64748b">.</span></div><p style="margin:28px 0 8px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:1px">EMAIL VERIFICATION</p><h1 style="font-size:24px;margin:0 0 12px">Confirm your email</h1><p style="font-size:15px;line-height:1.6">Hi ${safeName}, use the verification code below to finish creating your Kestrel account.</p><div style="margin:28px 0;padding:18px;text-align:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;font-size:32px;font-weight:700;letter-spacing:9px">${code}</div><p style="font-size:13px;color:#64748b;line-height:1.6">This code expires in <strong>5 minutes</strong>. Kestrel will never ask you to share this code with anyone.</p><p style="font-size:13px;color:#64748b;margin-top:28px">If you did not create a Kestrel account, you can safely ignore this message.</p><p style="font-size:13px;color:#64748b;margin-top:24px">— Kestrel Systems</p></td></tr></table></td></tr></table></body></html>`,
-  };
-}
-
-app.post('/api/auth/signup', authLimiter, async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  const password = String(req.body?.password || '');
-  const fullName = String(req.body?.fullName || '').trim().slice(0, 120) || email.split('@')[0];
-
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || password.length > 256) {
-    return res.status(400).json({ error: 'Enter a valid email address and a password of at least 8 characters.' });
-  }
-  if (!supabaseAdmin) {
-    return res.status(503).json({ error: 'Kestrel account creation is not configured. Add the server-only SUPABASE_SERVICE_ROLE_KEY.' });
-  }
-
-  try {
-    const pendingExisting = await query(
-      'select user_id from public.kestrel_pending_signups where email = $1',
-      [email]
-    );
-    const accountExisting = await query(
-      'select id, email_confirmed_at from auth.users where lower(email) = lower($1)',
-      [email]
-    );
-    if (accountExisting.rowCount && accountExisting.rows[0].email_confirmed_at) {
-      return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
-    }
-
-    let userId;
-    if (pendingExisting.rowCount) {
-      userId = pendingExisting.rows[0].user_id;
-    } else if (accountExisting.rowCount) {
-      // Allow an unconfirmed account whose previous OTP expired to restart verification.
-      userId = accountExisting.rows[0].id;
-    } else {
-      const created = await supabaseAdmin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: false,
-        user_metadata: { full_name: fullName },
-      });
-      if (created.error) {
-        if (/already|registered|exists/i.test(created.error.message || '')) {
-          return res.status(409).json({ error: 'An account with this email already exists. Please sign in or contact support.' });
-        }
-        throw created.error;
-      }
-      userId = created.data.user.id;
-    }
-
-    const updatedUser = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      password,
-      user_metadata: { full_name: fullName },
-    });
-    if (updatedUser.error) throw updatedUser.error;
-
-    const code = String(crypto.randomInt(100000, 1000000));
-    await query(
-      `insert into public.kestrel_pending_signups
-         (email, user_id, full_name, otp_hash, expires_at, attempts, resend_count, last_sent_at, created_at)
-       values ($1, $2, $3, $4, now() + interval '5 minutes', 0, 0, now(), now())
-       on conflict (email) do update set
-         user_id = excluded.user_id,
-         full_name = excluded.full_name,
-         otp_hash = excluded.otp_hash,
-         expires_at = excluded.expires_at,
-         attempts = 0,
-         resend_count = 0,
-         last_sent_at = now(),
-         created_at = now()`,
-      [email, userId, fullName, otpDigest(email, code)]
-    );
-
-    try {
-      await sendEmail({ to: email, ...otpEmail({ fullName, code }) });
-    } catch (mailError) {
-      console.error('Signup OTP email delivery failed:', mailError.message);
-      return res.status(503).json({ error: 'Your signup is saved, but Kestrel could not send the verification email. Check the email settings and try Resend code.' });
-    }
-
-    return res.status(202).json({
-      requiresVerification: true,
-      message: 'A six-digit verification code has been sent to your email. It expires in 5 minutes.',
-    });
-  } catch (e) {
-    console.error('Signup error:', e);
-    return res.status(500).json({ error: 'Could not start account registration.' });
-  }
-});
-
-app.post('/api/auth/resend-otp', authLimiter, async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ error: 'Enter a valid email address.' });
-  }
-
-  try {
-    const result = await transaction(async (c) => {
-      const pending = await c.query(
-        'select email, full_name, resend_count, last_sent_at from public.kestrel_pending_signups where email = $1 for update',
-        [email]
-      );
-      if (!pending.rowCount) return { status: 'not_found' };
-      const row = pending.rows[0];
-      if (Date.now() - new Date(row.last_sent_at).getTime() < 60_000) return { status: 'cooldown' };
-      if (row.resend_count >= 5) return { status: 'limit' };
-
-      const code = String(crypto.randomInt(100000, 1000000));
-      await c.query(
-        `update public.kestrel_pending_signups
-         set otp_hash = $2, expires_at = now() + interval '5 minutes',
-             attempts = 0, resend_count = resend_count + 1, last_sent_at = now()
-         where email = $1`,
-        [email, otpDigest(email, code)]
-      );
-      return { status: 'sent', code, fullName: row.full_name };
-    });
-
-    if (result.status === 'cooldown') return res.status(429).json({ error: 'Please wait 60 seconds before requesting another code.' });
-    if (result.status === 'limit') return res.status(429).json({ error: 'You have reached the resend limit. Please try again later.' });
-    if (result.status === 'not_found') return res.status(404).json({ error: 'No pending signup was found. Start registration again.' });
-
-    try {
-      await sendEmail({ to: email, ...otpEmail({ fullName: result.fullName, code: result.code }) });
-    } catch (mailError) {
-      console.error('Resend OTP email delivery failed:', mailError.message);
-      return res.status(503).json({ error: 'Kestrel could not send the email. Please check the SMTP settings and try again shortly.' });
-    }
-    return res.json({ message: 'A new verification code has been sent. It expires in 5 minutes.' });
-  } catch (e) {
-    console.error('Resend OTP error:', e);
-    return res.status(500).json({ error: 'Could not resend verification code.' });
-  }
-});
-
-app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  const code = String(req.body?.code || '').trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code)) {
-    return res.status(400).json({ error: 'Enter a valid email address and the complete six-digit code.' });
-  }
-  if (!supabaseAdmin) {
-    return res.status(503).json({ error: 'Kestrel account verification is not configured.' });
-  }
-
-  try {
-    const result = await transaction(async (c) => {
-      const pendingResult = await c.query(
-        'select * from public.kestrel_pending_signups where email = $1 for update',
-        [email]
-      );
-      if (!pendingResult.rowCount) return { status: 'missing' };
-      const pending = pendingResult.rows[0];
-
-      if (new Date(pending.expires_at).getTime() <= Date.now()) {
-        await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
-        return { status: 'expired' };
-      }
-
-      if (!safeDigestEqual(pending.otp_hash, otpDigest(email, code))) {
-        const nextAttempts = pending.attempts + 1;
-        if (nextAttempts >= 5) {
-          await c.query('delete from public.kestrel_pending_signups where email = $1', [email]);
-          return { status: 'locked' };
-        }
-        await c.query('update public.kestrel_pending_signups set attempts = $2 where email = $1', [email, nextAttempts]);
-        return { status: 'invalid', attemptsLeft: 5 - nextAttempts };
-      }
-
-      const countRes = await c.query(
-        'select count(*)::int n from auth.users where email_confirmed_at is not null and id <> $1',
-        [pending.user_id]
-      );
-      return {
-        status: 'verified',
-        userId: pending.user_id,
-        appMeta: countRes.rows[0].n === 0 ? { platform_role: 'platform_admin' } : {},
-      };
-    });
-
-    if (result.status === 'missing') return res.status(400).json({ error: 'No pending signup was found. Please create your account again.' });
-    if (result.status === 'expired') return res.status(400).json({ error: 'That code has expired. Request a new code.' });
-    if (result.status === 'locked') return res.status(429).json({ error: 'Too many incorrect codes. Start registration again to receive a new code.' });
-    if (result.status === 'invalid') return res.status(400).json({ error: `Incorrect verification code. ${result.attemptsLeft} attempt(s) remaining.` });
-
-    const confirmed = await supabaseAdmin.auth.admin.updateUserById(result.userId, {
-      email_confirm: true,
-      app_metadata: result.appMeta,
-    });
-    if (confirmed.error) {
-      console.error('Supabase email confirmation failed:', confirmed.error.message);
-      return res.status(503).json({ error: 'The code is valid, but Kestrel could not activate the account. Please try verifying again.' });
-    }
-
-    await query('delete from public.kestrel_pending_signups where email = $1', [email]);
-    return res.json({ verified: true, message: 'Your email is verified. Sign in to continue.' });
-  } catch (e) {
-    console.error('OTP verification error:', e);
-    return res.status(500).json({ error: 'Could not verify your email address.' });
-  }
-});
+// Authentication uses Supabase Auth directly from the client. No Kestrel OTP endpoints are used.
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
@@ -443,9 +213,6 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
           },
         });
       }
-      if (signedIn.error && /email not confirmed/i.test(signedIn.error.message || '')) {
-        return res.status(403).json({ error: 'Please verify your email address before signing in.' });
-      }
     }
 
     // Backward compatibility for accounts created by the previous Kestrel PBKDF2 flow.
@@ -455,9 +222,6 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     const [salt, storedHash] = (user.encrypted_password || '').split(':');
     if (!salt || !storedHash || !verifyPassword(password, salt, storedHash)) {
       return res.status(401).json({ error: 'Invalid email or password.' });
-    }
-    if (!user.email_confirmed_at) {
-      return res.status(403).json({ error: 'Please verify your email address before signing in.' });
     }
 
     const appMeta = user.raw_app_meta_data || {};
