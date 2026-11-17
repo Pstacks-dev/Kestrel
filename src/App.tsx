@@ -1,4 +1,5 @@
 import Admin from './Admin';
+import ReleaseCenter from './ReleaseCenter';
 import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -51,6 +52,7 @@ type Page =
   | 'workers'
   | 'projects'
   | 'artifacts'
+  | 'deployments'
   | 'settings';
 
 const nav: { id: Page; label: string; icon: any; group: string }[] = [
@@ -60,6 +62,7 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'workers', label: 'Workers', icon: Server, group: 'INFRASTRUCTURE' },
   { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
   { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
+  { id: 'deployments', label: 'Deployments', icon: Radio, group: 'INFRASTRUCTURE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
 ];
 
@@ -859,6 +862,19 @@ function AppShell({ page }: { page: Page }) {
     } catch {}
   }
 
+  async function downloadArtifact(artifactId: string) {
+    try {
+      const response = await fetch(`${api}/artifacts/${artifactId}/download`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Artifact download failed');
+      window.location.assign(data.url);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Artifact download failed');
+    }
+  }
+
   const counts = useMemo(
     () => ({
       projects: snapshot?.projects?.length ?? 0,
@@ -1589,6 +1605,9 @@ function AppShell({ page }: { page: Page }) {
                     <span className="text-xs text-neutral-400 font-mono">
                       {new Date(a.createdAt).toLocaleDateString()}
                     </span>
+                    <Button kind="light" onClick={() => downloadArtifact(a.id)}>
+                      Download <ArrowDownRight size={14} />
+                    </Button>
                   </div>
                 ))
               ) : (
@@ -1600,6 +1619,18 @@ function AppShell({ page }: { page: Page }) {
               )}
             </div>
           </div>
+        )}
+
+        {page === 'deployments' && !inspectedRun && (
+          <ReleaseCenter
+            api={api}
+            accessToken={accessToken}
+            selectedProject={selectedProject}
+            setSelectedProject={setSelectedProject}
+            projects={snapshot?.projects || []}
+            runs={snapshot?.runs || []}
+            setMessage={setActionMessage}
+          />
         )}
 
         {/* SETTINGS */}
