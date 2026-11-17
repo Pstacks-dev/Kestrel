@@ -10,7 +10,7 @@ where email_confirmed_at is null;
 
 create table if not exists public.kestrel_pending_signups (
   email text primary key,
-  password_hash text not null,
+  user_id uuid not null unique references auth.users(id) on delete cascade,
   full_name text not null,
   otp_hash text not null,
   expires_at timestamptz not null,
