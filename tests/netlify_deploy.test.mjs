@@ -58,6 +58,6 @@ test('Netlify deployment refuses runs without uploaded site artifacts', async ()
       runId: 'run-empty', query: async () => ({ rowCount: 0, rows: [] }),
       supabaseAdmin: {}, bucket: 'kestrel-artifacts',
     }),
-    /no uploaded dist\\/ or build\\/ files/
+    /no uploaded dist.*build.*files/
   );
 });
