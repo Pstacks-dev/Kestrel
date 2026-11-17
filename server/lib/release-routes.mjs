@@ -155,7 +155,11 @@ export function registerReleaseRoutes(app, deps) {
       const digest = crypto.createHash('sha256').update(bytes).digest('hex');
       if (bytes.length !== Number(found.rows[0].size_bytes)) return res.status(422).json({ error: 'Stored byte count does not match registered size' });
       if (!/^[a-f0-9]{64}$/.test(claimedHash) || claimedHash !== digest || (found.rows[0].expected_sha256 && found.rows[0].expected_sha256 !== digest)) return res.status(422).json({ error: 'Stored artifact SHA-256 verification failed' });
-      await query('update public.artifacts set sha256=$2,uploaded_at=now(),checksum_verified_at=now() where id=$1', [req.params.artifactId, digest]);
+      const finalized = await query(
+        'update public.artifacts a set sha256=$5,uploaded_at=now(),checksum_verified_at=now() where a.id=$1 and a.uploaded_at is null and exists (select 1 from public.jobs j where j.id=$2 and j.run_id=a.run_id and j.lease_token=$3 and j.worker_id=$4 and j.status=\'running\' and j.lease_expires_at>now()) returning a.id',
+        [req.params.artifactId, req.params.jobId, leaseToken, req.worker.id, digest]
+      );
+      if (!finalized.rowCount) return res.status(409).json({ error: 'Worker lease expired before artifact finalization' });
       res.json({ ok: true, artifactId: req.params.artifactId, sizeBytes: bytes.length, sha256: digest });
     } catch (error) {
       console.error('[artifact-finalize]', error?.message || error);
@@ -281,7 +285,8 @@ export function registerReleaseRoutes(app, deps) {
       );
       if (!access.rowCount || !['owner','admin'].includes(access.rows[0].role)) return res.status(403).json({ error: 'Workspace owner or admin approval is required' });
       if (access.rows[0].status !== 'pending_approval') return res.status(409).json({ error: 'Deployment is not awaiting approval' });
-      await query("update public.deployments set status='queued',approved_by=$2,approved_at=now() where id=$1", [req.params.deploymentId, req.user.id]);
+      const claimed = await query("update public.deployments set status='queued',approved_by=$2,approved_at=now() where id=$1 and status='pending_approval' returning id", [req.params.deploymentId, req.user.id]);
+      if (!claimed.rowCount) return res.status(409).json({ error: 'Deployment approval was already processed' });
       res.json({ ok: true, ...await launchDeployment(req.params.deploymentId) });
     } catch (error) {
       console.error('[deployment-approve]', error?.message || error);
@@ -296,7 +301,8 @@ export function registerReleaseRoutes(app, deps) {
     );
     if (!access.rowCount || !['owner','admin'].includes(access.rows[0].role)) return res.status(403).json({ error: 'Workspace owner or admin access required' });
     if (access.rows[0].status !== 'pending_approval') return res.status(409).json({ error: 'Deployment is not awaiting approval' });
-    await query("update public.deployments set status='rejected',finished_at=now(),approved_by=$2,approved_at=now() where id=$1", [req.params.deploymentId, req.user.id]);
+    const rejected = await query("update public.deployments set status='rejected',finished_at=now(),approved_by=$2,approved_at=now() where id=$1 and status='pending_approval' returning id", [req.params.deploymentId, req.user.id]);
+    if (!rejected.rowCount) return res.status(409).json({ error: 'Deployment approval was already processed' });
     res.json({ ok: true, status: 'rejected' });
   });
 
@@ -326,7 +332,7 @@ export function registerReleaseRoutes(app, deps) {
     }
   });
 
-  app.post('/api/deployments/:deploymentId/refresh', userAuth, async (req, res) => {
+  app.post('/api/deployments/:deploymentId/refresh', sensitiveLimiter, userAuth, async (req, res) => {
     try {
       const found = await query(
         'select d.id,d.status,d.provider_deployment_id,t.provider,t.provider_site_id,t.provider_team_id,p.id as project_id from public.deployments d join public.deployment_targets t on t.id=d.target_id join public.projects p on p.id=t.project_id join public.organization_members m on m.organization_id=p.organization_id where d.id=$1 and m.user_id=$2',
