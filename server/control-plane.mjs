@@ -241,14 +241,20 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
       'select user_id from public.kestrel_pending_signups where email = $1',
       [email]
     );
+    const accountExisting = await query(
+      'select id, email_confirmed_at from auth.users where lower(email) = lower($1)',
+      [email]
+    );
+    if (accountExisting.rowCount && accountExisting.rows[0].email_confirmed_at) {
+      return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+    }
+
     let userId;
     if (pendingExisting.rowCount) {
       userId = pendingExisting.rows[0].user_id;
-      const updatedUser = await supabaseAdmin.auth.admin.updateUserById(userId, {
-        password,
-        user_metadata: { full_name: fullName },
-      });
-      if (updatedUser.error) throw updatedUser.error;
+    } else if (accountExisting.rowCount) {
+      // Allow an unconfirmed account whose previous OTP expired to restart verification.
+      userId = accountExisting.rows[0].id;
     } else {
       const created = await supabaseAdmin.auth.admin.createUser({
         email,
@@ -258,12 +264,18 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
       });
       if (created.error) {
         if (/already|registered|exists/i.test(created.error.message || '')) {
-          return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+          return res.status(409).json({ error: 'An account with this email already exists. Please sign in or contact support.' });
         }
         throw created.error;
       }
       userId = created.data.user.id;
     }
+
+    const updatedUser = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      password,
+      user_metadata: { full_name: fullName },
+    });
+    if (updatedUser.error) throw updatedUser.error;
 
     const code = String(crypto.randomInt(100000, 1000000));
     await query(
