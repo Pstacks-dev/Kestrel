@@ -267,7 +267,7 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
 
     const code = String(crypto.randomInt(100000, 1000000));
     await query(
-      \`insert into public.kestrel_pending_signups
+      `insert into public.kestrel_pending_signups
          (email, user_id, full_name, otp_hash, expires_at, attempts, resend_count, last_sent_at, created_at)
        values ($1, $2, $3, $4, now() + interval '5 minutes', 0, 0, now(), now())
        on conflict (email) do update set
@@ -278,7 +278,7 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
          attempts = 0,
          resend_count = 0,
          last_sent_at = now(),
-         created_at = now()\`,
+         created_at = now()`,
       [email, userId, fullName, otpDigest(email, code)]
     );
 
@@ -392,7 +392,7 @@ app.post('/api/auth/verify-otp', authLimiter, async (req, res) => {
     if (result.status === 'missing') return res.status(400).json({ error: 'No pending signup was found. Please create your account again.' });
     if (result.status === 'expired') return res.status(400).json({ error: 'That code has expired. Request a new code.' });
     if (result.status === 'locked') return res.status(429).json({ error: 'Too many incorrect codes. Start registration again to receive a new code.' });
-    if (result.status === 'invalid') return res.status(400).json({ error: \`Incorrect verification code. \${result.attemptsLeft} attempt(s) remaining.\` });
+    if (result.status === 'invalid') return res.status(400).json({ error: `Incorrect verification code. ${result.attemptsLeft} attempt(s) remaining.` });
 
     const confirmed = await supabaseAdmin.auth.admin.updateUserById(result.userId, {
       email_confirm: true,
