@@ -211,6 +211,8 @@ export function registerReleaseRoutes(app, deps) {
       return res.status(400).json({ error: 'Provider, target name, provider project/site ID, access token and environment are required.' });
     }
     try {
+      const roleCheck = await query('select m.role from public.projects p join public.organization_members m on m.organization_id=p.organization_id where p.id=$1 and m.user_id=$2', [req.params.projectId, req.user.id]);
+      if (!roleCheck.rowCount || !['owner','admin'].includes(roleCheck.rows[0].role)) return res.status(403).json({ error: 'Workspace owner or admin access required to configure provider credentials' });
       let verifyUrl;
       if (body.provider === 'vercel') {
         verifyUrl = new URL('https://api.vercel.com/v9/projects/' + encodeURIComponent(body.providerSiteId.trim()));
