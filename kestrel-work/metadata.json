@@ -1,0 +1,6 @@
+{
+  "name": "Kestrel CI",
+  "description": "Distributed CI/CD pipeline orchestration, job status monitoring, and real-time log streaming console.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
