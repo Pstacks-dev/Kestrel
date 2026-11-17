@@ -1,5 +1,4 @@
 import Admin from './Admin';
-import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
@@ -394,6 +393,7 @@ function Footer() {
 }
 
 function Auth({ mode }: { mode: 'login' | 'signup' }) {
+  const api = (import.meta.env.VITE_API_BASE_URL as string) || '/api';
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -403,7 +403,23 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
   const [awaitingOtp, setAwaitingOtp] = useState(false);
-  const [canResend, setCanResend] = useState(false);
+
+  async function apiRequest(path: string, body: Record<string, unknown>) {
+    const response = await fetch(\`\${api}/auth/\${path}\`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Authentication request failed.');
+    return result;
+  }
+
+  function saveSession(result: any) {
+    const token = result?.session?.access_token;
+    if (!token) throw new Error('Kestrel did not return a valid sign-in session.');
+    localStorage.setItem('kestrel_access_token', token);
+  }
 
   async function submit(e: any) {
     e.preventDefault();
@@ -411,49 +427,32 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     setError('');
     setMessage('');
     try {
-      const sb = requireSupabase();
       if (awaitingOtp) {
-        if (!/^\d{6}$/.test(otp.trim())) {
-          throw new Error('Enter the complete 6-digit verification code.');
-        }
-        const { data, error } = await sb.auth.verifyOtp({
-          email: email.trim().toLowerCase(),
-          token: otp.trim(),
-          type: 'signup',
-        });
-        if (error) throw error;
-        if (!data.session) throw new Error('Your email was verified, but no session was created. Please sign in.');
+        if (!/^\d{6}$/.test(otp.trim())) throw new Error('Enter the complete 6-digit verification code.');
+        const result = await apiRequest('verify-otp', { email: email.trim().toLowerCase(), code: otp.trim() });
+        saveSession(result);
         go('overview');
         return;
       }
 
       if (mode === 'signup') {
-        const { data, error } = await sb.auth.signUp({
+        const result = await apiRequest('signup', {
+          fullName: name.trim(),
           email: email.trim().toLowerCase(),
           password,
-          options: { data: { full_name: name.trim() } },
         });
-        if (error) throw error;
-        if (!data.session) {
-          setAwaitingOtp(true);
-          setCanResend(true);
-          setMessage('We sent a 6-digit verification code to your email. Enter it below to activate your Kestrel account.');
-          return;
-        }
-        go('overview');
+        setAwaitingOtp(true);
+        setMessage(result.message || 'A six-digit verification code has been sent to your email. It expires in 5 minutes.');
       } else {
-        const { error } = await sb.auth.signInWithPassword({
+        const result = await apiRequest('login', {
           email: email.trim().toLowerCase(),
           password,
         });
-        if (error) {
-          if (/email not confirmed/i.test(error.message)) setCanResend(true);
-          throw error;
-        }
+        saveSession(result);
         go('overview');
       }
     } catch (e: any) {
-      setError(e.message || 'Authentication failed');
+      setError(e.message || 'Authentication failed.');
     } finally {
       setBusy(false);
     }
@@ -464,17 +463,10 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     setError('');
     setMessage('');
     try {
-      const sb = requireSupabase();
-      const { error } = await sb.auth.resend({
-        type: 'signup',
-        email: email.trim().toLowerCase(),
-        options: { emailRedirectTo: window.location.origin + '/login' },
-      });
-      if (error) throw error;
-      setAwaitingOtp(true);
-      setMessage('A new verification code has been sent. Check your inbox and spam folder.');
+      const result = await apiRequest('resend-otp', { email: email.trim().toLowerCase() });
+      setMessage(result.message || 'A new verification code has been sent.');
     } catch (e: any) {
-      setError(e.message || 'Could not resend verification code');
+      setError(e.message || 'Could not resend verification code.');
     } finally {
       setBusy(false);
     }
@@ -486,11 +478,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
         <Brand light />
         <div className="auth-aside-copy">
           <div className="eyebrow">DISTRIBUTED CI/CD, UNDER YOUR CONTROL</div>
-          <h1>
-            Build systems
-            <br />
-            that <span>move work<br />forward.</span>
-          </h1>
+          <h1>Build systems<br />that <span>move work<br />forward.</span></h1>
           <p>Coordinate pipelines across independent workers. Keep every build visible, every execution traceable.</p>
         </div>
         <div className="auth-aside-bottom">
@@ -498,81 +486,40 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
             <span>CONTROL PLANE</span>
             <ArrowDownRight />
             <span>WORKER NODES</span>
-            <div className="art-nodes">
-              <i />
-              <i />
-              <i />
-            </div>
+            <div className="art-nodes"><i /><i /><i /></div>
           </div>
           <small>KESTREL · DELIVERY INFRASTRUCTURE</small>
         </div>
       </aside>
       <main className="auth-main">
-        <button className="back-home" onClick={() => go('home')}>
-          ← Back to home
-        </button>
+        <button className="back-home" onClick={() => go('home')}>← Back to home</button>
         <div className="auth-form-wrap">
           <div className="auth-kicker">{awaitingOtp ? 'EMAIL VERIFICATION' : mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
           <h2>{awaitingOtp ? 'Check your inbox' : mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
-          <p>
-            {awaitingOtp
-              ? `Enter the 6-digit code sent to ${email}.`
-              : mode === 'login'
-                ? 'Continue to your delivery workspace.'
-                : 'Start orchestrating builds across your infrastructure.'}
-          </p>
+          <p>{awaitingOtp ? \`Enter the 6-digit code sent to \${email}.\` : mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
           <form onSubmit={submit}>
             {!awaitingOtp && mode === 'signup' && (
-              <label>
-                Full name
-                <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" />
-              </label>
+              <label>Full name<input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" /></label>
             )}
             {!awaitingOtp && (
-              <label>
-                Work email
-                <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" />
-              </label>
+              <label>Work email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" /></label>
             )}
             {!awaitingOtp && (
               <label>
                 Password
                 <div className="password-input">
-                  <input
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    type={show ? 'text' : 'password'}
-                    required
-                    minLength={8}
-                    placeholder="At least 8 characters"
-                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                  />
-                  <button type="button" onClick={() => setShow(!show)}>
-                    {show ? 'Hide' : 'Show'}
-                  </button>
+                  <input value={password} onChange={(e) => setPassword(e.target.value)} type={show ? 'text' : 'password'} required minLength={8} placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+                  <button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
                 </div>
               </label>
             )}
             {awaitingOtp && (
-              <label>
-                6-digit email code
-                <input
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  pattern="[0-9]{6}"
-                  minLength={6}
-                  maxLength={6}
-                  required
-                  placeholder="000000"
-                />
+              <label>6-digit email code
+                <input value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required placeholder="000000" />
               </label>
             )}
             {!awaitingOtp && mode === 'signup' && (
-              <label className="checkline">
-                <input type="checkbox" required /> I agree to the terms and privacy policy.
-              </label>
+              <label className="checkline"><input type="checkbox" required /> I agree to the terms and privacy policy.</label>
             )}
             {error && <div className="notice text-red-600">{error}</div>}
             {message && <div className="notice text-green-600">{message}</div>}
@@ -580,11 +527,6 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
               {busy ? 'Please wait…' : awaitingOtp ? 'Verify email' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
             </button>
           </form>
-          {canResend && !awaitingOtp && (
-            <button className="text-cta" type="button" disabled={busy || !email.includes('@')} onClick={resendCode}>
-              Resend email verification code
-            </button>
-          )}
           {awaitingOtp && (
             <div className="auth-switch">
               Didn't receive it? <button disabled={busy} onClick={resendCode}>Resend code</button>
@@ -594,24 +536,12 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
           )}
           {!awaitingOtp && (
             <div className="auth-switch">
-              {mode === 'login' ? (
-                <>
-                  New to Kestrel? <button onClick={() => go('signup')}>Create an account</button>
-                </>
-              ) : (
-                <>
-                  Already have an account? <button onClick={() => go('login')}>Sign in</button>
-                </>
-              )}
+              {mode === 'login' ? <>New to Kestrel? <button onClick={() => go('signup')}>Create an account</button></> : <>Already have an account? <button onClick={() => go('login')}>Sign in</button></>}
             </div>
           )}
-          <div className="auth-security">
-            <LockKeyhole size={14} /> Secure email verification · Kestrel
-          </div>
+          <div className="auth-security"><LockKeyhole size={14} /> Email verification and account sessions are managed securely by Kestrel.</div>
         </div>
-        <div className="auth-copyright">
-          © 2026 Kestrel Systems <span>·</span> <button onClick={() => go('docs')}>Help centre</button>
-        </div>
+        <div className="auth-copyright">© 2026 Kestrel Systems <span>·</span> <button onClick={() => go('docs')}>Help centre</button></div>
       </main>
     </div>
   );
@@ -652,48 +582,44 @@ function AppShell({ page }: { page: Page }) {
   async function connect() {
     setLoading(true);
     try {
-      const sb = requireSupabase();
-      const {
-        data: { session },
-      } = await sb.auth.getSession();
-      if (!session) {
+      const token = localStorage.getItem('kestrel_access_token');
+      if (!token) {
         go('login');
-        throw new Error('Please sign in first');
+        throw new Error('Please sign in first.');
       }
-      setAccessToken(session.access_token);
+      setAccessToken(token);
 
-      let ws = await fetch(`${api}/workspaces`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      let ws = await fetch(\`\${api}/workspaces\`, {
+        headers: { Authorization: \`Bearer \${token}\` },
       });
+      if (ws.status === 401) {
+        localStorage.removeItem('kestrel_access_token');
+        go('login');
+        throw new Error('Your session expired. Please sign in again.');
+      }
       if (!ws.ok) throw new Error('Could not load workspaces');
       let list = await ws.json();
 
       if (!list.length) {
-        const created = await fetch(`${api}/workspaces`, {
+        const created = await fetch(\`\${api}/workspaces\`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: \`Bearer \${token}\` },
           body: JSON.stringify({ name: 'Personal Workspace' }),
         });
         if (!created.ok) throw new Error('Could not create your workspace');
-        const item = await created.json();
-        list = [item];
+        list = [await created.json()];
       }
 
       const org = list[0].id;
       setOrganizationId(org);
-
-      const s = await fetch(`${api}/snapshot?organizationId=${org}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      const s = await fetch(\`\${api}/snapshot?organizationId=\${org}\`, {
+        headers: { Authorization: \`Bearer \${token}\` },
       });
       if (!s.ok) throw new Error('Could not load workspace data');
       const snapData = await s.json();
       setSnapshot(snapData);
       setHealth('Connected');
-
-      // Update selected project default
-      if (snapData.projects?.length && !selectedProject) {
-        setSelectedProject(snapData.projects[0].id);
-      }
+      if (snapData.projects?.length && !selectedProject) setSelectedProject(snapData.projects[0].id);
     } catch (e: any) {
       setHealth(e.message || 'Connection failed');
     } finally {
