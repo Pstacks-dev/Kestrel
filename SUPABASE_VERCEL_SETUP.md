@@ -125,3 +125,57 @@ If `/api/health` returns 503, inspect Vercel → Project → Logs. Check the tra
 Vercel hosts the landing page, browser application and short-lived HTTP API. It is not the build runtime. A separate persistent Linux worker host is required for polling, Docker execution, heartbeats and lease recovery. Do not expose the Docker socket to the public internet. Run build containers as non-root, with resource limits, no host mounts except a dedicated disposable workspace, and a deliberate network egress policy.
 
 This setup guide does not claim the platform is production-certified. GitHub App installation/webhook processing, encrypted secret injection, artifact upload/download flows, deployment orchestration, stronger isolation for hostile multi-tenant code, and end-to-end security/load testing still require implementation and verification before public production use.
+
+## 8. Kestrel email verification with six-digit OTP and Gmail SMTP
+
+The signup screen uses Supabase Auth's email OTP flow:
+- `signUp()` creates the account and requests email verification.
+- `verifyOtp({ email, token, type: 'signup' })` verifies the six-digit code.
+- `resend({ type: 'signup', email })` requests another code.
+
+Supabase Auth remains the identity provider. Gmail is only the SMTP delivery service; it does not authenticate users or store passwords.
+
+### Configure Gmail as the SMTP sender
+
+Use a Google App Password generated specifically for Kestrel. If an App Password has ever been pasted into a chat, ticket, source file, or screenshot, revoke it in Google Account → Security → App passwords and generate a replacement. Enter the replacement only in Supabase's password field; never commit it or add it to a `VITE_` variable.
+
+In Supabase Dashboard:
+1. Open Authentication → SMTP Settings (sometimes shown under Project Settings → Authentication → SMTP).
+2. Enable custom SMTP.
+3. Set sender email to the Gmail account used for Kestrel and sender name to `Kestrel`.
+4. Set host to `smtp.gmail.com`, port to `465` (SSL), username to the full Gmail address, and password to the newly generated App Password.
+5. Save the settings and use Supabase's email test if available.
+
+Gmail has sending limits and is suitable for an early test deployment, not a high-volume transactional email service. For larger production volumes, use a transactional provider with a verified Kestrel domain.
+
+### Configure the signup email to contain a code
+
+In Supabase Dashboard → Authentication → Email Templates → Confirm signup:
+- Use the numeric OTP placeholder `{{ .Token }}` in the email body.
+- Do not make the confirmation link the only way to complete signup.
+- Save the template.
+
+Example plain-text body:
+
+```text
+Welcome to Kestrel.
+
+Your email verification code is: {{ .Token }}
+
+Enter this six-digit code on the Kestrel signup page to activate your account.
+If you did not create a Kestrel account, you can ignore this email.
+```
+
+Keep the confirmation template associated with the Confirm signup event. The Kestrel client verifies the code as a signup OTP; do not change the client to magic-link verification.
+
+### Test the complete flow
+
+1. Deploy the latest Kestrel branch containing the OTP signup UI.
+2. Use a new email address that has never registered in this Supabase project.
+3. Sign up with a password of at least eight characters.
+4. Confirm the email arrives from the configured Kestrel sender and contains a six-digit code.
+5. Enter the code in Kestrel. A successful verification should create an authenticated session and open the workspace.
+6. Sign out and sign back in using the same email and password.
+7. Test resend and confirm that only the latest valid code is accepted according to Supabase's OTP rules.
+
+If signup returns an error, check Supabase Auth logs and SMTP delivery logs. If the email contains a URL rather than a code, re-check the Confirm signup template. If verification succeeds but the app does not open the workspace, inspect the browser console and the `/api/health` endpoint; email verification and the Kestrel database connection are separate systems.
