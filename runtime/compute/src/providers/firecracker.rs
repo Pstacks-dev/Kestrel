@@ -149,7 +149,6 @@ impl ComputeProvider for FirecrackerProvider {
             .arg("--chroot-base-dir").arg(&self.config.api_socket_dir)
             .arg("--").arg("--api-sock").arg("/run/firecracker.socket")
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
-            .kill_on_drop(true)
             .spawn().map_err(|e| ComputeError::Provider(format!("Unable to start Firecracker jailer: {e}")))?;
         if let Err(error) = self.wait_for_socket(&spec.name, &mut child).await {
             let _ = child.kill().await;
@@ -158,6 +157,9 @@ impl ComputeProvider for FirecrackerProvider {
         let jail_root = self.jail_root(&spec.name);
         tokio::fs::create_dir_all(jail_root.join("run")).await
             .map_err(|e| ComputeError::Provider(format!("Cannot prepare Firecracker jail: {e}")))?;
+        let pid = child.id().ok_or_else(|| ComputeError::Provider("Firecracker jailer did not expose a process ID".into()))?;
+        tokio::fs::write(jail_root.join("firecracker.pid"), pid.to_string()).await
+            .map_err(|e| ComputeError::Provider(format!("Cannot persist Firecracker process ID: {e}")))?;
         tokio::fs::copy(self.config.kernel_image_dir.join("vmlinux"), jail_root.join("vmlinux")).await
             .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker kernel: {e}")))?;
         tokio::fs::copy(rootfs, jail_root.join("rootfs.ext4")).await
@@ -181,8 +183,10 @@ impl ComputeProvider for FirecrackerProvider {
         validate_id(id)?;
         let process_state = {
             let mut children = self.children.lock().await;
-            let child = children.get_mut(id).ok_or_else(|| ComputeError::Provider("Firecracker instance is not managed by this host agent".into()))?;
-            child.try_wait().map_err(|e| ComputeError::Provider(format!("Firecracker process check failed: {e}")))?
+            match children.get_mut(id) {
+                Some(child) => child.try_wait().map_err(|e| ComputeError::Provider(format!("Firecracker process check failed: {e}")))?,
+                None => None,
+            }
         };
         if let Some(status) = process_state {
             return Ok(self.instance(id, if status.success() { InstanceState::Stopped } else { InstanceState::Failed }));
@@ -209,9 +213,23 @@ impl ComputeProvider for FirecrackerProvider {
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError> {
         validate_id(id)?;
         let mut children = self.children.lock().await;
-        let mut child = children.remove(id).ok_or_else(|| ComputeError::Provider("Firecracker instance is not managed by this host agent".into()))?;
-        child.kill().await.map_err(|e| ComputeError::Provider(format!("Unable to terminate Firecracker process: {e}")))?;
-        let _ = child.wait().await;
+        if let Some(mut child) = children.remove(id) {
+            child.kill().await.map_err(|e| ComputeError::Provider(format!("Unable to terminate Firecracker process: {e}")))?;
+            let _ = child.wait().await;
+        } else {
+            let pid_path = self.jail_root(id).join("firecracker.pid");
+            let pid = tokio::fs::read_to_string(pid_path).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot find persisted Firecracker process ID: {e}")))?;
+            let pid = pid.trim();
+            if !pid.bytes().all(|b| b.is_ascii_digit()) || pid.is_empty() {
+                return Err(ComputeError::Provider("Persisted Firecracker process ID is invalid".into()));
+            }
+            let status = Command::new("kill").arg("-TERM").arg(pid).status().await
+                .map_err(|e| ComputeError::Provider(format!("Unable to signal Firecracker process: {e}")))?;
+            if !status.success() {
+                return Err(ComputeError::Provider("Firecracker process could not be terminated".into()));
+            }
+        }
         let jail = self.config.api_socket_dir.join("firecracker").join(id);
         tokio::fs::remove_dir_all(jail).await
             .map_err(|e| ComputeError::Provider(format!("Unable to remove Firecracker jail: {e}")))?;
