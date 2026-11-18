@@ -179,9 +179,12 @@ impl ComputeProvider for FirecrackerProvider {
 
     async fn get_instance(&self, id: &str) -> Result<Instance, ComputeError> {
         validate_id(id)?;
-        let mut children = self.children.lock().await;
-        let child = children.get_mut(id).ok_or_else(|| ComputeError::Provider("Firecracker instance is not managed by this host agent".into()))?;
-        if let Some(status) = child.try_wait().map_err(|e| ComputeError::Provider(format!("Firecracker process check failed: {e}")))? {
+        let process_state = {
+            let mut children = self.children.lock().await;
+            let child = children.get_mut(id).ok_or_else(|| ComputeError::Provider("Firecracker instance is not managed by this host agent".into()))?;
+            child.try_wait().map_err(|e| ComputeError::Provider(format!("Firecracker process check failed: {e}")))?
+        };
+        if let Some(status) = process_state {
             return Ok(self.instance(id, if status.success() { InstanceState::Stopped } else { InstanceState::Failed }));
         }
         let state = self.api_request(id, "GET", "/", None).await
