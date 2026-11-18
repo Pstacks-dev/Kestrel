@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use reqwest::{Certificate, Client, Method, StatusCode};
 use serde_json::{json, Value};
 use std::{fs, path::Path};
-use std::time::Duration;
 use uuid::Uuid;
 use tokio::time::{sleep, Duration};
 
