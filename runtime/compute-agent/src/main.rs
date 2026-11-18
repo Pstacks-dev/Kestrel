@@ -4,7 +4,7 @@ use kestrel_compute::{
     ComputeProvider, Instance, InstanceSpec, InstanceState, ProviderKind,
 };
 use reqwest::{header, Client};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
@@ -35,18 +35,6 @@ struct Operation {
     payload: Value,
     #[serde(rename = "leaseToken")]
     lease_token: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Completion<'a> {
-    operation_id: &'a str,
-    lease_token: &'a str,
-    success: bool,
-    provider_id: Option<&'a str>,
-    state: Option<&'a str>,
-    ipv4: &'a [String],
-    error: Option<&'a str>,
 }
 
 fn required(name: &str) -> Result<String> {
