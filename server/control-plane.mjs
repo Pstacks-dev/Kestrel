@@ -989,7 +989,7 @@ app.post('/api/workers/register', workerAuth, async (req, res) => {
     await query(
       `update public.workers
        set hostname = $2, architecture = $3, region = $4,
-           max_concurrency = $5, runtime = $7,\n           state = case when state in ('draining', 'offline') then state else 'online' end,\n           last_seen_at = now()
+           max_concurrency = $5, runtime = $7,\n           state = case when desired_state = 'offline' then 'offline' when desired_state = 'draining' then 'draining' else 'online' end,\n           last_seen_at = now()
        where id = $1 and organization_id = $6`,
       [workerId, hostname, arch, region, Math.min(128, Math.max(1, Number(maxConcurrency))), req.worker.organizationId, runtime === 'rust' ? 'rust' : 'node']
     );
@@ -1003,7 +1003,7 @@ app.post('/api/workers/heartbeat', workerAuth, async (req, res) => {
   const r = await query(
     `update public.workers
      set last_seen_at = now(),
-         state = case when state = 'offline' then 'offline'\n                      when state = 'draining' or $2 then 'draining'\n                      when exists (select 1 from public.jobs j where j.worker_id = workers.id and j.status = 'running') then 'busy'\n                      else 'online' end
+         state = case when desired_state = 'offline' then 'offline'\n                      when desired_state = 'draining' or $2 then 'draining'\n                      when exists (select 1 from public.jobs j where j.worker_id = workers.id and j.status = 'running') then 'busy'\n                      else 'online' end
      where id = $1 and id = $3 returning id`,
     [req.body.workerId, !!req.body.draining, req.worker.id]
   );
@@ -1427,8 +1427,8 @@ app.post('/api/admin/workers/:workerId/state', sensitiveLimiter, userAuth, platf
   }
   try {
     const result = await query(
-      `update public.workers set state = $2
-       where id = $1 returning id, state, last_seen_at`,
+      `update public.workers set desired_state = $2, state = $2
+       where id = $1 returning id, state, desired_state, last_seen_at`,
       [req.params.workerId, state]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Worker not found' });
@@ -1449,7 +1449,7 @@ app.post('/api/admin/workers/:workerId/revoke', sensitiveLimiter, userAuth, plat
   try {
     await transaction(async (c) => {
       await c.query('update public.worker_credentials set revoked_at = now() where worker_id = $1', [workerId]);
-      await c.query("update public.workers set state = 'offline' where id = $1", [workerId]);
+      await c.query("update public.workers set desired_state = 'offline', state = 'offline' where id = $1", [workerId]);
     });
     res.json({ ok: true, workerId, revoked: true });
   } catch (e) {
