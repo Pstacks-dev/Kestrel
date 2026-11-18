@@ -16,3 +16,23 @@ test('worker desired state separates admin intent from transient offline status'
   assert.match(sql, /when state = 'offline' then 'offline'/i);
   assert.match(sql, /when state = 'draining' then 'draining'/i);
 });
+
+test('compute migration provisions tenant VM inventory, provider nodes and durable operation leases', async () => {
+  const sql = await readFile(new URL('../db/migrations/017_compute_providers.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.compute_nodes/i);
+  assert.match(sql, /create table if not exists public\.compute_instances/i);
+  assert.match(sql, /create table if not exists public\.compute_operations/i);
+  assert.match(sql, /create table if not exists public\.compute_quotas/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /members read compute instances/i);
+  assert.match(sql, /token_hash text not null/i);
+});
+
+test('compute control plane exposes authenticated tenant and host-agent operations', async () => {
+  const routes = await readFile(new URL('../server/routes/compute.mjs', import.meta.url), 'utf8');
+  assert.match(routes, /\/api\/compute\/instances/);
+  assert.match(routes, /\/api\/compute\/agent\/claim/);
+  assert.match(routes, /\/api\/compute\/agent\/complete/);
+  assert.match(routes, /lease_expires_at = now\(\) \+ interval '90 seconds'/);
+  assert.match(routes, /desired_state = 'online'/);
+});
