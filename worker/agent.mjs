@@ -351,19 +351,20 @@ async function collectArtifacts(job, workspace) {
       const stat = await fs.stat(absolute);
       if (!stat.size || stat.size > maxFile || total + stat.size > maxTotal) continue;
       const bytes = await fs.readFile(absolute);
-      const response = await fetch(`${API}/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/upload`, {
+      const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+      const session = await api(`/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/upload-url`, {
+        leaseToken: job.leaseToken, name: relative, sizeBytes: bytes.length,
+        sha256, contentType: 'application/octet-stream',
+      });
+      const response = await fetch(session.uploadUrl, {
         method: 'PUT',
-        headers: {
-          authorization: headers.authorization,
-          'x-worker-id': WORKER_ID,
-          'x-kestrel-lease': job.leaseToken,
-          'x-artifact-name': relative.slice(0, 512),
-          'x-artifact-content-type': 'application/octet-stream',
-          'content-type': 'application/octet-stream',
-        },
+        headers: { 'content-type': 'application/octet-stream', 'x-upsert': 'false' },
         body: bytes,
       });
-      if (!response.ok) throw new Error(`Artifact upload failed for ${relative}: ${response.status}`);
+      if (!response.ok) throw new Error(`Artifact object upload failed for ${relative}: ${response.status}`);
+      await api(`/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/finalize`, {
+        leaseToken: job.leaseToken, sessionId: session.sessionId,
+      });
       uploaded += 1;
       total += bytes.length;
       console.log(`[artifact] Uploaded ${relative} (${bytes.length} bytes)`);
