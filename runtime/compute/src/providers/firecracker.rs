@@ -136,10 +136,8 @@ impl ComputeProvider for FirecrackerProvider {
         validate_id(&spec.name)?;
         let rootfs = self.rootfs_source(&spec.image)?;
         if !rootfs.is_file() { return Err(ComputeError::NotConfigured("Requested Firecracker rootfs image is not installed on this host".into())); }
-        {
-            let children = self.children.lock().await;
-            if children.contains_key(&spec.name) { return Err(ComputeError::Provider("Firecracker instance already exists on this agent".into())); }
-        }
+        let mut children = self.children.lock().await;
+        if children.contains_key(&spec.name) { return Err(ComputeError::Provider("Firecracker instance already exists on this agent".into())); }
         let jail_base = self.config.api_socket_dir.join("firecracker");
         tokio::fs::create_dir_all(&jail_base).await
             .map_err(|e| ComputeError::Provider(format!("Cannot create Firecracker jail base: {e}")))?;
