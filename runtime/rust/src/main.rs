@@ -347,15 +347,6 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
 
     let container = deployment.container_name.clone();
     anyhow::ensure!(container.starts_with("kestrel-") && container.len() <= 100 && container.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "deployment container name is invalid");
-    let previous_container = deployment.previous_container.as_deref();
-    let had_previous = previous_container.is_some();
-    if let Some(previous) = previous_container {
-        let stopped = Command::new(&cfg.docker).args(["stop", previous]).output().await?;
-        if stopped.status.success() {
-            let _ = flush_log(http, cfg, job, "system", "Stopped the currently active release before switching traffic").await;
-        }
-    }
-
     let secret_file = std::env::temp_dir().join(format!("kestrel-deploy-{}-{}.env", job.id, uuid::Uuid::new_v4()));
     let mut secret_contents = String::new();
     if let Some(secrets) = &job.secrets {
@@ -370,6 +361,16 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
             }
         }
     }
+
+    let previous_container = deployment.previous_container.as_deref();
+    let had_previous = previous_container.is_some();
+    if let Some(previous) = previous_container {
+        let stopped = Command::new(&cfg.docker).args(["stop", previous]).output().await?;
+        if stopped.status.success() {
+            let _ = flush_log(http, cfg, job, "system", "Stopped the currently active release before switching traffic").await;
+        }
+    }
+
     let mut secret_file_created = false;
     if !secret_contents.is_empty() {
         use std::os::unix::fs::OpenOptionsExt;
