@@ -1,10 +1,11 @@
-use crate::{ComputeError, ComputeProvider, Instance, InstanceSpec, InstanceState, ProviderCapabilities, ProviderKind};
+use crate::{ComputeError, ComputeProvider, Instance, InstanceSnapshot, InstanceSpec, InstanceState, ProviderCapabilities, ProviderKind};
 use async_trait::async_trait;
 use reqwest::{Certificate, Client, Method, StatusCode};
 use serde_json::{json, Value};
 use std::{fs, path::Path};
 use std::time::Duration;
 use uuid::Uuid;
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Clone)]
 pub struct KubeVirtConfig {
@@ -66,6 +67,25 @@ impl KubeVirtProvider {
             .build()
             .map_err(|e| ComputeError::Provider(format!("Kubernetes HTTP client: {e}")))?;
         Ok(Self { config, client, bearer_token })
+    }
+
+    fn snapshot_collection_url(&self) -> String {
+        format!("{}/apis/snapshot.kubevirt.io/v1beta1/namespaces/{}/virtualmachinesnapshots",
+            self.config.api_server.trim_end_matches('/'), self.config.namespace)
+    }
+
+    fn snapshot_url(&self, snapshot_id: &str) -> String {
+        format!("{}/{}", self.snapshot_collection_url(), snapshot_id)
+    }
+
+    fn restore_collection_url(&self) -> String {
+        format!("{}/apis/snapshot.kubevirt.io/v1beta1/namespaces/{}/virtualmachinerestores",
+            self.config.api_server.trim_end_matches('/'), self.config.namespace)
+    }
+
+    fn provider_snapshot_name(instance_id: &str, name: &str) -> String {
+        let id = Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("kestrel:kubevirt-snapshot:{instance_id}:{name}").as_bytes());
+        format!("ks-{}", id.simple())
     }
 
     fn resource_url(&self, resource: &str, name: Option<&str>, action: Option<&str>) -> String {
@@ -175,7 +195,7 @@ fn validate_resource_name(name: &str) -> Result<(), ComputeError> {
 impl ComputeProvider for KubeVirtProvider {
     fn kind(&self) -> ProviderKind { ProviderKind::KubeVirt }
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { virtual_machines: true, snapshots: false, live_migration: false, console: false, cluster_scheduling: false }
+        ProviderCapabilities { virtual_machines: true, snapshots: true, live_migration: false, console: false, cluster_scheduling: false }
     }
 
     async fn health(&self) -> Result<(), ComputeError> {
@@ -204,6 +224,73 @@ impl ComputeProvider for KubeVirtProvider {
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError> {
         validate_resource_name(id)?;
         self.request(Method::DELETE, self.resource_url("vm", Some(id), None), Some(json!({"apiVersion":"v1","kind":"DeleteOptions","propagationPolicy":"Foreground"}))).await.map(|_| ())
+    }
+
+    async fn create_snapshot(&self, instance_id: &str, name: &str) -> Result<InstanceSnapshot, ComputeError> {
+        validate_resource_name(instance_id)?;
+        validate_resource_name(name)?;
+        let provider_id = Self::provider_snapshot_name(instance_id, name);
+        let manifest = json!({
+            "apiVersion":"snapshot.kubevirt.io/v1beta1",
+            "kind":"VirtualMachineSnapshot",
+            "metadata":{"name":provider_id,"namespace":self.config.namespace,
+                "labels":{"kestrel.io/instance":instance_id,"kestrel.io/snapshot-name":name}},
+            "spec":{"source":{"apiGroup":"kubevirt.io","kind":"VirtualMachine","name":instance_id}}
+        });
+        self.request(Method::POST, self.snapshot_collection_url(), Some(manifest)).await?;
+        for _ in 0..30 {
+            let snapshot = self.request(Method::GET, self.snapshot_url(&provider_id), None).await?;
+            if snapshot.pointer("/status/readyToUse").and_then(Value::as_bool) == Some(true) {
+                return Ok(InstanceSnapshot { provider_id, name:name.to_owned() });
+            }
+            if snapshot.pointer("/status/conditions").and_then(Value::as_array).is_some_and(|conditions|
+                conditions.iter().any(|condition| condition.get("type").and_then(Value::as_str) == Some("Failure")
+                    && condition.get("status").and_then(Value::as_str) == Some("True"))) {
+                return Err(ComputeError::Provider("KubeVirt snapshot entered a failed state".into()));
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+        Err(ComputeError::Provider("Timed out waiting for KubeVirt snapshot readiness".into()))
+    }
+
+    async fn list_snapshots(&self, instance_id: &str) -> Result<Vec<InstanceSnapshot>, ComputeError> {
+        validate_resource_name(instance_id)?;
+        let response = self.request(Method::GET, self.snapshot_collection_url(), None).await?;
+        let items = response.pointer("/items").and_then(Value::as_array)
+            .ok_or_else(|| ComputeError::Provider("KubeVirt snapshot list response is malformed".into()))?;
+        Ok(items.iter().filter(|item| item.pointer("/metadata/labels/kestrel.io~1instance").and_then(Value::as_str) == Some(instance_id))
+            .filter_map(|item| {
+                let metadata = item.get("metadata")?;
+                let provider_id = metadata.get("name")?.as_str()?.to_owned();
+                let name = metadata.pointer("/labels/kestrel.io~1snapshot-name")?.as_str()?.to_owned();
+                Some(InstanceSnapshot { provider_id, name })
+            }).collect())
+    }
+
+    async fn restore_snapshot(&self, instance_id: &str, snapshot_id: &str) -> Result<(), ComputeError> {
+        validate_resource_name(instance_id)?;
+        validate_resource_name(snapshot_id)?;
+        let restore_name = format!("restore-{}", &Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("kestrel:restore:{instance_id}:{snapshot_id}").as_bytes()).simple().to_string()[..24]);
+        let manifest = json!({
+            "apiVersion":"snapshot.kubevirt.io/v1beta1",
+            "kind":"VirtualMachineRestore",
+            "metadata":{"name":restore_name,"namespace":self.config.namespace},
+            "spec":{"target":{"apiGroup":"kubevirt.io","kind":"VirtualMachine","name":instance_id},
+                "virtualMachineSnapshotName":snapshot_id}
+        });
+        self.request(Method::POST, self.restore_collection_url(), Some(manifest)).await.map(|_| ())
+    }
+
+    async fn delete_snapshot(&self, instance_id: &str, snapshot_id: &str) -> Result<(), ComputeError> {
+        validate_resource_name(instance_id)?;
+        validate_resource_name(snapshot_id)?;
+        let snapshot = self.request(Method::GET, self.snapshot_url(snapshot_id), None).await?;
+        let owner = snapshot.pointer("/metadata/labels/kestrel.io~1instance").and_then(Value::as_str);
+        if owner != Some(instance_id) {
+            return Err(ComputeError::Provider("KubeVirt snapshot does not belong to this VM".into()));
+        }
+        self.request(Method::DELETE, self.snapshot_url(snapshot_id),
+            Some(json!({"apiVersion":"v1","kind":"DeleteOptions","propagationPolicy":"Foreground"}))).await.map(|_| ())
     }
 }
 
