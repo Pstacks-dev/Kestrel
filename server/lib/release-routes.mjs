@@ -2,7 +2,10 @@ import crypto from 'node:crypto';
 import { deployNetlifyArtifacts } from './netlify-deploy.mjs';
 
 const BUCKET = 'kestrel-artifacts';
-const MAX_BYTES = Math.min(100 * 1024 * 1024, Number(process.env.KESTREL_MAX_ARTIFACT_BYTES || 100 * 1024 * 1024));
+const configuredMaxBytes = Number(process.env.KESTREL_MAX_ARTIFACT_BYTES || 100 * 1024 * 1024);
+const MAX_BYTES = Number.isFinite(configuredMaxBytes) && configuredMaxBytes > 0
+  ? Math.min(100 * 1024 * 1024, Math.floor(configuredMaxBytes))
+  : 100 * 1024 * 1024;
 const secretName = (id) => 'KESTREL_DEPLOYMENT_' + String(id).replace(/-/g, '').toUpperCase() + '_TOKEN';
 
 function safeName(value) {
