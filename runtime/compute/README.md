@@ -34,9 +34,17 @@ Kubernetes as a dependency.
 
 ## Current implementation status
 
-The shared Rust provider contract and VM resource validation are in place. Incus now has an mTLS HTTP client, project-scoped API requests, asynchronous operation waiting, VM create/lookup/start/stop/delete calls, and configuration/URL-scope unit tests. This code has not yet passed a fresh CI run or been exercised against a real Incus daemon, so actual VM provisioning remains unverified. Firecracker and KubeVirt currently have configuration/contracts only; their API transports and lifecycle operations remain to be implemented. Persistent Kestrel VM records, scheduling, image/network provisioning, console/SSH access, snapshots and quota enforcement also remain outstanding.
+The shared Rust provider contract and VM resource validation are in place.
 
-Firecracker and KubeVirt operations deliberately return an explicit not-implemented error until their security-sensitive transports are connected. Incus calls are implemented but must be validated against a real daemon before being exposed as production-ready. This prevents the API or dashboard from claiming that an unverified provider operation succeeded.
+- **Incus:** mTLS REST client, project-scoped requests, asynchronous operation waiting, VM create/lookup/start/stop/delete calls and configuration/URL-scope tests.
+- **Firecracker:** jailer process launch, per-instance chroot layout, staged kernel/rootfs, Unix-domain HTTP API, machine configuration, boot source, root drive, instance start, state lookup, graceful guest shutdown and process/jail cleanup. The image field is a pre-installed rootfs filename in the configured rootfs directory; the host must supply a compatible kernel and ext4 rootfs. The jailer must run with the privileges needed to create its chroot, while Firecracker itself runs under the configured non-root UID/GID.
+- **KubeVirt:** HTTPS client with a pinned cluster CA and namespace-scoped service-account token, VM manifest creation, resource mapping, optional cloud-init SSH key, lookup, start/stop subresources and deletion. The configured namespace's RBAC must grant only the required VirtualMachine and VirtualMachineInstance operations.
+
+These implementations have not yet passed a fresh CI run or been exercised against real Incus, Firecracker or KubeVirt hosts. They are code-level integrations, not proof that a provider is provisioned or that a customer VM can be reached.
+
+## Remaining integration
+
+Persistent Kestrel VM records, provider-node registration, resource-aware scheduling, asynchronous provisioning reconciliation, quotas, tenant authorization, network attachment/IP allocation, SSH/console proxying, snapshots and monitoring still need to be connected to the control plane and dashboard. Firecracker networking also needs a trusted host-side TAP/network setup; customer workloads must never receive provider sockets or host credentials. Incus and KubeVirt image/storage profiles need explicit operator-managed configuration.
 
 ## Build and test
 
