@@ -239,7 +239,7 @@ async fn upload_artifacts_inner(http: &Client, cfg: &Config, job: &Job, workspac
         discovered
     } else { declared.to_vec() };
     let mut total_bytes = 0u64;
-    let storage_client = Client::new();
+    let storage_client = Client::builder().timeout(Duration::from_secs(600)).build()?;
     for raw in &paths {
         let relative = safe_relative_path(raw)?;
         let source = workspace.join(&relative);
