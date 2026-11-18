@@ -53,3 +53,8 @@ jobs:
 
       - name: Smoke-test job runtime shell and Node.js
         run: docker run --rm kestrel-job-node22:ci sh -lc 'node --version && npm --version'
+
+      - name: Validate worker Compose configuration
+        run: |
+          printf 'KESTREL_WORKER_HOST_WORKDIR=/tmp/kestrel-worker-work\\n' > .env.worker
+          docker compose --env-file .env.worker -f docker-compose.worker.yml config --quiet
