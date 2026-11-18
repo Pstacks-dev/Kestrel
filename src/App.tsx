@@ -111,78 +111,69 @@ function Landing() {
       <section className="hero wrap">
         <div className="hero-copy">
           <div className="eyebrow">
-            <span className="live-dot" /> DISTRIBUTED DELIVERY INFRASTRUCTURE
+            <span className="eyebrow-mark" /> DISTRIBUTED DELIVERY INFRASTRUCTURE
           </div>
           <h1>
-            Ship with confidence.
+            Run every build.
             <br />
-            <span>Scale without limits.</span>
+            <span>See every step.</span>
           </h1>
           <p className="hero-lead">
-            A distributed CI/CD platform that turns every commit into a coordinated build, test and deployment
-            pipeline — across the machines you control.
+            Kestrel coordinates repository pipelines, schedules jobs across available execution workers, and brings logs,
+            artifacts and release status into one workspace.
           </p>
           <div className="hero-ctas">
             <Button onClick={() => go('signup')}>
-              Get started free <ArrowRight size={16} />
+              Create your workspace <ArrowRight size={16} />
             </Button>
             <button className="text-cta" onClick={() => go('docs')}>
               Read the documentation <ArrowUpRight size={15} />
             </button>
           </div>
           <div className="hero-proof">
-            <div className="proof-avatars">
-              <i>K</i>
-              <i>CI</i>
-              <i>+</i>
-            </div>
-            <span>Built for teams that ship software</span>
+            <span>Traceable builds</span>
             <span className="proof-sep">·</span>
-            <span>Self-hosted workers</span>
+            <span>Clear execution history</span>
+            <span className="proof-sep">·</span>
+            <span>Controlled releases</span>
           </div>
         </div>
 
         <div className="hero-visual">
           <div className="visual-top">
             <span>
-              <i className="live-dot" /> LIVE PIPELINE
+              <i className="eyebrow-mark" /> PIPELINE EXECUTION
             </span>
-            <span>run_8f21c6</span>
+            <span>CONTROL PLANE VIEW</span>
           </div>
           <div className="visual-title">
             <div>
-              <small>storefront / production</small>
-              <h3>Deploy pipeline</h3>
+              <small>REPOSITORY WORKFLOW</small>
+              <h3>Build to release</h3>
             </div>
-            <span className="pill pill-green">● Running</span>
+            <span className="pill pill-muted">Execution stages</span>
           </div>
           <div className="pipeline-track">
             <div className="track-line" />
-            <div className="stage done">
-              <span>
-                <Check />
-              </span>
+            <div className="stage neutral">
+              <span>1</span>
               <b>Checkout</b>
-              <small>0.8s</small>
+              <small>Source</small>
             </div>
-            <div className="stage done">
-              <span>
-                <Check />
-              </span>
+            <div className="stage neutral">
+              <span>2</span>
               <b>Install</b>
-              <small>12.4s</small>
+              <small>Install</small>
             </div>
-            <div className="stage active">
-              <span>
-                <Radio />
-              </span>
+            <div className="stage neutral">
+              <span>3</span>
               <b>Test suite</b>
-              <small>Worker 02</small>
+              <small>Validate</small>
             </div>
-            <div className="stage waiting">
+            <div className="stage neutral">
               <span>4</span>
               <b>Deploy</b>
-              <small>Waiting</small>
+              <small>Release</small>
             </div>
           </div>
           <div className="visual-divider" />
@@ -190,33 +181,22 @@ function Landing() {
             <div>
               <Server />
               <span>
-                <b>worker-eu-02</b>
-                <small>Linux · 4 vCPU</small>
+                <b>Execution workers</b>
+                <small>Jobs assigned by availability</small>
               </span>
             </div>
-            <div className="worker-state">
-              <i className="live-dot" /> EXECUTING
-            </div>
+            <div className="worker-state">SCHEDULED BY KESTREL</div>
           </div>
           <div className="log-lines">
-            <p>
-              <time>14:32:08</time>
-              <span className="log-ok">✓</span> Dependencies installed
-            </p>
-            <p>
-              <time>14:32:11</time>
-              <span className="log-ok">✓</span> Type check passed
-            </p>
-            <p>
-              <time>14:32:14</time>
-              <span className="log-run">↻</span> Running integration tests...
-            </p>
+            <p><span className="log-ok">01</span> Jobs wait for their dependencies</p>
+            <p><span className="log-ok">02</span> Available workers claim eligible jobs</p>
+            <p><span className="log-run">03</span> Results and logs return to the control plane</p>
           </div>
           <div className="visual-foot">
             <span>
-              CONTROL PLANE <b>CONNECTED</b>
+              CONTROL PLANE <b>ORCHESTRATES</b>
             </span>
-            <span>3 WORKERS ONLINE</span>
+            <span>CAPACITY REPORTED BY WORKERS</span>
           </div>
         </div>
       </section>
@@ -275,10 +255,10 @@ function Landing() {
               <Server />
             </div>
             <h3>Distributed workers</h3>
-            <p>Connect independent execution nodes across machines and environments. Scale capacity without scaling the control plane.</p>
+            <p>Jobs are assigned to available execution capacity. Follow each job from scheduling through completion.</p>
             <div className="feature-metric">
-              <b>03</b>
-              <span>workers connected</span>
+              <b>Live</b>
+              <span>execution visibility</span>
             </div>
           </article>
           <article className="feature">
@@ -288,8 +268,8 @@ function Landing() {
             <h3>Live execution logs</h3>
             <p>Follow stdout, stderr, job status and exit codes as work happens on the worker.</p>
             <div className="terminal-mini">
-              <span>$ npm run test</span>
-              <b>✓ 42 passed</b>
+              <span>stdout · stderr · exit code</span>
+              <b>Execution logs</b>
             </div>
           </article>
           <article className="feature">
@@ -297,7 +277,7 @@ function Landing() {
               <ShieldCheck />
             </div>
             <h3>Operational control</h3>
-            <p>Monitor worker health, concurrency and job leases. Keep execution capacity visible and accountable.</p>
+            <p>Track execution capacity, job assignment and worker health from one operational view.</p>
           </article>
           <article className="feature">
             <div className="feature-icon">
@@ -367,7 +347,7 @@ function Landing() {
         <div>
           <div className="eyebrow">READY WHEN YOU ARE</div>
           <h2>Your next release starts here.</h2>
-          <p>Bring your repository. Connect your workers. Let Kestrel coordinate the rest.</p>
+          <p>Bring your repository. Let Kestrel coordinate the delivery workflow.</p>
         </div>
         <Button onClick={() => go('signup')}>
           Create your workspace <ArrowUpRight size={16} />
@@ -752,48 +732,6 @@ function AppShell({ page }: { page: Page }) {
     }
   }
 
-  async function triggerDemoRun() {
-    setActionMessage('');
-    try {
-      let pId = snapshot?.projects?.[0]?.id;
-      if (!pId) {
-        const createdProj = await fetch(`${api}/projects`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({
-            organizationId,
-            name: 'kestrel-demo',
-            repo: 'https://github.com/peterakinwale326-code/Kestrel.git',
-            defaultBranch: 'main',
-          }),
-        });
-        const projData = await createdProj.json();
-        pId = projData.id;
-      }
-
-      const res = await fetch(`${api}/runs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({
-          projectId: pId,
-          branch: 'main',
-          commitMessage: 'Demo execution: standalone verification',
-          jobs: [
-            { id: 'check-runtime', name: 'Verify Environment', stage: 'checks', command: 'node -v && echo "Kestrel execution engine online."' },
-            { id: 'run-tests', name: 'Test Execution', stage: 'test', command: 'node -e "console.log(\'Running unit tests... All 22 tests passed.\')"', needs: ['check-runtime'] },
-            { id: 'package-bundle', name: 'Build Distribution', stage: 'package', command: 'node -e "console.log(\'Compiling output artifacts into dist/... Done!\')"', needs: ['run-tests'] },
-          ],
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to queue demo run');
-      setActionMessage(`Demo run #${data.run_number} queued! Selected for live inspection.`);
-      setInspectedRunId(data.id);
-      await connect();
-    } catch (e: any) {
-      setActionMessage(e.message || 'Demo trigger failed');
-    }
-  }
 
   async function cancelRun(runId: string) {
     try {
@@ -918,9 +856,6 @@ function AppShell({ page }: { page: Page }) {
                 <p>Your distributed build system at a glance.</p>
               </div>
               <div className="flex items-center gap-2">
-                <Button onClick={triggerDemoRun} kind="light">
-                  <Zap size={14} /> Quick Demo Run
-                </Button>
                 <Button onClick={() => go('pipelines')}>
                   <Play size={14} /> Trigger pipeline
                 </Button>
@@ -1025,9 +960,6 @@ function AppShell({ page }: { page: Page }) {
                 <p>Submit jobs with dependency relationships to execution nodes.</p>
               </div>
               <div className="flex items-center gap-2">
-                <Button onClick={triggerDemoRun} kind="light">
-                  <Zap size={14} /> Quick Demo Run
-                </Button>
                 <Button onClick={() => go('projects')}>
                   <Plus size={15} /> Add repository
                 </Button>
