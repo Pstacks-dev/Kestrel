@@ -394,11 +394,16 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
     if job.job_type.as_deref() == Some("deployment") {
         let started = std::time::Instant::now();
         let result = run_deployment(http, cfg, &job).await;
-        let (exit_code, status) = match result {
-            Ok(()) => (0, "succeeded"),
-            Err(error) => {
-                let _ = flush_log(http, cfg, &job, "stderr", &format!("Deployment failed: {error}")).await;
-                (1, "failed")
+        let was_canceled = cancellation_requested(http, cfg, &job).await.unwrap_or(false);
+        let (exit_code, status) = if was_canceled {
+            (130, "canceled")
+        } else {
+            match result {
+                Ok(()) => (0, "succeeded"),
+                Err(error) => {
+                    let _ = flush_log(http, cfg, &job, "stderr", &format!("Deployment failed: {error}")).await;
+                    (1, "failed")
+                }
             }
         };
         let _ = flush_log(http, cfg, &job, "system", &format!("Deployment worker finished with status {status}")).await;
