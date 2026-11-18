@@ -895,6 +895,7 @@ app.post('/api/runs/:runId/retry', sensitiveLimiter, userAuth, async (req, res) 
         `update public.jobs
          set status = 'queued',
              attempt = 0,
+             available_at = now(),
              exit_code = null,
              duration_ms = null,
              started_at = null,
@@ -1101,7 +1102,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          left join public.deployment_environments de on de.id = j.deployment_environment_id
          left join public.deployment_releases current_release on current_release.id = de.current_release_id
          left join public.deployment_releases new_release on new_release.id = j.deployment_release_id
-         where p.organization_id = $1 and j.status = 'queued'
+         where p.organization_id = $1 and j.status = 'queued' and j.available_at <= now()
            and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
            and not exists (
              select 1 from unnest(j.needs) d(id)
