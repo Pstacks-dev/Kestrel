@@ -79,7 +79,7 @@ async function queueRelease({ query, transaction, environmentId, userId, image, 
       `insert into public.jobs
        (run_id, external_id, name, stage, command, needs, status, timeout_seconds, max_retries,
         job_type, deployment_environment_id, deployment_release_id)
-       values($1, $2, $3, 'deploy', 'kestrel-deploy', '{}', 'queued', $4, 0, 'deployment', $5, $6)`,
+       values($1, $2, $3, 'deploy', 'kestrel-deploy', '{}', 'queued', $4, 1, 'deployment', $5, $6)`,
       [run.rows[0].id, 'release-' + releaseNumber.rows[0].n,
        'Deploy release #' + releaseNumber.rows[0].n, env.health_timeout_seconds + 180,
        environmentId, releaseId]
@@ -182,22 +182,23 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
 
   app.get('/api/deployments/:environmentId/releases', userAuth, async (req, res) => {
     try {
+      const access = await query(
+        `select e.id from public.deployment_environments e
+         join public.projects p on p.id = e.project_id
+         join public.organization_members m on m.organization_id = p.organization_id
+         where e.id = $1 and m.user_id = $2`,
+        [req.params.environmentId, req.user.id]
+      );
+      if (!access.rowCount) return fail(res, 404, 'Deployment environment not found');
       const result = await query(
         `select r.id, r.release_number as "releaseNumber", r.image, r.container_name as "containerName",
                 r.status, r.previous_release_id as "previousReleaseId", r.rollback_of as "rollbackOf",
                 r.health_checked_at as "healthCheckedAt", r.error_message as "errorMessage",
                 r.created_at as "createdAt", r.deployed_at as "deployedAt", r.pipeline_run_id as "runId"
          from public.deployment_releases r
-         join public.deployment_environments e on e.id = r.environment_id
-         join public.projects p on p.id = e.project_id
-         join public.organization_members m on m.organization_id = p.organization_id
-         where e.id = $1 and m.user_id = $2 order by r.release_number desc limit 100`,
-        [req.params.environmentId, req.user.id]
+         where r.environment_id = $1 order by r.release_number desc limit 100`,
+        [req.params.environmentId]
       );
-      if (!result.rowCount) {
-        const check = await query('select id from public.deployment_environments where id = $1', [req.params.environmentId]);
-        if (!check.rowCount) return fail(res, 404, 'Deployment environment not found');
-      }
       res.json({ releases: result.rows });
     } catch (error) {
       res.status(500).json({ error: 'Could not load release history' });
@@ -231,7 +232,7 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
     const image = String(req.body?.image || '').trim();
     if (!validImage(image)) return fail(res, 400, 'Enter a valid container image reference, including an optional tag or SHA-256 digest');
     try {
-      const release = await queueRelease({ query, transaction, environmentId: req.params.environmentId, userId: req.user.id, image });
+      const release = await queueRelease({ transaction, environmentId: req.params.environmentId, userId: req.user.id, image });
       res.status(202).json({ release });
     } catch (error) {
       res.status(error.status || 500).json({ error: error.message || 'Could not queue deployment' });
@@ -254,7 +255,7 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
       if (!target.rowCount) return fail(res, 404, 'No current deployment or permission to roll back');
       if (!target.rows[0].previous_release_id || !target.rows[0].previous_image) return fail(res, 409, 'There is no previous healthy release to roll back to');
       const release = await queueRelease({
-        query, transaction, environmentId: req.params.environmentId, userId: req.user.id,
+        transaction, environmentId: req.params.environmentId, userId: req.user.id,
         image: target.rows[0].previous_image, rollbackOf: target.rows[0].previous_release_id,
       });
       res.status(202).json({ release });
