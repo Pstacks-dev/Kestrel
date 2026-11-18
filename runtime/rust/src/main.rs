@@ -24,6 +24,15 @@ struct Job {
     branch: Option<String>, commit_sha: Option<String>,
     timeout_seconds: Option<u64>, memory_limit_mb: Option<u32>,
     cpu_millicores: Option<u32>, secrets: Option<HashMap<String, String>>, #[serde(alias = "artifact_paths")] artifact_paths: Option<Vec<String>>,
+    job_type: Option<String>, deployment: Option<DeploymentConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeploymentConfig {
+    environment_id: String, release_id: String, host_port: u16, container_port: u16,
+    health_path: String, health_timeout_seconds: u64, public_url: Option<String>,
+    secret_names: Vec<String>, previous_image: Option<String>, previous_container: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -207,7 +216,153 @@ async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Pa
     Ok(())
 }
 
+fn valid_deployment_image(image: &str) -> bool {
+    !image.is_empty() && image.len() <= 255 && !image.contains("..") &&
+        image.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-:@".contains(&b))
+}
+
+async fn docker_action(cfg: &Config, http: &Client, job: &Job, args: &[String], action: &str) -> Result<String> {
+    let output = Command::new(&cfg.docker).args(args).output().await
+        .with_context(|| format!("starting docker {action}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    for line in stdout.lines() {
+        let _ = flush_log(http, cfg, job, "stdout", line).await;
+    }
+    for line in stderr.lines() {
+        let _ = flush_log(http, cfg, job, "stderr", line).await;
+    }
+    anyhow::ensure!(output.status.success(), "docker {action} failed: {}", stderr.chars().take(3000).collect::<String>());
+    Ok(stdout.trim().to_string())
+}
+
+async fn deployment_health(cfg: &Config, port: u16, path: &str, timeout_seconds: u64) -> bool {
+    let Ok(http) = Client::builder().timeout(Duration::from_secs(3)).build() else { return false; };
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let deadline = time::Instant::now() + Duration::from_secs(timeout_seconds.clamp(5, 300));
+    while time::Instant::now() < deadline {
+        if let Ok(response) = http.get(&url).send().await {
+            if response.status().is_success() { return true; }
+        }
+        time::sleep(Duration::from_secs(2)).await;
+    }
+    false
+}
+
+async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
+    let deployment = job.deployment.as_ref().ok_or_else(|| anyhow!("deployment job has no deployment configuration"))?;
+    let image = job.command.trim();
+    anyhow::ensure!(valid_deployment_image(image), "deployment image reference is invalid");
+    anyhow::ensure!(deployment.host_port >= 1024 && deployment.container_port > 0, "deployment port is invalid");
+    anyhow::ensure!(deployment.health_path.starts_with('/') && !deployment.health_path.contains(".."), "deployment health path is invalid");
+    anyhow::ensure!(deployment.environment_id.len() == 36 && deployment.release_id.len() == 36, "deployment identifiers are invalid");
+
+    let _ = flush_log(http, cfg, job, "system", &format!("Pulling deployment image {image}")).await;
+    docker_action(cfg, http, job, &["pull".into(), image.into()], "pull").await?;
+
+    let secret_file = std::env::temp_dir().join(format!("kestrel-deploy-{}-{}.env", job.id, uuid::Uuid::new_v4()));
+    let mut secret_contents = String::new();
+    if let Some(secrets) = &job.secrets {
+        for name in &deployment.secret_names {
+            if let Some(value) = secrets.get(name) {
+                anyhow::ensure!(!value.contains('\n') && !value.contains('\r') && !value.contains('\0'), "deployment secret contains unsupported newline or NUL");
+                anyhow::ensure!(!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'), "deployment secret name is invalid");
+                secret_contents.push_str(name);
+                secret_contents.push('=');
+                secret_contents.push_str(value);
+                secret_contents.push('\n');
+            }
+        }
+    }
+    let mut secret_file_created = false;
+    if !secret_contents.is_empty() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = std::fs::OpenOptions::new();
+        options.create_new(true).write(true).mode(0o600);
+        let mut file = options.open(&secret_file)?;
+        use std::io::Write;
+        file.write_all(secret_contents.as_bytes())?;
+        secret_file_created = true;
+    }
+
+    let container = format!("kestrel-release-{}", job.id.replace(|c: char| !c.is_ascii_alphanumeric(), ""));
+    let previous_container = deployment.previous_container.as_deref();
+    let mut previous_stopped = false;
+    if let Some(previous) = previous_container {
+        let stopped = Command::new(&cfg.docker).args(["stop", previous]).output().await?;
+        previous_stopped = stopped.status.success();
+        if previous_stopped {
+            let _ = flush_log(http, cfg, job, "system", "Stopped the currently active release before switching traffic").await;
+        }
+    }
+
+    let mut args = vec![
+        "run".into(), "-d".into(), "--name".into(), container.clone(),
+        "--restart".into(), "unless-stopped".into(),
+        "--publish".into(), format!("{}:{}", deployment.host_port, deployment.container_port),
+        "--network".into(), "bridge".into(),
+        "--cap-drop=ALL".into(), "--security-opt=no-new-privileges".into(),
+        "--pids-limit".into(), "256".into(), "--memory".into(), "2048m".into(),
+        "--read-only".into(), "--tmpfs".into(), "/tmp:rw,nosuid,nodev,noexec,size=256m".into(),
+    ];
+    if secret_file_created {
+        args.push("--env-file".into());
+        args.push(secret_file.to_string_lossy().to_string());
+    }
+    args.push(image.into());
+
+    let start_result = docker_action(cfg, http, job, &args, "run").await;
+    let healthy = if start_result.is_ok() {
+        deployment_health(cfg, deployment.host_port, &deployment.health_path, deployment.health_timeout_seconds).await
+    } else { false };
+
+    if !healthy {
+        let _ = Command::new(&cfg.docker).args(["stop", &container]).output().await;
+        let _ = Command::new(&cfg.docker).args(["rm", "-f", &container]).output().await;
+        if previous_stopped {
+            if let Some(previous) = previous_container {
+                let restored = Command::new(&cfg.docker).args(["start", previous]).output().await;
+                if restored.as_ref().is_ok_and(|o| o.status.success()) {
+                    let restored_health = deployment_health(cfg, deployment.host_port, &deployment.health_path, 30).await;
+                    if restored_health {
+                        let _ = flush_log(http, cfg, job, "system", "New release failed health checks; previous release was restored").await;
+                    } else {
+                        warn!(job_id = %job.id, "previous release restarted but its health check did not pass");
+                    }
+                } else {
+                    warn!(job_id = %job.id, "could not restart previous release container");
+                }
+            }
+        }
+        if secret_file_created { let _ = fs::remove_file(&secret_file).await; }
+        if let Err(error) = start_result { return Err(error); }
+        return Err(anyhow!("deployment health check failed; previous release restoration was attempted"));
+    }
+
+    if secret_file_created { fs::remove_file(&secret_file).await?; }
+    let _ = flush_log(http, cfg, job, "system", "Deployment is healthy and the new release is active").await;
+    if let Some(url) = &deployment.public_url {
+        let _ = flush_log(http, cfg, job, "system", &format!("Application URL: {url}")).await;
+    }
+    Ok(())
+}
+
 async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
+    if job.job_type.as_deref() == Some("deployment") {
+        let started = std::time::Instant::now();
+        let result = run_deployment(http, cfg, &job).await;
+        let (exit_code, status) = match result {
+            Ok(()) => (0, "succeeded"),
+            Err(error) => {
+                let _ = flush_log(http, cfg, &job, "stderr", &format!("Deployment failed: {error}")).await;
+                (1, "failed")
+            }
+        };
+        let _ = flush_log(http, cfg, &job, "system", &format!("Deployment worker finished with status {status}")).await;
+        post(http, cfg, &format!("/api/workers/jobs/{}/complete", job.id),
+            &Completion { lease_token: &job.lease_token, exit_code, duration_ms: started.elapsed().as_millis(), status }).await?;
+        return Ok(());
+    }
     let started = std::time::Instant::now();
     let workspace = cfg.workdir.join(format!("job-{}", job.id));
     if fs::try_exists(&workspace).await? { fs::remove_dir_all(&workspace).await?; }
