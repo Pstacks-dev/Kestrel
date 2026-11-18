@@ -1031,7 +1031,8 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
              lease_expires_at = null,
              started_at = case when j.attempt <= j.max_retries then null else j.started_at end,
              finished_at = case when j.attempt <= j.max_retries then null else now() end,
-             exit_code = case when j.attempt <= j.max_retries then null else 124 end
+             exit_code = case when j.attempt <= j.max_retries then null else 124 end,
+             available_at = case when j.attempt <= j.max_retries then now() + make_interval(secs => (least(300, 10 * power(2, least(j.attempt - 1, 5))))::int) else j.available_at end
          where j.status = 'running'
            and j.lease_expires_at <= now()
            and exists (
@@ -1253,6 +1254,10 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
            when status = 'canceled' then 'canceled'
            when $3 = 'failed' and attempt <= max_retries then 'queued'
            else $3 end,
+         available_at = case
+           when status <> 'canceled' and $3 = 'failed' and attempt <= max_retries
+             then now() + make_interval(secs => (least(300, 10 * power(2, least(attempt - 1, 5))))::int)
+           else available_at end,
          exit_code = $4,
          duration_ms = $5,
          finished_at = case
