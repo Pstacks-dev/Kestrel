@@ -162,6 +162,29 @@ async fn execute(provider: &dyn ComputeProvider, operation: &Operation) -> Resul
                 },
             }
         }
+        "snapshot_create" => {
+            let vm_id = operation.payload.get("providerId").and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("snapshot operation is missing providerId"))?;
+            let name = operation.payload.get("name").and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("snapshot operation is missing its name"))?;
+            let snapshot = provider.create_snapshot(vm_id, name).await.map_err(|e| anyhow!(e.to_string()))?;
+            Ok(Instance {
+                id: uuid::Uuid::nil(), provider_id: snapshot.provider_id,
+                name: snapshot.name, state: InstanceState::Stopped, ipv4: Vec::new()
+            })
+        }
+        "snapshot_restore" | "snapshot_delete" => {
+            let vm_id = operation.payload.get("providerId").and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("snapshot operation is missing providerId"))?;
+            let snapshot_id = operation.payload.get("snapshotProviderId").and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("snapshot operation is missing snapshotProviderId"))?;
+            if operation.action == "snapshot_restore" {
+                provider.restore_snapshot(vm_id, snapshot_id).await.map_err(|e| anyhow!(e.to_string()))?;
+            } else {
+                provider.delete_snapshot(vm_id, snapshot_id).await.map_err(|e| anyhow!(e.to_string()))?;
+            }
+            provider.get_instance(vm_id).await.map_err(|e| anyhow!(e.to_string()))
+        }
         "start" | "stop" | "delete" => {
             let provider_id = operation.payload.get("providerId").and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("VM operation is missing providerId"))?;
