@@ -1566,6 +1566,113 @@ function AppShell({ page }: { page: Page }) {
           </div>
         )}
 
+        {/* DEPLOYMENTS */}
+        {page === 'deployments' && !inspectedRun && (
+          <div className="page-content">
+            <PageHeading
+              eyebrow="WORKSPACE / DEPLOYMENTS"
+              title="Deployment environments"
+              desc="Release container images to assigned Rust workers, verify health and roll back to the previous healthy release."
+            />
+            <div className="panel deployment-project-panel">
+              <div className="panel-head">
+                <div><h3>Project scope</h3><p>Choose the project whose environments you want to manage.</p></div>
+              </div>
+              <div className="deployment-form-grid">
+                <label>Project
+                  <select value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)}>
+                    {(snapshot?.projects || []).map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-head">
+                <div><h3>Create environment</h3><p>Assign a published host port on a Rust execution worker.</p></div>
+                <span className="pill pill-muted">CONTAINER DEPLOYMENT</span>
+              </div>
+              {snapshot?.workers?.some((w: any) => w.runtime === 'rust') ? (
+                <form className="deployment-form-grid" onSubmit={createDeploymentEnvironment}>
+                  <label>Environment name
+                    <input value={deploymentName} onChange={(e) => setDeploymentName(e.target.value)} required maxLength={80} />
+                  </label>
+                  <label>Environment type
+                    <select value={deploymentEnvironmentKey} onChange={(e) => setDeploymentEnvironmentKey(e.target.value)}>
+                      <option value="development">Development</option><option value="staging">Staging</option>
+                      <option value="production">Production</option><option value="preview">Preview</option>
+                    </select>
+                  </label>
+                  <label>Rust worker
+                    <select value={deploymentWorkerId} onChange={(e) => setDeploymentWorkerId(e.target.value)} required>
+                      <option value="">Choose a Rust worker</option>
+                      {snapshot.workers.filter((w: any) => w.runtime === 'rust').map((w: any) => (
+                        <option key={w.id} value={w.id}>{w.hostname} · {w.state}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>Published host port
+                    <input type="number" min="1024" max="65535" value={deploymentHostPort} onChange={(e) => setDeploymentHostPort(e.target.value)} required />
+                  </label>
+                  <label>Container port
+                    <input type="number" min="1" max="65535" value={deploymentContainerPort} onChange={(e) => setDeploymentContainerPort(e.target.value)} required />
+                  </label>
+                  <label>Health-check path
+                    <input value={deploymentHealthPath} onChange={(e) => setDeploymentHealthPath(e.target.value)} required placeholder="/" />
+                  </label>
+                  <label className="deployment-wide">Public URL (optional)
+                    <input value={deploymentPublicUrl} onChange={(e) => setDeploymentPublicUrl(e.target.value)} placeholder="https://app.example.com" />
+                  </label>
+                  <div className="deployment-wide"><Button type="submit" disabled={!selectedProject || !deploymentWorkerId}>Create environment <Plus size={14} /></Button></div>
+                </form>
+              ) : (
+                <div className="deployment-empty">
+                  <b>No Rust workers are connected to this workspace.</b>
+                  <p>Deployment environments require an online, registered Rust worker. Existing Node workers can continue running build pipelines.</p>
+                </div>
+              )}
+            </div>
+
+            {actionMessage && <div className="action-message deployment-message">{actionMessage}</div>}
+
+            {deploymentEnvironments.length ? deploymentEnvironments.map((environment: any) => (
+              <section className="panel deployment-environment" key={environment.id}>
+                <div className="panel-head">
+                  <div>
+                    <h3>{environment.name} <span className="deployment-tag">{environment.environmentKey}</span></h3>
+                    <p>{environment.workerName} · Worker {environment.workerState} · Port {environment.hostPort}:{environment.containerPort}</p>
+                  </div>
+                  <span className={`pill ${environment.currentReleaseStatus === 'healthy' ? 'pill-green' : 'pill-muted'}`}>
+                    {environment.currentReleaseStatus || 'NOT DEPLOYED'}
+                  </span>
+                </div>
+                <div className="deployment-meta">
+                  <span>Health path: <b>{environment.healthPath}</b></span>
+                  <span>Current image: <b>{environment.currentImage || 'None'}</b></span>
+                  {environment.publicUrl && <a href={environment.publicUrl} target="_blank" rel="noreferrer">Open application <ArrowUpRight size={13} /></a>}
+                </div>
+                <div className="deployment-release-actions">
+                  <input value={deploymentImage} onChange={(e) => setDeploymentImage(e.target.value)} placeholder="Container image, e.g. ghcr.io/org/app:1.2.0" />
+                  <Button onClick={() => deployImage(environment.id)} disabled={!deploymentImage.trim() || ['queued','deploying'].includes(environment.currentReleaseStatus)}>Deploy image <Play size={13} /></Button>
+                  <Button kind="light" onClick={() => rollbackDeployment(environment.id)} disabled={!environment.currentReleaseId || ['queued','deploying'].includes(environment.currentReleaseStatus)}>Rollback</Button>
+                </div>
+                <div className="deployment-history">
+                  <b>Release history</b>
+                  {(deploymentReleases[environment.id] || []).length ? (deploymentReleases[environment.id] || []).map((release: any) => (
+                    <div className="table-row" key={release.id}>
+                      <StatusIndicator status={release.status === 'healthy' ? 'succeeded' : release.status === 'failed' ? 'failed' : 'running'} />
+                      <div className="flex-1"><b>Release #{release.releaseNumber}</b><small>{release.image} · {release.status}{release.rollbackOf ? ' · Rollback' : ''}</small></div>
+                      <span className="row-meta">{release.deployedAt ? new Date(release.deployedAt).toLocaleString() : new Date(release.createdAt).toLocaleString()}</span>
+                    </div>
+                  )) : <p className="deployment-muted">No releases yet.</p>}
+                </div>
+              </section>
+            )) : (
+              <div className="panel deployment-empty"><b>No deployment environments configured.</b><p>Create an environment above after connecting a Rust worker.</p></div>
+            )}
+          </div>
+        )}
+
         {/* ARTIFACTS */}
         {page === 'artifacts' && !inspectedRun && (
           <div className="page-content">
