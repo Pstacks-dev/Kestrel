@@ -152,7 +152,7 @@ export function ProjectFiles({ projectId, accessToken, apiBase }: { projectId: s
             </div>;
           }) : <p className="project-files-empty">No files in this folder yet.</p>}
       </div>
-      <p className="project-files-footnote"><X size={12}/> Uploads are stored privately. Pipeline execution from uploaded source will be enabled after the project-source runner is connected.</p>
+      <p className="project-files-footnote"><X size={12}/> Uploads are stored privately. Kestrel workers can stage these files for pipeline runs; runs remain queued until an online worker is available.</p>
     </section>
   );
 }
