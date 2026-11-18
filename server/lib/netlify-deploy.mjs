@@ -17,6 +17,7 @@ export async function deployNetlifyArtifacts({ siteId, token, branch, commitSha,
     const relative = artifact.name.replace(/^(dist|build)\//, '');
     if (!relative || relative.split('/').some((part) => part === '..' || part === '.')) throw new Error('Unsafe Netlify artifact path.');
     const destination = '/' + relative.replace(/^\/+/, '');
+    if (bytesByPath.has(destination)) throw new Error('Duplicate Netlify output path: ' + destination);
     const downloaded = await supabaseAdmin.storage.from(bucket).download(artifact.object_key);
     if (downloaded.error) throw downloaded.error;
     const bytes = Buffer.from(await downloaded.data.arrayBuffer());
