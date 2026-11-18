@@ -3,7 +3,7 @@ name: Kestrel CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feat/kestrel-compute-providers]
 
 permissions:
   contents: read
