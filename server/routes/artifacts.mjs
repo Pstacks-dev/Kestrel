@@ -195,6 +195,19 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
     if (!cronSecret) return res.status(503).json({ error: 'Artifact cleanup cron is not configured' });
     if (req.headers.authorization !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized' });
     try {
+      const expiredSessions = await query(
+        'select id, object_key from public.artifact_upload_sessions where expires_at <= now() order by expires_at asc limit 100'
+      );
+      let expiredUploadsRemoved = 0;
+      for (const session of expiredSessions.rows) {
+        try {
+          await removeStoredObject(session.object_key);
+          await query('delete from public.artifact_upload_sessions where id = $1', [session.id]);
+          expiredUploadsRemoved += 1;
+        } catch (error) {
+          console.error('Expired artifact upload cleanup failed:', { sessionId: session.id, message: error.message });
+        }
+      }
       const expired = await query(`select id, object_key from public.artifacts
         where expires_at is not null and expires_at <= now() order by expires_at asc limit 100`);
       let deleted = 0;
@@ -205,7 +218,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
           deleted += 1;
         } catch (error) { console.error('Expired artifact cleanup failed:', { artifactId: artifact.id, message: error.message }); }
       }
-      res.json({ ok: true, deleted, remainingBatch: expired.rowCount - deleted });
+      res.json({ ok: true, deleted, expiredUploadsRemoved, remainingBatch: expired.rowCount - deleted });
     } catch (error) { res.status(500).json({ error: 'Artifact cleanup failed' }); }
   });
 }
