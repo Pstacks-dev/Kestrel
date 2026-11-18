@@ -1,4 +1,5 @@
 import Admin from './Admin';
+import ReleaseCenter from './ReleaseCenter';
 import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -51,6 +52,7 @@ type Page =
   | 'workers'
   | 'projects'
   | 'artifacts'
+  | 'deployments'
   | 'settings';
 
 const nav: { id: Page; label: string; icon: any; group: string }[] = [
@@ -60,6 +62,7 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'workers', label: 'Workers', icon: Server, group: 'INFRASTRUCTURE' },
   { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
   { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
+  { id: 'deployments', label: 'Deployments', icon: Radio, group: 'INFRASTRUCTURE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
 ];
 
@@ -402,6 +405,8 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
 
   async function submit(e: any) {
     e.preventDefault();
@@ -420,7 +425,9 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
         });
         if (authError) throw authError;
         if (!data.session) {
-          throw new Error('Account created, but Supabase is still requiring email confirmation. Disable email confirmations in Supabase Authentication settings, then try again.');
+          setAwaitingVerification(true);
+          setMessage('A verification code has been sent to your email address. Enter it below to activate your account.');
+          return;
         }
         localStorage.setItem('kestrel_access_token', data.session.access_token);
         go('overview');
@@ -436,6 +443,44 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
       }
     } catch (e: any) {
       setError(e.message || 'Authentication failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyEmail(e: any) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const sb = requireSupabase();
+      const { data, error: verifyError } = await sb.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: verificationCode.trim(),
+        type: 'signup',
+      });
+      if (verifyError) throw verifyError;
+      if (!data.session) throw new Error('Email verification succeeded, but no session was returned. Sign in to continue.');
+      localStorage.setItem('kestrel_access_token', data.session.access_token);
+      go('overview');
+    } catch (e: any) {
+      setError(e.message || 'Could not verify your email address.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendVerification() {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const sb = requireSupabase();
+      const { error: resendError } = await sb.auth.resend({ type: 'signup', email: email.trim().toLowerCase() });
+      if (resendError) throw resendError;
+      setMessage('A new verification code has been sent.');
+    } catch (e: any) {
+      setError(e.message || 'Could not resend the verification code.');
     } finally {
       setBusy(false);
     }
@@ -466,7 +511,15 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
           <div className="auth-kicker">{mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
           <h2>{mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
           <p>{mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
-          <form onSubmit={submit}>
+          {awaitingVerification ? (
+            <form onSubmit={verifyEmail}>
+              <label>Verification code<input value={verificationCode} onChange={(e) => setVerificationCode(e.target.value.replace(/\\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required placeholder="6-digit code" /></label>
+              {error && <div className="notice text-red-600">{error}</div>}
+              {message && <div className="notice text-green-600">{message}</div>}
+              <button disabled={busy || verificationCode.length !== 6} className="btn btn-dark auth-submit">{busy ? 'Verifying…' : 'Verify email'} <ArrowRight size={16} /></button>
+              <button type="button" className="back-home" disabled={busy} onClick={resendVerification}>Resend code</button>
+            </form>
+          ) : <form onSubmit={submit}>
             {mode === 'signup' && (
               <label>Full name<input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" /></label>
             )}
@@ -486,7 +539,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
             <button disabled={busy} className="btn btn-dark auth-submit">
               {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
             </button>
-          </form>
+          </form>}
           <div className="auth-switch">
             {mode === 'login' ? <>New to Kestrel? <button onClick={() => go('signup')}>Create an account</button></> : <>Already have an account? <button onClick={() => go('login')}>Sign in</button></>}
           </div>
@@ -570,7 +623,10 @@ function AppShell({ page }: { page: Page }) {
         go('login');
         throw new Error('Your session expired. Please sign in again.');
       }
-      if (!ws.ok) throw new Error('Could not load workspaces');
+      if (!ws.ok) {
+        const failure = await ws.json().catch(() => ({}));
+        throw new Error(failure.error || `Workspace service returned HTTP ${ws.status}. Check the API health endpoint or contact your workspace administrator.`);
+      }
       let list = await ws.json();
 
       if (!list.length) {
@@ -804,6 +860,19 @@ function AppShell({ page }: { page: Page }) {
       });
       connect();
     } catch {}
+  }
+
+  async function downloadArtifact(artifactId: string) {
+    try {
+      const response = await fetch(`${api}/artifacts/${artifactId}/download`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Artifact download failed');
+      window.location.assign(data.url);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Artifact download failed');
+    }
   }
 
   const counts = useMemo(
@@ -1529,13 +1598,15 @@ function AppShell({ page }: { page: Page }) {
                     <div className="flex-1">
                       <b>{a.name || a.id}</b>
                       <small>
-                        Key: {a.objectKey} · Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content:{' '}
-                        {a.contentType || 'application/octet-stream'}
+                        Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content: {a.contentType || 'application/octet-stream'} · SHA-256: {String(a.sha256 || '').slice(0, 12)}…
                       </small>
                     </div>
                     <span className="text-xs text-neutral-400 font-mono">
                       {new Date(a.createdAt).toLocaleDateString()}
                     </span>
+                    <Button kind="light" onClick={() => downloadArtifact(a.id)}>
+                      Download <ArrowDownRight size={14} />
+                    </Button>
                   </div>
                 ))
               ) : (
@@ -1547,6 +1618,19 @@ function AppShell({ page }: { page: Page }) {
               )}
             </div>
           </div>
+        )}
+
+        {page === 'deployments' && !inspectedRun && (
+          <ReleaseCenter
+            api={api}
+            accessToken={accessToken}
+            selectedProject={selectedProject}
+            setSelectedProject={setSelectedProject}
+            projects={snapshot?.projects || []}
+            runs={snapshot?.runs || []}
+            setMessage={setActionMessage}
+            message={actionMessage}
+          />
         )}
 
         {/* SETTINGS */}

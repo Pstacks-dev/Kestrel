@@ -1,41 +1,69 @@
-# Deployment readiness
+# Kestrel release readiness
 
-This repository is not considered production-ready until the checks below are completed against the deployed environment.
+This document records what the repository can do and what must be configured before production traffic is enabled.
 
-## Public website and indexing
+## Implemented in the release branch
 
-- The Vercel project domain is currently configured as `https://kestrel-kappa-sepia.vercel.app`.
-- `/robots.txt` and `/sitemap.xml` are published as static files.
-- The HTML document contains a canonical URL and Open Graph/Twitter metadata.
-- Verify the domain in Google Search Console, then submit `https://kestrel-kappa-sepia.vercel.app/sitemap.xml`.
-- Google Search Console verification is an account-owner action. Do not publish a guessed verification token.
+- React/Vite dashboard and Express control plane.
+- Supabase Auth signup confirmation flow and access-token validation.
+- Organization/workspace creation and membership checks.
+- PostgreSQL-backed queue with atomic worker job claims, leases, retry and cancellation.
+- HMAC-verified GitHub push and pull-request webhook receiver with delivery deduplication.
+- Encrypted project secrets and log redaction.
+- Worker enrollment issues a one-time credential; only a hash is stored.
+- Docker worker agent supports isolated execution, bounded concurrency, job timeouts and graceful draining.
+- Security hardening and private artifact bucket are tracked in `db/migrations/005_internal_access_and_artifact_bucket.sql`.
+- Artifact checksum columns and deployment target/history schema are tracked in migrations `006_artifact_integrity_and_deployments.sql` and `007_deployment_rollback_source.sql`.
+- Deployment foreign-key indexes are tracked in `008_deployment_foreign_key_indexes.sql`.
+- Direct PostgREST access to project secrets and plaintext GitHub webhook signing keys is revoked in `009_lock_down_project_and_webhook_secrets.sql`; server-only access is retained through the control plane.
+- RLS policy performance and least-privilege rules are tracked in `010_optimize_rls_and_remove_sensitive_client_policies.sql`.
 
-## Control plane secrets
+## Not complete / not certified
 
-Set the following in Vercel Production, Preview and Development environments where applicable:
+- Artifact byte transfer is implemented: workers receive lease-bound signed upload tokens, upload directly to private Supabase Storage, and the control plane verifies size and SHA-256 before making files downloadable; workspace members receive short-lived signed download links. The API caps individual files at 100 MiB; the Netlify adapter caps releases at 100 files and 300 MiB total. This still requires a real worker upload/download test.
+- Vercel and Netlify provider adapters, deployment history, owner/admin approval/rejection, provider status refresh and rollback are implemented. Vercel rollback creates a new deployment from the prior successful commit; Netlify production rollback restores the prior successful deploy. They still require real provider credentials and end-to-end tests before CD is certified.
+- A worker agent is not a managed fleet. A Linux host, Docker Engine, network policy, monitoring, backup and a frequent lease-recovery scheduler must be provisioned separately.
+- Signup and workspace creation have not been live-tested against a newly created account in production Vercel.
+- Supabase leaked-password protection must be enabled in Authentication settings by a project owner.
+
+## Required server configuration
+
+Set in Vercel server-side environments only:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
-- `SUPABASE_DB_URL` — server-side only, using the Supabase transaction pooler.
-- `KESTREL_ENCRYPTION_KEY` — a newly generated, stable, high-entropy secret. Back it up securely. Changing it makes existing encrypted project secrets unreadable.
-- `CRON_SECRET` — a separate high-entropy secret used for authenticated recovery calls.
+- `SUPABASE_SERVICE_ROLE_KEY` (server only; never expose to Vite/client)
+- `SUPABASE_DB_URL` (transaction pooler)
+- `KESTREL_ENCRYPTION_KEY` (stable 32-byte key, backed up securely)
+- `CRON_SECRET` (at least 32 random characters)
 - `DB_POOL_MAX=1`
 - `DB_SSL_REJECT_UNAUTHORIZED=true`
 
-The database password previously shared in chat must be rotated before any production deployment. Never commit it or paste it into chat.
+Worker host configuration:
 
-## Database
+- `KESTREL_API_URL=https://kestrel-ci-cd.vercel.app` or the chosen control-plane host
+- `KESTREL_WORKER_ID`
+- `KESTREL_WORKER_TOKEN` (one-time credential)
+- `KESTREL_WORKER_EXECUTOR=docker`
+- `KESTREL_JOB_IMAGE=node:22-bookworm-slim@sha256:<verified-digest>`
+- `KESTREL_WORKER_WORKDIR`
+- `SUPABASE_URL` and `SUPABASE_ANON_KEY` (public project URL/key; signed upload tokens authorize individual artifact uploads)
 
-Run `npm run migrate` once from a trusted environment with the production database URL. Confirm that all three migrations are recorded in `kestrel_schema_migrations`.
+Do not use `local` or `mock` executors in production.
 
-## Worker infrastructure
+## Release test plan
 
-Vercel serverless functions do not host persistent Docker workers. Provision a dedicated Linux host with Docker Engine and an isolated worker account. Configure a unique worker ID and one-time token from the Kestrel admin interface. Use a digest-pinned runtime image and a controlled egress proxy for dependency downloads.
+1. Create a new account, receive the Supabase confirmation email, verify the code, log in, and refresh the browser.
+2. Confirm the account can create a workspace and cannot read another account's workspace.
+3. Register a project and configure its GitHub webhook secret in GitHub.
+4. Send a real signed push event; confirm exactly one pipeline run is queued even if GitHub retries the delivery.
+5. Provision a worker, start it on a dedicated Linux Docker host, and confirm it registers and reports heartbeats.
+6. Run a harmless test pipeline and verify logs, job completion, timeout, cancellation and retry.
+7. Kill a worker during a job; verify stale-lease recovery and that another worker can safely claim the retry.
+8. Upload a real artifact from a Docker worker, verify its SHA-256 and size, and download it as an authorized workspace member; confirm a second workspace cannot download it.
+9. Connect a Vercel project and a Netlify site, deploy a successful commit, verify provider status refresh, confirm a non-admin cannot approve, then approve/reject and rollback a release.
+10. Restore a database backup in a separate project and verify the restore.
 
-## Recovery scheduling
+## Known Supabase security follow-up
 
-Vercel Hobby only permits daily cron execution. The configured daily recovery invocation is a failsafe, not a substitute for timely lease recovery. Run the standalone control plane with its recovery loop or use an external scheduler capable of calling `GET /api/cron/recovery` every minute. Do not advertise the system as highly available until this is in place.
-
-## Release gate
-
-A release is blocked until GitHub Actions passes tests, type-checking and build; migrations succeed; signup/login and tenant isolation are verified; a real GitHub webhook produces a run; a Docker worker claims and completes it; logs and artifacts are downloadable; and recovery is tested by terminating a worker during a job.
+Internal table grants are restricted, direct client access to project secrets and webhook signing keys is revoked, and stale-lease recovery is service-role-only. The security advisor may still report RLS-enabled internal tables with no policies (intentional: no direct client access) and the two organization helper functions as SECURITY DEFINER (retained for RLS evaluation). Enable leaked-password protection in Supabase Authentication settings.

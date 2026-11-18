@@ -2,9 +2,9 @@ name: Kestrel CI
 
 on:
   push:
-    branches: [main, production-hardening]
+    branches: [main, production-hardening, client-release-hardening]
   pull_request:
-    branches: [main]
+    branches: [main, production-hardening]
 
 permissions:
   contents: read
@@ -29,6 +29,8 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test
+      - name: Syntax-check server and worker entrypoints
+        run: node --check server/control-plane.mjs && node --check server/lib/release-routes.mjs && node --check server/lib/netlify-deploy.mjs && node --check worker/agent.mjs
       - name: Type-check
         run: npm run lint
       - name: Build frontend

@@ -1,11 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
 import { validatePipelineJobs } from './lib/pipeline.mjs';
+import { registerReleaseRoutes } from './lib/release-routes.mjs';
 import {
   encryptSecret,
   decryptSecret,
@@ -41,7 +42,12 @@ if (supabaseUrl && supabaseServiceRoleKey) {
 }
 
 app.disable('x-powered-by');
-app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
+// Vercel terminates TLS at its edge and forwards the client address. Trust exactly
+// the platform proxy in serverless deployments; standalone hosts opt in explicitly.
+app.set('trust proxy', process.env.VERCEL ? 1 : process.env.TRUST_PROXY === 'true' ? 1 : false);
+
+// Use Express's resolved client IP; ipKeyGenerator preserves IPv6 subnet handling.
+const rateLimitKey = (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || '127.0.0.1');
 
 app.use(
   helmet({
@@ -74,6 +80,7 @@ const generalLimiter = rateLimit({
   limit: 600,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 app.use(generalLimiter);
 
@@ -83,6 +90,7 @@ const sensitiveLimiter = rateLimit({
   limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 
 // Password and account-creation endpoints need a much tighter per-IP ceiling.
@@ -91,6 +99,7 @@ const authLimiter = rateLimit({
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 
 const now = () => new Date().toISOString();
@@ -251,6 +260,7 @@ app.get('/api/health', async (_req, res) => {
       time: now(),
     });
   } catch (e) {
+    console.error('[health] database probe failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(503).json({
       ok: false,
       database: 'unavailable',
@@ -300,6 +310,7 @@ app.post('/api/workspaces', sensitiveLimiter, userAuth, async (req, res) => {
     });
     res.status(201).json(result);
   } catch (e) {
+    console.error('[workspaces:create] failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(500).json({ error: 'Could not create workspace' });
   }
 });
@@ -316,6 +327,7 @@ app.get('/api/workspaces', userAuth, async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
+    console.error('[workspaces:list] failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(500).json({ error: 'Could not fetch workspaces' });
   }
 });
@@ -374,11 +386,11 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
       query(
         `select a.id, a.name, a.run_id as "runId", a.object_key as "objectKey",
                 a.size_bytes as "sizeBytes", a.sha256, a.content_type as "contentType",
-                a.created_at as "createdAt"
+                a.created_at as "createdAt", a.uploaded_at as "uploadedAt"
          from public.artifacts a
          join public.pipeline_runs r on r.id = a.run_id
          join public.projects p on p.id = r.project_id
-         where p.organization_id = $1
+         where p.organization_id = $1 and a.uploaded_at is not null
          order by a.created_at desc
          limit 100`,
         [req.organizationId]
@@ -1148,33 +1160,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
   res.json({ ok: true, status: finalStatus });
 });
 
-// Artifacts Upload Registration
-app.post('/api/workers/jobs/:jobId/artifacts', workerAuth, async (req, res) => {
-  const { leaseToken, name, objectKey, sizeBytes = 0, sha256 = null, contentType = 'application/octet-stream' } = req.body || {};
-  if (!name || !objectKey) {
-    return res.status(400).json({ error: 'Artifact name and objectKey are required' });
-  }
-
-  const valid = await query(
-    "select run_id from public.jobs where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running'",
-    [req.params.jobId, leaseToken, req.worker.id]
-  );
-  if (!valid.rowCount) {
-    return res.status(409).json({ error: 'Lease is invalid or expired' });
-  }
-
-  try {
-    const r = await query(
-      `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type)
-       values($1, $2, $3, $4, $5, $6)
-       returning *`,
-      [valid.rows[0].run_id, name.slice(0, 255), objectKey.slice(0, 1024), Math.max(0, Number(sizeBytes)), sha256, contentType]
-    );
-    res.status(201).json(r.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: 'Could not register artifact' });
-  }
-});
+// Artifact and deployment endpoints are mounted from server/lib/release-routes.mjs.
 
 // ==========================================
 // Admin & Platform Management
@@ -1271,6 +1257,18 @@ app.get('/api/cron/recovery', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Lease recovery failed' });
   }
+});
+
+// Artifact and deployment lifecycle routes use the same verified user/worker auth.
+registerReleaseRoutes(app, {
+  userAuth,
+  workerAuth,
+  sensitiveLimiter,
+  query,
+  transaction,
+  encryptSecret,
+  decryptSecret,
+  supabaseAdmin,
 });
 
 // Safe Error Handling Middleware
