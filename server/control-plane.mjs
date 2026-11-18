@@ -1195,10 +1195,11 @@ app.post('/api/workers/jobs/:jobId/logs', workerAuth, async (req, res) => {
   }
 
   // Refresh only while the same worker still owns the same unexpired lease.
-  await query(
-    "update public.jobs set lease_expires_at = now() + interval '45 seconds' where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running' and lease_expires_at > now()",
+  const extended = await query(
+    "update public.jobs set lease_expires_at = now() + interval '45 seconds' where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running' and lease_expires_at > now() returning id",
     [req.params.jobId, leaseToken, req.worker.id]
   );
+  if (!extended.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
   res.json({ ok: true });
 });
 
