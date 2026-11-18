@@ -180,9 +180,13 @@ async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Pa
         let relative = safe_relative_path(raw)?;
         let source = workspace.join(&relative);
         if !source.is_file() { warn!(path = %raw, "declared artifact does not exist; skipping"); continue; }
-        let metadata = fs::metadata(&source).await?;
+        // Never follow a build-created symlink outside the job workspace when collecting artifacts.
+        let root = workspace.canonicalize().await?;
+        let canonical_source = source.canonicalize().await?;
+        anyhow::ensure!(canonical_source.starts_with(&root), "artifact path escapes job workspace: {raw}");
+        let metadata = fs::metadata(&canonical_source).await?;
         anyhow::ensure!(metadata.len() <= 100 * 1024 * 1024, "artifact exceeds 100 MiB: {raw}");
-        let bytes = fs::read(&source).await?;
+        let bytes = fs::read(&canonical_source).await?;
         let name = relative.file_name().and_then(|n| n.to_str()).ok_or_else(|| anyhow!("invalid artifact filename"))?;
         let response = http.put(format!("{}/api/workers/jobs/{}/artifacts/upload", cfg.api, job.id))
             .header("x-kestrel-lease", &job.lease_token)
@@ -214,6 +218,9 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
         output_text = format!("Source preparation failed: {error}");
     } else {
         let container = format!("kestrel-job-{}", job.id.replace(|c: char| !c.is_ascii_alphanumeric(), ""));
+        // The job container runs as an unprivileged UID; make only its isolated workspace writable.
+        let ownership = Command::new("chown").args(["-R", "1000:1000"]).arg(&workspace).output().await?;
+        anyhow::ensure!(ownership.status.success(), "could not set job workspace ownership");
         let mut command = Command::new(&cfg.docker);
         let docker_workspace = docker_host_workspace_path(&cfg.workdir, &cfg.host_workdir, &workspace)?;
         command.args([
@@ -227,7 +234,7 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
             "--mount",
         ]).arg(format!("type=bind,src={},dst=/workspace", docker_workspace.display()))
           .args(["--workdir", "/workspace", "--env", "CI=true", "--env", "KESTREL=true"]);
-        let secret_file = std::env::temp_dir().join(format!("kestrel-secrets-{}.env", job.id));
+        let secret_file = std::env::temp_dir().join(format!("kestrel-secrets-{}-{}.env", job.id, uuid::Uuid::new_v4()));
         if let Some(secrets) = &job.secrets {
             let mut contents = String::new();
             for (key, value) in secrets {
@@ -243,7 +250,7 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
             if !contents.is_empty() {
                 use std::os::unix::fs::OpenOptionsExt;
                 let mut options = std::fs::OpenOptions::new();
-                options.create(true).truncate(true).write(true).mode(0o600);
+                options.create_new(true).write(true).mode(0o600);
                 let mut file = options.open(&secret_file)?;
                 use std::io::Write;
                 file.write_all(contents.as_bytes())?;
