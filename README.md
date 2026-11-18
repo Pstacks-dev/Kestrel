@@ -145,6 +145,7 @@ Deploying the frontend and short-lived HTTP API to Vercel:
    - `VITE_SUPABASE_ANON_KEY`: Supabase publishable/anon key
    - `SUPABASE_URL`: Supabase Project URL
    - `SUPABASE_ANON_KEY`: Supabase anon key
+   - `SUPABASE_SERVICE_ROLE_KEY`: server-only Supabase service-role key for private project file storage (never expose as a VITE_ variable)
    - `SUPABASE_DB_URL`: Supabase transaction pooler URL (port 6543)
    - `DB_POOL_MAX`: `1`
    - `SUPABASE_DB_SSL_CA`: Supabase database CA certificate in PEM format (recommended; enables verified TLS)
@@ -162,6 +163,7 @@ Deploying the frontend and short-lived HTTP API to Vercel:
 | :--- | :--- | :--- |
 | `SUPABASE_URL` | Server | Supabase API URL |
 | `SUPABASE_ANON_KEY` | Server | Supabase public/anon key (used for server-side user JWT validation) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server only | Private project file storage; never expose to the browser |
 | `SUPABASE_DB_URL` | Server | Supabase transaction-pooler PostgreSQL connection string |
 | `SUPABASE_DB_SSL_CA` | Server (optional) | Supabase database CA certificate PEM; when set, certificate verification is enforced |
 | `DB_SSL_REJECT_UNAUTHORIZED` | Server (optional) | Set to `false` only as a temporary TLS certificate-verification fallback; never disable TLS itself |
