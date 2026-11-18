@@ -967,6 +967,15 @@ function AppShell({ page }: { page: Page }) {
     }
   }
 
+  async function copySshCommand(ip: string) {
+    try {
+      await navigator.clipboard.writeText(`ssh kestrel@${ip}`);
+      setComputeMessage('SSH command copied to clipboard.');
+    } catch {
+      setComputeMessage(`SSH command: ssh kestrel@${ip}`);
+    }
+  }
+
   async function computeInstanceAction(instanceId: string, action: 'start' | 'stop' | 'delete') {
     if (action === 'delete' && !window.confirm('Delete this virtual machine and release its allocated capacity?')) return;
     setComputeMessage('');
@@ -1844,8 +1853,11 @@ function AppShell({ page }: { page: Page }) {
                   <div className="flex-1">
                     <b>{vm.name}</b>
                     <small>{vm.provider} · {vm.region || 'Any region'} · {vm.vcpus} vCPU · {vm.memoryMiB} MiB · {vm.diskGiB} GiB</small>
-                    <small>{vm.ipv4?.length ? vm.ipv4.join(', ') : vm.errorMessage || vm.image}</small>
+                    <small>{vm.ipv4?.length ? `IPv4: ${vm.ipv4.join(', ')}` : vm.errorMessage || vm.image}</small>
                   </div>
+                  {vm.status === 'running' && vm.ipv4?.[0] && vm.sshPublicKey && (
+                    <Button kind="light" onClick={() => copySshCommand(vm.ipv4[0])}>Copy SSH</Button>
+                  )}
                   <span className={`pill ${vm.status === 'running' ? 'pill-green' : 'pill-muted'}`}>{vm.status}</span>
                   {vm.status === 'stopped' && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'start')}>Start</Button>}
                   {vm.status === 'running' && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'stop')}>Stop</Button>}
