@@ -14,7 +14,7 @@ impl FirecrackerConfig {
         for path in [&self.api_socket_dir, &self.jailer_binary, &self.kernel_image_dir, &self.rootfs_image_dir] {
             if !path.is_absolute() { return Err(ComputeError::NotConfigured("Firecracker paths must be absolute".into())); }
         }
-        if self.api_socket_dir == PathBuf::from("/") { return Err(ComputeError::NotConfigured("Unsafe Firecracker socket directory".into())); }
+        if self.api_socket_dir.as_os_str() == "/" { return Err(ComputeError::NotConfigured("Unsafe Firecracker socket directory".into())); }
         Ok(())
     }
 }
