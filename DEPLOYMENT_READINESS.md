@@ -14,6 +14,9 @@ This document records what the repository can do and what must be configured bef
 - Docker worker agent supports isolated execution, bounded concurrency, job timeouts and graceful draining.
 - Security hardening and private artifact bucket are tracked in `db/migrations/005_internal_access_and_artifact_bucket.sql`.
 - Artifact checksum columns and deployment target/history schema are tracked in migrations `006_artifact_integrity_and_deployments.sql` and `007_deployment_rollback_source.sql`.
+- Deployment foreign-key indexes are tracked in `008_deployment_foreign_key_indexes.sql`.
+- Direct PostgREST access to project secrets and plaintext GitHub webhook signing keys is revoked in `009_lock_down_project_and_webhook_secrets.sql`; server-only access is retained through the control plane.
+- RLS policy performance and least-privilege rules are tracked in `010_optimize_rls_and_remove_sensitive_client_policies.sql`.
 
 ## Not complete / not certified
 
@@ -63,4 +66,4 @@ Do not use `local` or `mock` executors in production.
 
 ## Known Supabase security follow-up
 
-Internal table grants are restricted and stale-lease recovery is service-role-only. The security advisor may still report RLS-enabled internal tables with no policies (intentional: no direct client access) and the two organization helper functions as SECURITY DEFINER (retained for RLS evaluation). Enable leaked-password protection in Supabase Authentication settings.
+Internal table grants are restricted, direct client access to project secrets and webhook signing keys is revoked, and stale-lease recovery is service-role-only. The security advisor may still report RLS-enabled internal tables with no policies (intentional: no direct client access) and the two organization helper functions as SECURITY DEFINER (retained for RLS evaluation). Enable leaked-password protection in Supabase Authentication settings.
