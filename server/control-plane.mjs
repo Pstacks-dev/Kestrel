@@ -1245,33 +1245,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
   res.json({ ok: true, status: finalStatus });
 });
 
-// Artifacts Upload Registration
-app.post('/api/workers/jobs/:jobId/artifacts', workerAuth, async (req, res) => {
-  const { leaseToken, name, objectKey, sizeBytes = 0, sha256 = null, contentType = 'application/octet-stream' } = req.body || {};
-  if (!name || !objectKey) {
-    return res.status(400).json({ error: 'Artifact name and objectKey are required' });
-  }
-
-  const valid = await query(
-    "select run_id from public.jobs where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running'",
-    [req.params.jobId, leaseToken, req.worker.id]
-  );
-  if (!valid.rowCount) {
-    return res.status(409).json({ error: 'Lease is invalid or expired' });
-  }
-
-  try {
-    const r = await query(
-      `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type)
-       values($1, $2, $3, $4, $5, $6)
-       returning *`,
-      [valid.rows[0].run_id, name.slice(0, 255), objectKey.slice(0, 1024), Math.max(0, Number(sizeBytes)), sha256, contentType]
-    );
-    res.status(201).json(r.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: 'Could not register artifact' });
-  }
-});
+// Artifact bytes are uploaded through registerArtifactRoutes; metadata-only registration is intentionally disabled.
 
 // ==========================================
 // Admin & Platform Management
