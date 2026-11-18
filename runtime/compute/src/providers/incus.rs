@@ -61,7 +61,17 @@ impl IncusProvider {
     }
 
     fn api_url(&self, path: &str) -> String {
-        format!("{}/1.0/{}?project={}", self.config.https_endpoint.trim_end_matches('/'), path.trim_start_matches("/1.0/").trim_start_matches('/'), self.config.project)
+        let (resource_path, query) = path.split_once('?').unwrap_or((path, ""));
+        let url = format!(
+            "{}/1.0/{}",
+            self.config.https_endpoint.trim_end_matches('/'),
+            resource_path.trim_start_matches("/1.0/").trim_start_matches('/')
+        );
+        if query.is_empty() {
+            format!("{url}?project={}", self.config.project)
+        } else {
+            format!("{url}?{query}&project={}", self.config.project)
+        }
     }
 
     async fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value, ComputeError> {
