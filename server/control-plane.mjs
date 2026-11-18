@@ -18,6 +18,7 @@ import {
   signJwt,
   verifyJwt,
 } from './lib/auth.mjs';
+import { registerProjectFileRoutes } from './routes/project-files.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
