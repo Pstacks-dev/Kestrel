@@ -1,0 +1,20 @@
+[Unit]
+Description=Kestrel Compute Host Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/kestrel/compute-agent.env
+ExecStart=/opt/kestrel/bin/kestrel-compute-agent
+Restart=always
+RestartSec=5
+KillMode=process
+LimitNOFILE=1048576
+TasksMax=infinity
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
