@@ -188,6 +188,10 @@ policy before using this on shared infrastructure.
 
 - Customer VM requests cannot specify host paths, sockets, raw provider
   configuration, Kubernetes API URLs or arbitrary device mappings.
+- The supplied bridge firewall applies to the Firecracker bridge only. Incus
+  network ACLs and KubeVirt CNI/secondary-network policy must independently
+  block metadata endpoints, host management services and cross-tenant traffic
+  before those provider pools accept untrusted customer VMs.
 - Provider credentials remain on the trusted host agent. Compute node tokens
   are stored as one-way hashes and agent requests require a matching node ID.
 - Workspace quotas and node capacity are reserved transactionally before an
