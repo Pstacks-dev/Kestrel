@@ -19,6 +19,7 @@ import {
   verifyJwt,
 } from './lib/auth.mjs';
 import { registerProjectFileRoutes } from './routes/project-files.mjs';
+import { registerArtifactRoutes } from './routes/artifacts.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1306,6 +1307,7 @@ app.get('/api/cron/recovery', async (req, res) => {
 
 // Private project file storage endpoints; membership is checked on every request.
 registerProjectFileRoutes(app, { userAuth, workerAuth, query });
+registerArtifactRoutes(app, { userAuth, workerAuth, query });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
