@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validImage, validHealthPath, validPublicUrl } from '../server/routes/deployments.mjs';
+import { validImage, validHealthPath, validPublicUrl, workerCanAcceptDeployments } from '../server/routes/deployments.mjs';
 import { validArtifactName } from '../server/routes/artifacts.mjs';
 
 test('accepts valid registry image references', () => {
@@ -36,4 +36,14 @@ test('allows nested artifact paths but rejects traversal and absolute paths', ()
   assert.equal(validArtifactName('C:/Windows/win.ini'), false);
   assert.equal(validArtifactName('dist\\secret'), false);
   assert.equal(validArtifactName('dist//app.js'), false);
+});
+
+test('deployment queue requires a live worker that is not draining', () => {
+  const now = Date.parse('2026-11-18T20:00:00.000Z');
+  assert.equal(workerCanAcceptDeployments('online', '2026-11-18T19:59:50.000Z', now), true);
+  assert.equal(workerCanAcceptDeployments('busy', '2026-11-18T19:59:50.000Z', now), true);
+  assert.equal(workerCanAcceptDeployments('offline', '2026-11-18T19:59:50.000Z', now), false);
+  assert.equal(workerCanAcceptDeployments('draining', '2026-11-18T19:59:50.000Z', now), false);
+  assert.equal(workerCanAcceptDeployments('online', '2026-11-18T19:58:00.000Z', now), false);
+  assert.equal(workerCanAcceptDeployments('online', null, now), false);
 });
