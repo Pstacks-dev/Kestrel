@@ -23,7 +23,7 @@ struct Job {
     repository_url: Option<String>, source_type: Option<String>,
     branch: Option<String>, commit_sha: Option<String>,
     timeout_seconds: Option<u64>, memory_limit_mb: Option<u32>,
-    cpu_millicores: Option<u32>, secrets: Option<HashMap<String, String>>, artifact_paths: Option<Vec<String>>,
+    cpu_millicores: Option<u32>, secrets: Option<HashMap<String, String>>, #[serde(alias = "artifact_paths")] artifact_paths: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
