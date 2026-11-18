@@ -133,10 +133,32 @@ KESTREL_WORKER_WORKDIR=/srv/kestrel-worker
 KESTREL_JOB_IMAGE=node:22-bookworm-slim
 ```
 
-4. Start the worker agent:
+4. Start the existing Node worker when using the legacy agent:
 ```bash
 npm run start:worker
 ```
+
+5. For the native Rust worker, first install the egress firewall from `deploy/harden-worker-egress.sh` as described in `runtime/rust/README.md`. Create `.env.worker` on the Linux host:
+```bash
+NODE_ENV=production
+KESTREL_API_URL=https://your-api-domain.com
+KESTREL_WORKER_ID=wrk_...
+KESTREL_WORKER_TOKEN=your-provisioned-token
+KESTREL_WORKER_WORKDIR=/var/lib/kestrel/work
+KESTREL_WORKER_HOST_WORKDIR=/srv/kestrel-worker/work
+KESTREL_CONCURRENCY=2
+KESTREL_JOB_IMAGE=ghcr.io/your-org/kestrel-job-node22@sha256:YOUR_64_HEX_DIGEST
+KESTREL_JOB_NETWORK=bridge
+KESTREL_DOCKER_BIN=docker
+```
+
+Set `KESTREL_WORKER_HOST_WORKDIR=/srv/kestrel-worker/work` in the host shell or root Compose `.env` as well, because Compose uses it to resolve the bind mount. Then build and start the Rust worker:
+```bash
+docker compose -f docker-compose.worker-rust.yml up -d --build
+docker compose -f docker-compose.worker-rust.yml logs -f
+```
+
+The worker registers itself with `runtime=rust`; deployment environments can then be assigned to it. The job image must be published and pinned to its real immutable digest before production startup.
 
 ---
 
