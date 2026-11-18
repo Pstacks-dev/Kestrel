@@ -400,6 +400,10 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
            values($1,$2,$3,'snapshot_create',$4,$5) returning id`,
           [instance.id, instance.organization_id, instance.node_id, JSON.stringify(payload), snapshot.rows[0].id]
         );
+        await c.query(
+          'insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata) values($1,$2,$3,$4,$5,$6)',
+          [instance.organization_id, req.user.id, 'compute.snapshot.create.queued', 'compute_snapshot', snapshot.rows[0].id, JSON.stringify({ instanceId: instance.id, name })]
+        );
         return { snapshot: snapshot.rows[0], operationId: operation.rows[0].id };
       });
       if (queued.error) return fail(res, queued.status, queued.error);
@@ -437,6 +441,10 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
           [item.instance_id, item.organization_id, item.node_id,
             JSON.stringify({ providerId: item.provider_id, snapshotProviderId: item.provider_snapshot_id }), item.id]
         );
+        await c.query(
+          'insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata) values($1,$2,$3,$4,$5,$6)',
+          [item.organization_id, req.user.id, 'compute.snapshot.restore.queued', 'compute_snapshot', item.id, JSON.stringify({ instanceId: item.instance_id })]
+        );
         return { snapshotId: item.id, operationId: operation.rows[0].id, status: 'restoring' };
       });
       if (queued.error) return fail(res, queued.status, queued.error);
@@ -470,6 +478,10 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
            values($1,$2,$3,'snapshot_delete',$4,$5) returning id`,
           [item.instance_id, item.organization_id, item.node_id,
             JSON.stringify({ providerId: item.provider_id, snapshotProviderId: item.provider_snapshot_id }), item.id]
+        );
+        await c.query(
+          'insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata) values($1,$2,$3,$4,$5,$6)',
+          [item.organization_id, req.user.id, 'compute.snapshot.delete.queued', 'compute_snapshot', item.id, JSON.stringify({ instanceId: item.instance_id })]
         );
         return { snapshotId: item.id, operationId: operation.rows[0].id, status: 'deleting' };
       });
