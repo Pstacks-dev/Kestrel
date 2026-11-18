@@ -128,6 +128,9 @@ impl ComputeProvider for FirecrackerProvider {
         for path in [&self.config.jailer_binary, &self.config.firecracker_binary, &self.config.kernel_image_dir.join("vmlinux")] {
             if !path.is_file() { return Err(ComputeError::NotConfigured(format!("Required Firecracker host file is missing: {}", path.display()))); }
         }
+        if !Path::new("/dev/kvm").exists() {
+            return Err(ComputeError::NotConfigured("Firecracker requires a Linux KVM device at /dev/kvm".into()));
+        }
         Ok(())
     }
 
@@ -226,6 +229,11 @@ impl ComputeProvider for FirecrackerProvider {
             let pid = pid.trim();
             if !pid.bytes().all(|b| b.is_ascii_digit()) || pid.is_empty() {
                 return Err(ComputeError::Provider("Persisted Firecracker process ID is invalid".into()));
+            }
+            let command_line = tokio::fs::read(format!("/proc/{pid}/cmdline")).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot verify persisted Firecracker process: {e}")))?;
+            if !command_line.windows(b"firecracker".len()).any(|window| window == b"firecracker") {
+                return Err(ComputeError::Provider("Persisted process is not a Firecracker jailer/runtime process".into()));
             }
             let status = Command::new("kill").arg("-TERM").arg(pid).status().await
                 .map_err(|e| ComputeError::Provider(format!("Unable to signal Firecracker process: {e}")))?;
