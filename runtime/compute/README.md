@@ -107,6 +107,7 @@ KESTREL_FIRECRACKER_JAILER=/usr/bin/jailer
 KESTREL_FIRECRACKER_BINARY=/usr/bin/firecracker
 KESTREL_FIRECRACKER_KERNEL_DIR=/var/lib/kestrel/kernels
 KESTREL_FIRECRACKER_ROOTFS_DIR=/var/lib/kestrel/rootfs
+KESTREL_FIRECRACKER_BRIDGE=br-kestrel
 KESTREL_FIRECRACKER_UID=1000
 KESTREL_FIRECRACKER_GID=1000
 ```
@@ -117,7 +118,10 @@ request's image field must be the filename only (for example
 ubuntu-24.04.ext4). The agent needs the host privileges required by the
 jailer; Firecracker itself is configured to run under the non-root UID/GID.
 Use a dedicated filesystem and operator-owned directories for the jailer
-chroot base.
+chroot base. Create and secure the bridge (including DHCP, routing and
+firewall rules) before starting the agent. The agent creates one TAP interface
+per microVM, attaches it to that bridge and configures the Firecracker guest
+interface; it does not create a public IP or firewall policy for the host.
 
 ### KubeVirt node
 
