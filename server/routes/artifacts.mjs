@@ -119,6 +119,8 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       const artifact = await query(
         `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type, expires_at)
          values($1, $2, $3, $4, $5, $6, case when $7::int is null then null else now() + make_interval(days => $7::int) end)
+         on conflict (object_key) do update set size_bytes = excluded.size_bytes, sha256 = excluded.sha256,
+           content_type = excluded.content_type, expires_at = excluded.expires_at
          returning id, name, size_bytes, sha256, created_at, expires_at`,
         [row.run_id, row.name, row.object_key, row.size_bytes, row.sha256, row.content_type, retention]
       );
@@ -140,7 +142,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       );
       if (!access.rowCount) return res.status(404).json({ error: 'Pipeline run not found' });
       const result = await query(
-        'select id, name, size_bytes as "sizeBytes", sha256, content_type as "contentType", created_at as "createdAt", expires_at as "expiresAt" from public.artifacts where run_id = $1 and deleted_at is null order by created_at desc',
+        'select id, name, size_bytes as "sizeBytes", sha256, content_type as "contentType", created_at as "createdAt", expires_at as "expiresAt" from public.artifacts where run_id = $1 and deleted_at is null and (expires_at is null or expires_at > now()) order by created_at desc',
         [req.params.runId]
       );
       res.json({ artifacts: result.rows });
