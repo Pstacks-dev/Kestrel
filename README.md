@@ -65,7 +65,13 @@ Kestrel is a production-hardened, distributed CI/CD platform built with:
 8. **Build Artifacts**:
    - Automatic scanning of `dist/`, `build/`, and `artifacts/` directories on job completion.
    - Direct signed uploads to private Supabase Storage, SHA-256 metadata, authenticated downloads, deletion, and optional retention cleanup.
-8. **Automated Migrations & Preflights**:
+9. **Kestrel Compute (provider integrations; host validation pending)**:
+   - Workspace-scoped VM inventory, create/start/stop/delete operations, durable operation leases and quota enforcement.
+   - Provider pools for Incus, Firecracker and KubeVirt, selected by region and available CPU, memory, disk and instance capacity.
+   - Trusted Rust compute host agent; provider credentials stay on the host and node tokens are stored as SHA-256 hashes.
+   - The existing workspace interface includes a Compute page for VM creation, resource quota usage and lifecycle controls.
+   - A real Linux/KVM provider node is required. No hosted node has been provisioned and live VM lifecycle has not yet been verified.
+10. **Automated Migrations & Preflights**:
    - `scripts/migrate.mjs` applies ordered, transactional SQL migrations with idempotency tracking.
    - `scripts/check-env.mjs` verifies database URLs, SSL policies, and production security rules.
 
@@ -162,7 +168,21 @@ The worker registers itself with `runtime=rust`; deployment environments can the
 
 ---
 
-## 3. Vercel + Supabase Deployment
+## 3. Kestrel Compute provider hosts
+
+Compute hosts are separate from the Vercel control plane and ordinary Docker
+build workers. Apply migration 017, provision a provider node through the
+platform-admin compute API, then run the trusted Rust compute agent on the
+matching Linux/KVM host. Provider-specific environment variables and host
+requirements are documented in runtime/compute/README.md. Do not place
+provider credentials or API sockets in customer workloads.
+
+The workspace Compute page queues VM operations and displays database-backed
+status. A VM remains provisioning until a registered host agent claims the
+operation and reports the provider result. No provider VM is created by the
+Vercel serverless process itself.
+
+## 4. Vercel + Supabase Deployment
 
 Deploying the frontend and short-lived HTTP API to Vercel:
 
