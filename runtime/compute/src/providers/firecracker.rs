@@ -144,6 +144,25 @@ impl FirecrackerProvider {
         let _ = Command::new("ip").args(["link", "delete", "dev", &tap]).status().await;
     }
 
+    async fn discover_ipv4(&self, id: &str) -> Vec<String> {
+        let output = match Command::new("ip").args(["neigh", "show", "dev", &self.config.network_bridge]).output().await {
+            Ok(output) if output.status.success() => output,
+            _ => return Vec::new(),
+        };
+        let expected_mac = Self::guest_mac(id);
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let lladdr = fields.iter().position(|field| *field == "lladdr")?;
+            let ip = *fields.first()?;
+            let mac = *fields.get(lladdr + 1)?;
+            if mac.eq_ignore_ascii_case(&expected_mac) && ip.parse::<std::net::Ipv4Addr>().is_ok() {
+                Some(ip.to_owned())
+            } else {
+                None
+            }
+        }).collect()
+    }
+
     fn instance(&self, id: &str, state: InstanceState) -> Instance {
         let stable_id = Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("kestrel:firecracker:{id}").as_bytes());
         Instance { id: stable_id, provider_id: id.to_owned(), name: id.to_owned(), state, ipv4: Vec::new() }
@@ -241,7 +260,8 @@ impl ComputeProvider for FirecrackerProvider {
         }
         child.kill_on_drop(false);
         children.insert(spec.name.clone(), child);
-        Ok(self.instance(&spec.name, InstanceState::Running))
+        drop(children);
+        self.get_instance(&spec.name).await
     }
 
     async fn get_instance(&self, id: &str) -> Result<Instance, ComputeError> {
@@ -262,7 +282,9 @@ impl ComputeProvider for FirecrackerProvider {
                 Some("Paused") => Ok(InstanceState::Stopped),
                 _ => Ok(InstanceState::Unknown),
             })?;
-        Ok(self.instance(id, state))
+        let mut instance = self.instance(id, state);
+        instance.ipv4 = self.discover_ipv4(id).await;
+        Ok(instance)
     }
 
     async fn start_instance(&self, id: &str) -> Result<(), ComputeError> {
