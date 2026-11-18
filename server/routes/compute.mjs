@@ -621,6 +621,13 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
         if (action === 'start' && !['stopped'].includes(vm.status)) return { error: 'Only stopped VMs can be started', status: 409 };
         if (action === 'stop' && !['running'].includes(vm.status)) return { error: 'Only running VMs can be stopped', status: 409 };
         if (action === 'delete' && ['provisioning','starting','stopping','deleting'].includes(vm.status)) return { error: 'Wait for the current VM operation to finish', status: 409 };
+        if (action === 'delete') {
+          const snapshots = await c.query(
+            "select id from public.compute_snapshots where instance_id = $1 and status not in ('deleted','failed') limit 1",
+            [vm.id]
+          );
+          if (snapshots.rowCount) return { error: 'Delete or clear this VM’s snapshots before deleting the VM', status: 409 };
+        }
         const pending = await c.query(
           "select id from public.compute_operations where instance_id = $1 and status in ('queued','claimed') limit 1",
           [vm.id]
