@@ -1162,6 +1162,17 @@ app.post('/api/workers/jobs/:jobId/logs', workerAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Worker-side cancellation polling. The lease token prevents another worker from inspecting this job.
+app.get('/api/workers/jobs/:jobId/status', workerAuth, async (req, res) => {
+  const lease = String(req.get('x-kestrel-lease') || '');
+  const result = await query(
+    'select status from public.jobs where id = $1 and worker_id = $2 and lease_token = $3',
+    [req.params.jobId, req.worker.id, lease]
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Job lease not found' });
+  res.json({ status: result.rows[0].status });
+});
+
 // Job Completion
 app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
   const { leaseToken, exitCode, durationMs, status } = req.body || {};
