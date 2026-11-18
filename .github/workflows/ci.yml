@@ -78,6 +78,22 @@ jobs:
           docker compose --env-file .env.worker -f docker-compose.worker.yml config --quiet
           docker compose --env-file .env.worker -f docker-compose.worker-rust.yml config --quiet
 
+  compute-agent:
+    name: Build and lint trusted Compute host agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Run compute agent tests
+        run: cargo test --manifest-path runtime/compute-agent/Cargo.toml
+      - name: Run compute agent lints
+        run: cargo clippy --manifest-path runtime/compute-agent/Cargo.toml --all-targets -- -D warnings
+
   compute-providers:
     name: Test Kestrel Compute provider contracts
     runs-on: ubuntu-latest
