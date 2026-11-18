@@ -108,6 +108,7 @@ KESTREL_FIRECRACKER_BINARY=/usr/bin/firecracker
 KESTREL_FIRECRACKER_KERNEL_DIR=/var/lib/kestrel/kernels
 KESTREL_FIRECRACKER_ROOTFS_DIR=/var/lib/kestrel/rootfs
 KESTREL_FIRECRACKER_BRIDGE=br-kestrel
+KESTREL_COMPUTE_BRIDGE=br-kestrel
 KESTREL_FIRECRACKER_UID=1000
 KESTREL_FIRECRACKER_GID=1000
 ```
@@ -120,8 +121,11 @@ request's image field must be the filename only (for example
 ubuntu-24.04.ext4). The agent needs the host privileges required by the
 jailer; Firecracker itself is configured to run under the non-root UID/GID.
 Use a dedicated filesystem and operator-owned directories for the jailer
-chroot base. Create and secure the bridge (including DHCP, routing and
-firewall rules) before starting the agent. The agent creates one TAP interface
+chroot base. Create and secure the bridge (including DHCP and routing) before starting
+the agent. Install deploy/harden-compute-bridge.sh and its systemd unit before
+exposing guests; this blocks guest traffic to private, loopback, link-local and
+metadata ranges and blocks unsolicited inbound connections to guests. Review
+the DHCP/DNS exceptions and firewall policy for your host before enabling it. The agent creates one TAP interface
 per microVM, attaches it to that bridge and configures the Firecracker guest
 interface; it does not create a public IP or firewall policy for the host.
 
@@ -148,9 +152,12 @@ with a protected environment file:
 cargo build --release --manifest-path runtime/compute-agent/Cargo.toml
 sudo install -D -m 0755 target/release/kestrel-compute-agent /opt/kestrel/bin/kestrel-compute-agent
 sudo install -D -m 0644 deploy/kestrel-compute-agent.service /etc/systemd/system/kestrel-compute-agent.service
+sudo install -D -m 0755 deploy/harden-compute-bridge.sh /opt/kestrel/bin/harden-compute-bridge.sh
+sudo install -D -m 0644 deploy/kestrel-compute-bridge-firewall.service /etc/systemd/system/kestrel-compute-bridge-firewall.service
 sudo install -d -m 0700 /etc/kestrel
 sudo chmod 0600 /etc/kestrel/compute-agent.env
 sudo systemctl daemon-reload
+sudo systemctl enable --now kestrel-compute-bridge-firewall
 sudo systemctl enable --now kestrel-compute-agent
 sudo journalctl -u kestrel-compute-agent -f
 ```
