@@ -7,6 +7,7 @@ use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::RwLock;
 use tokio::time;
 use tracing::{error, info, warn};
 
@@ -119,8 +120,12 @@ async fn register(http: &Client, cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn heartbeat(http: &Client, cfg: &Config) -> Result<()> {
-    post(http, cfg, "/api/compute/agent/heartbeat", json!({})).await?;
+async fn heartbeat(http: &Client, cfg: &Config, active: Option<(String, String)>) -> Result<()> {
+    let body = match active {
+        Some((operation_id, lease_token)) => json!({"operationId":operation_id,"leaseToken":lease_token}),
+        None => json!({}),
+    };
+    post(http, cfg, "/api/compute/agent/heartbeat", body).await?;
     Ok(())
 }
 
@@ -130,7 +135,7 @@ async fn claim(http: &Client, cfg: &Config) -> Result<Option<Operation>> {
 }
 
 async fn complete(http: &Client, cfg: &Config, operation: &Operation, result: Result<Instance>) -> Result<()> {
-    let body = match result {
+    match result {
         Ok(instance) => {
             let state = match instance.state {
                 InstanceState::Running => "running",
@@ -152,8 +157,7 @@ async fn complete(http: &Client, cfg: &Config, operation: &Operation, result: Re
                 "error":error.to_string()
             })).await?;
         }
-    };
-    let _ = body;
+    }
     Ok(())
 }
 
@@ -199,7 +203,21 @@ async fn main() -> Result<()> {
     let http = client(&cfg)?;
     register(&http, &cfg).await?;
 
-    let mut heartbeat_tick = time::interval(Duration::from_secs(15));
+    let active_lease: Arc<RwLock<Option<(String, String)>>> = Arc::new(RwLock::new(None));
+    let heartbeat_active = active_lease.clone();
+    let heartbeat_http = http.clone();
+    let heartbeat_cfg = cfg.clone();
+    let heartbeat_task = tokio::spawn(async move {
+        let mut tick = time::interval(Duration::from_secs(15));
+        loop {
+            tick.tick().await;
+            let active = heartbeat_active.read().await.clone();
+            if let Err(error) = heartbeat(&heartbeat_http, &heartbeat_cfg, active).await {
+                error!(%error, "compute node heartbeat or operation lease renewal failed");
+            }
+        }
+    });
+
     let mut poll_tick = time::interval(Duration::from_secs(2));
     loop {
         tokio::select! {
@@ -207,15 +225,11 @@ async fn main() -> Result<()> {
                 warn!("shutdown requested; compute node will stop claiming new operations");
                 break;
             }
-            _ = heartbeat_tick.tick() => {
-                if let Err(error) = heartbeat(&http, &cfg).await {
-                    error!(%error, "compute node heartbeat failed");
-                }
-            }
             _ = poll_tick.tick() => {
                 match claim(&http, &cfg).await {
                     Ok(Some(operation)) => {
                         info!(operation_id = %operation.id, action = %operation.action, instance_id = %operation.instance_id, "claimed VM operation");
+                        *active_lease.write().await = Some((operation.id.clone(), operation.lease_token.clone()));
                         let result = execute(provider.as_ref(), &operation).await;
                         if let Err(error) = &result {
                             error!(operation_id = %operation.id, %error, "VM operation failed");
@@ -223,6 +237,7 @@ async fn main() -> Result<()> {
                         if let Err(error) = complete(&http, &cfg, &operation, result).await {
                             error!(operation_id = %operation.id, %error, "could not report VM operation result");
                         }
+                        *active_lease.write().await = None;
                     }
                     Ok(None) => {}
                     Err(error) => error!(%error, "compute operation polling failed"),
@@ -230,5 +245,6 @@ async fn main() -> Result<()> {
             }
         }
     }
+    heartbeat_task.abort();
     Ok(())
 }
