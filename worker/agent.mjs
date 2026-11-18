@@ -47,6 +47,45 @@ async function api(endpoint, body) {
   return r.json();
 }
 
+async function apiGet(endpoint) {
+  const response = await fetch(`${API}${endpoint}`, {
+    method: 'GET',
+    headers,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${endpoint}: ${response.status} ${text}`);
+  }
+  return response.json();
+}
+
+async function downloadUploadedSource(job, workspace) {
+  const result = await apiGet(`/api/workers/projects/${encodeURIComponent(job.projectId)}/source-files`);
+  const files = Array.isArray(result.files) ? result.files : [];
+  let totalBytes = 0;
+  for (const file of files) {
+    const relative = String(file.path || '').replace(/\\\\/g, '/');
+    const segments = relative.split('/');
+    if (!relative || relative.startsWith('/') || segments.some((part) => !part || part === '.' || part === '..')) {
+      throw new Error('Server returned an unsafe uploaded-source path');
+    }
+    const destination = path.resolve(workspace, ...segments);
+    if (destination !== workspace && !destination.startsWith(workspace + path.sep)) {
+      throw new Error('Uploaded source path escaped the job workspace');
+    }
+    const response = await fetch(file.url);
+    if (!response.ok) throw new Error(`Could not download uploaded source file: ${relative}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > 20 * 1024 * 1024) throw new Error(`Uploaded source file exceeds 20 MiB: ${relative}`);
+    totalBytes += bytes.length;
+    if (totalBytes > 250 * 1024 * 1024) throw new Error('Uploaded source exceeds the 250 MiB job limit');
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.writeFile(destination, bytes, { flag: 'w' });
+    console.log(`[source] Downloaded ${relative} (${bytes.length} bytes)`);
+  }
+  if (!files.length) throw new Error('This uploaded project contains no files');
+}
+
 async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) {
   const start = Date.now();
   const timeoutMs = (job.timeoutSeconds || 1800) * 1000;
@@ -376,17 +415,21 @@ async function execute(job) {
   }, 10000);
 
   try {
-    const repository = /^https:\/\//.test(job.repositoryUrl || '') ? job.repositoryUrl : REPO_URL || '';
-    if (repository && EXECUTOR !== 'mock') {
+    if (job.sourceType === 'upload' && EXECUTOR !== 'mock') {
+      await downloadUploadedSource(job, workspace);
+    } else {
+      const repository = /^https:\/\//.test(job.repositoryUrl || '') ? job.repositoryUrl : REPO_URL || '';
+      if (repository && EXECUTOR !== 'mock') {
       const clone = await runGit(
         ['clone', '--depth', '1', '--branch', String(job.branch || 'main'), '--', repository, '.'],
         workspace,
         (s, m) => console.log(`[clone:${s}] ${m}`)
       );
-      if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
+        if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
+      }
     }
 
-    if (job.commitSha && EXECUTOR !== 'mock') {
+    if (job.commitSha && EXECUTOR !== 'mock' && job.sourceType !== 'upload') {
       if (!/^[a-f0-9]{7,64}$/i.test(job.commitSha)) throw new Error('Invalid commit SHA format');
       const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${m}`));
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');
