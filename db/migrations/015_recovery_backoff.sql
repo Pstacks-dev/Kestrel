@@ -73,7 +73,8 @@ begin
       when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then now()
       else null
     end
-  where r.status in ('queued', 'running');
+  where r.status in ('queued', 'running')
+    and exists (select 1 from public.jobs j where j.run_id = r.id);
 
   return query select v_recovered_jobs, v_offline_workers;
 end;
