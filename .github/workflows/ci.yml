@@ -29,6 +29,12 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test
+      - name: Report dependency security advisories
+        run: |
+          npm audit --json > npm-audit.json || true
+          node --input-type=commonjs -e "const audit=require('./npm-audit.json'); const rows=Object.entries(audit.vulnerabilities || {}).map(([name, item]) => ({name, severity:item.severity, direct:item.isDirect, range:item.range, fixAvailable:item.fixAvailable, via:item.via, effects:item.effects, nodes:item.nodes})); console.log(JSON.stringify({metadata:audit.metadata?.vulnerabilities, packages:rows}, null, 2));"
+      - name: Enforce production dependency audit
+        run: npm audit --omit=dev --audit-level=high
       - name: Syntax-check server and worker entrypoints
         run: node --check server/control-plane.mjs && node --check server/lib/release-routes.mjs && node --check server/lib/netlify-deploy.mjs && node --check worker/agent.mjs
       - name: Type-check
