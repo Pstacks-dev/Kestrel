@@ -9,6 +9,11 @@ function retentionDays() {
   return Number.isInteger(raw) && raw >= 1 && raw <= 3650 ? raw : null;
 }
 
+export function validArtifactName(name) {
+  if (typeof name !== 'string' || !name || name.length > 512 || name.startsWith('/') || name.includes('\\')) return false;
+  return name.split('/').every((part) => part && part !== '.' && part !== '..' && !/[\u0000-\u001f]/.test(part));
+}
+
 function storageConfig() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -53,9 +58,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
         [req.params.jobId, lease, req.worker.id]
       );
       if (!run.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
-      const nameParts = name.split('/');
-      if (!name || name.length > 512 || name.startsWith('/') || name.includes('\\') ||
-          nameParts.some((part) => !part || part === '.' || part === '..' || /[\u0000-\u001f]/.test(part))) {
+      if (!validArtifactName(name)) {
         return res.status(400).json({ error: 'Artifact name must be a safe relative file path' });
       }
       if (!Buffer.isBuffer(req.body) || !req.body.length || req.body.length > MAX_ARTIFACT_BYTES) {
