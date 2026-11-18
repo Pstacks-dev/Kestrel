@@ -19,7 +19,7 @@ function parseProviderState(body) {
 export function registerReleaseRoutes(app, deps) {
   const { userAuth, workerAuth, sensitiveLimiter, query, transaction, encryptSecret, decryptSecret, supabaseAdmin } = deps;
 
-  async function launchDeployment(deploymentId) {
+  async function performDeployment(deploymentId) {
     const loaded = await query(
       'select d.*, t.provider, t.provider_site_id, t.provider_team_id, t.target_environment, p.repository_url, p.name as project_name, src.provider_deployment_id as rollback_provider_id from public.deployments d join public.deployment_targets t on t.id=d.target_id join public.pipeline_runs r on r.id=d.run_id join public.projects p on p.id=r.project_id left join public.deployments src on src.id=d.rollback_source_id where d.id=$1 and t.active=true',
       [deploymentId]
@@ -72,7 +72,7 @@ export function registerReleaseRoutes(app, deps) {
     }
 
     await query("update public.deployments set status='deploying', error_message=null where id=$1", [deploymentId]);
-    const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(payload) });
+    const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
     const text = await response.text();
     let body = {};
     try { body = text ? JSON.parse(text) : {}; } catch { body = { message: text.slice(0, 500) }; }
@@ -90,6 +90,19 @@ export function registerReleaseRoutes(app, deps) {
       [deploymentId, providerId, url, status]
     );
     return { deploymentId, status, providerDeploymentId: providerId, deploymentUrl: url };
+  }
+
+
+  async function launchDeployment(deploymentId) {
+    try {
+      return await performDeployment(deploymentId);
+    } catch (error) {
+      await query(
+        "update public.deployments set status='failed',error_message=$2,finished_at=now() where id=$1 and status not in ('ready','failed','rejected')",
+        [deploymentId, String(error?.message || error).slice(0, 1000)]
+      ).catch((updateError) => console.error('[deployment-failure-state]', updateError?.message || updateError));
+      throw error;
+    }
   }
 
   app.post('/api/workers/jobs/:jobId/artifacts', workerAuth, async (req, res) => {
@@ -367,7 +380,7 @@ export function registerReleaseRoutes(app, deps) {
       } else {
         url = new URL('https://api.netlify.com/api/v1/sites/' + encodeURIComponent(d.provider_site_id) + '/deploys/' + encodeURIComponent(d.provider_deployment_id));
       }
-      const response = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+      const response = await fetch(url, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) return res.status(502).json({ error: 'Provider status request failed: HTTP ' + response.status });
       const status = parseProviderState(body);
