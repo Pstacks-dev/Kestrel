@@ -1008,6 +1008,42 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       if (!worker.rowCount) return null;
       const w = worker.rows[0];
 
+      // Recover jobs abandoned by a worker that crashed or lost its connection.
+      await c.query(
+        `update public.jobs j
+         set status = case when j.attempt <= j.max_retries then 'queued' else 'failed' end,
+             worker_id = null,
+             lease_token = null,
+             lease_expires_at = null,
+             started_at = case when j.attempt <= j.max_retries then null else j.started_at end,
+             finished_at = case when j.attempt <= j.max_retries then null else now() end,
+             exit_code = case when j.attempt <= j.max_retries then null else 124 end
+         where j.status = 'running'
+           and j.lease_expires_at <= now()
+           and exists (
+             select 1 from public.pipeline_runs rr
+             join public.projects pp on pp.id = rr.project_id
+             where rr.id = j.run_id and pp.organization_id = $1
+           )`,
+        [w.organization_id]
+      );
+      await c.query(
+        `update public.pipeline_runs r
+         set status = 'failed', finished_at = now()
+         where r.status = 'running'
+           and exists (select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed')
+           and not exists (select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued', 'running'))
+           and exists (select 1 from public.projects p where p.id = r.project_id and p.organization_id = $1)`,
+        [w.organization_id]
+      );
+      await c.query(
+        `update public.workers w
+         set state = 'online'
+         where w.organization_id = $1 and w.state = 'busy'
+           and not exists (select 1 from public.jobs j where j.worker_id = w.id and j.status = 'running')`,
+        [w.organization_id]
+      );
+
       const active = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [w.id]);
       if (active.rows[0].n >= w.max_concurrency || w.state === 'draining') return null;
 
