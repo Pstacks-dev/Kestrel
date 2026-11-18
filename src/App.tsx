@@ -44,6 +44,7 @@ type Page =
   | 'docs'
   | 'pricing'
   | 'admin'
+  | 'admin/login'
   | 'overview'
   | 'pipelines'
   | 'runs'
