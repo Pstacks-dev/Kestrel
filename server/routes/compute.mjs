@@ -209,13 +209,20 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
           `update public.compute_operations set status = 'failed', lease_token = null, lease_expires_at = null,
              error_message = 'Compute host lease expired after maximum attempts', finished_at = now()
            where node_id = $1 and status = 'claimed' and lease_expires_at <= now() and attempts >= max_attempts
-           returning instance_id, action, payload`,
+           returning instance_id, action, payload, snapshot_id`,
           [req.computeNode.id]
         );
         for (const expired of exhausted.rows) {
           const vm = await c.query('select * from public.compute_instances where id = $1 for update', [expired.instance_id]);
           if (!vm.rowCount) continue;
-          if (expired.action === 'create') {
+          if (expired.action.startsWith('snapshot_')) {
+            await c.query(
+              `update public.compute_snapshots set status = 'failed',
+                 error_message = 'Compute host lease expired after maximum attempts', updated_at = now()
+               where id = $1`,
+              [expired.snapshot_id]
+            );
+          } else if (expired.action === 'create') {
             await c.query(
               `update public.compute_instances set status = 'failed',
                  error_message = 'Compute host lease expired after maximum attempts', updated_at = now()
