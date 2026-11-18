@@ -192,21 +192,23 @@ async fn flush_log(http: &Client, cfg: &Config, job: &Job, stream: &str, message
 
 
 async fn discover_artifacts(workspace: &Path, directory: &Path, output: &mut Vec<String>) -> Result<()> {
-    if output.len() >= 50 { return Ok(()); }
-    if !fs::try_exists(directory).await? { return Ok(()); }
-    let mut entries = fs::read_dir(directory).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        if output.len() >= 50 { break; }
-        let file_type = entry.file_type().await?;
-        if file_type.is_symlink() { continue; }
-        let path = entry.path();
-        if file_type.is_dir() {
-            discover_artifacts(workspace, &path, output).await?;
-        } else if file_type.is_file() {
-            let relative = path.strip_prefix(workspace)
-                .map_err(|_| anyhow!("artifact path escaped workspace"))?
-                .to_string_lossy().replace('\\', "/");
-            if safe_relative_path(&relative).is_ok() { output.push(relative); }
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        if output.len() >= 50 || !fs::try_exists(&current).await? { continue; }
+        let mut entries = fs::read_dir(&current).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if output.len() >= 50 { break; }
+            let file_type = entry.file_type().await?;
+            if file_type.is_symlink() { continue; }
+            let path = entry.path();
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if file_type.is_file() {
+                let relative = path.strip_prefix(workspace)
+                    .map_err(|_| anyhow!("artifact path escaped workspace"))?
+                    .to_string_lossy().replace('\\', "/");
+                if safe_relative_path(&relative).is_ok() { output.push(relative); }
+            }
         }
     }
     Ok(())
