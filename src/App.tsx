@@ -131,14 +131,11 @@ function Landing() {
             </button>
           </div>
           <div className="hero-proof">
-            <div className="proof-avatars">
-              <i>K</i>
-              <i>CI</i>
-              <i>+</i>
-            </div>
-            <span>Built for teams that ship software</span>
+            <span>Traceable builds</span>
             <span className="proof-sep">·</span>
-            <span>Self-hosted workers</span>
+            <span>Clear execution history</span>
+            <span className="proof-sep">·</span>
+            <span>Controlled releases</span>
           </div>
         </div>
 
@@ -158,28 +155,22 @@ function Landing() {
           </div>
           <div className="pipeline-track">
             <div className="track-line" />
-            <div className="stage done">
-              <span>
-                <Check />
-              </span>
+            <div className="stage neutral">
+              <span>1</span>
               <b>Checkout</b>
               <small>Source</small>
             </div>
-            <div className="stage done">
-              <span>
-                <Check />
-              </span>
+            <div className="stage neutral">
+              <span>2</span>
               <b>Install</b>
               <small>Install</small>
             </div>
-            <div className="stage active">
-              <span>
-                <Radio />
-              </span>
+            <div className="stage neutral">
+              <span>3</span>
               <b>Test suite</b>
               <small>Validate</small>
             </div>
-            <div className="stage waiting">
+            <div className="stage neutral">
               <span>4</span>
               <b>Deploy</b>
               <small>Release</small>
@@ -266,8 +257,8 @@ function Landing() {
             <h3>Distributed workers</h3>
             <p>Jobs are assigned to available execution capacity. Follow each job from scheduling through completion.</p>
             <div className="feature-metric">
-              <b>—</b>
-              <span>capacity reported by the platform</span>
+              <b>Live</b>
+              <span>execution visibility</span>
             </div>
           </article>
           <article className="feature">
@@ -277,8 +268,8 @@ function Landing() {
             <h3>Live execution logs</h3>
             <p>Follow stdout, stderr, job status and exit codes as work happens on the worker.</p>
             <div className="terminal-mini">
-              <span>stdout / stderr</span>
-              <b>Live job output</b>
+              <span>stdout · stderr · exit code</span>
+              <b>Execution logs</b>
             </div>
           </article>
           <article className="feature">
