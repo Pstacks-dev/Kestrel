@@ -1029,6 +1029,13 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         [w.organization_id]
       );
       await c.query(
+        `update public.deployment_releases dr
+         set status = 'failed', health_checked_at = now(),
+             error_message = 'Deployment worker lease expired after retries'
+         where dr.status = 'deploying'
+           and exists (select 1 from public.jobs j where j.deployment_release_id = dr.id and j.status = 'failed')`
+      );
+      await c.query(
         `update public.pipeline_runs r
          set status = 'failed', finished_at = now()
          where r.status = 'running'
