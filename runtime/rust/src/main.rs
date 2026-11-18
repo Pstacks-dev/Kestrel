@@ -100,7 +100,7 @@ async fn claim(http: &Client, cfg: &Config) -> Result<Option<Job>> {
 
 fn safe_relative_path(value: &str) -> Result<PathBuf> {
     let path = Path::new(value);
-    anyhow::ensure!(!path.as_os_str().is_empty() && !path.is_absolute(), "invalid source path");
+    anyhow::ensure!(!path.as_os_str().is_empty() && !path.is_absolute() && !value.contains('\\\\') && !value.contains('\\0'), "invalid source path");
     for component in path.components() {
         anyhow::ensure!(matches!(component, Component::Normal(_)), "unsafe source path");
     }
@@ -117,7 +117,9 @@ async fn stage_uploaded_source(http: &Client, cfg: &Config, job: &Job, workspace
     for file in files {
         let relative = safe_relative_path(file["path"].as_str().unwrap_or(""))?;
         let url = file["url"].as_str().ok_or_else(|| anyhow!("source file has no signed URL"))?;
-        let response = http.get(url).send().await?;
+        // Signed object URLs are fetched without the worker-authenticated API client.
+        // Never forward the Kestrel worker bearer token to the storage host.
+        let response = Client::new().get(url).send().await?;
         anyhow::ensure!(response.status().is_success(), "source download failed");
         let bytes = response.bytes().await?;
         anyhow::ensure!(bytes.len() <= 20 * 1024 * 1024, "source file exceeds 20 MiB");
@@ -251,5 +253,28 @@ async fn main() -> Result<()> {
             Ok(None) => time::sleep(Duration::from_secs(3)).await,
             Err(error) => { warn!(%error, "job claim failed"); time::sleep(Duration::from_secs(5)).await; }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::safe_relative_path;
+
+    #[test]
+    fn accepts_nested_relative_source_paths() {
+        assert_eq!(safe_relative_path("src/main.rs").unwrap().to_string_lossy(), "src/main.rs");
+    }
+
+    #[test]
+    fn rejects_parent_traversal() {
+        assert!(safe_relative_path("../secrets.txt").is_err());
+        assert!(safe_relative_path("src/../../secrets.txt").is_err());
+    }
+
+    #[test]
+    fn rejects_absolute_and_windows_paths() {
+        assert!(safe_relative_path("/etc/passwd").is_err());
+        assert!(safe_relative_path("..\\\\secrets.txt").is_err());
     }
 }
