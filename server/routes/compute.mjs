@@ -121,7 +121,10 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
   app.post('/api/compute/agent/register', agentAuth, async (req, res) => {
     const hostname = String(req.body?.hostname || '').trim();
     const architecture = String(req.body?.architecture || 'linux/amd64').trim();
-    if (!hostname || hostname.length > 128 || architecture.length > 64) return fail(res, 400, 'Invalid compute agent registration');
+    const provider = String(req.body?.provider || '');
+    if (!hostname || hostname.length > 128 || architecture.length > 64 || provider !== req.computeNode.provider) {
+      return fail(res, 400, 'Compute agent configuration does not match the registered provider node');
+    }
     const result = await query(
       `update public.compute_nodes set hostname = $2, architecture = $3,
          state = case when desired_state = 'offline' then 'offline' when desired_state = 'draining' then 'draining' else 'online' end,
@@ -165,6 +168,39 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
       const operation = await transaction(async (c) => {
         const node = await c.query('select * from public.compute_nodes where id = $1 for update', [req.computeNode.id]);
         if (!node.rowCount || node.rows[0].desired_state !== 'online' || node.rows[0].state !== 'online') return null;
+        const exhausted = await c.query(
+          `update public.compute_operations set status = 'failed', lease_token = null, lease_expires_at = null,
+             error_message = 'Compute host lease expired after maximum attempts', finished_at = now()
+           where node_id = $1 and status = 'claimed' and lease_expires_at <= now() and attempts >= max_attempts
+           returning instance_id, action, payload`,
+          [req.computeNode.id]
+        );
+        for (const expired of exhausted.rows) {
+          const vm = await c.query('select * from public.compute_instances where id = $1 for update', [expired.instance_id]);
+          if (!vm.rowCount) continue;
+          if (expired.action === 'create') {
+            await c.query(
+              `update public.compute_instances set status = 'failed',
+                 error_message = 'Compute host lease expired after maximum attempts', updated_at = now()
+               where id = $1`,
+              [expired.instance_id]
+            );
+            await c.query(
+              `update public.compute_nodes set allocated_vcpu = greatest(0, allocated_vcpu - $2),
+                 allocated_memory_mib = greatest(0, allocated_memory_mib - $3),
+                 allocated_disk_gib = greatest(0, allocated_disk_gib - $4), updated_at = now()
+               where id = $1`,
+              [vm.rows[0].node_id, vm.rows[0].vcpus, vm.rows[0].memory_mib, vm.rows[0].disk_gib]
+            );
+          } else {
+            await c.query(
+              `update public.compute_instances set status = coalesce($2, 'failed'),
+                 error_message = 'Compute host lease expired after maximum attempts', updated_at = now()
+               where id = $1`,
+              [expired.instance_id, expired.payload?.previousStatus || null]
+            );
+          }
+        }
         await c.query(
           `update public.compute_operations set status = 'queued', lease_token = null, lease_expires_at = null,
              available_at = now() + interval '10 seconds'
