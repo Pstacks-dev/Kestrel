@@ -341,6 +341,16 @@ mod tests {
     }
 
     #[test]
+    fn validates_network_bridge_and_derives_safe_tap_names() {
+        assert!(config().validate().is_ok());
+        let mut value = config();
+        value.network_bridge = "bridge-name-that-is-too-long".into();
+        assert!(value.validate().is_err());
+        assert!(FirecrackerProvider::tap_name("vm-01").len() <= 15);
+        assert!(FirecrackerProvider::guest_mac("vm-01").starts_with("02:fc:"));
+    }
+
+    #[test]
     fn derives_stable_instance_ids() {
         let provider = FirecrackerProvider { config:config(), children:Mutex::new(HashMap::new()) };
         assert_eq!(provider.instance("vm-01", InstanceState::Running).id, provider.instance("vm-01", InstanceState::Stopped).id);
