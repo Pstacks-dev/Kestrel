@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Activity, ArrowRight, Boxes, LogOut, RefreshCw, Server, ShieldCheck, Workflow } from 'lucide-react';
+import { Activity, ArrowRight, Boxes, Eye, EyeOff, LogOut, RefreshCw, Server, ShieldCheck, Workflow } from 'lucide-react';
 import { requireSupabase } from './lib-supabase';
 import './admin.css';
 type Overview={generatedAt:string;totals:{projects:number;runs:number;workers:number;jobs:number};workers:any[];jobStatuses:Record<string,number>};
@@ -11,6 +11,7 @@ export default function Admin(){
   const [needsLogin,setNeedsLogin]=useState(false);
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
+  const [showPassword,setShowPassword]=useState(false);
   const [data,setData]=useState<Overview|null>(null);
   const [orgs,setOrgs]=useState<Org[]>([]);
   const [organizationId,setOrganizationId]=useState('');
@@ -69,7 +70,7 @@ export default function Admin(){
     <p>Sign in with your Kestrel account. Access is granted only to provisioned platform administrators.</p>
     <form onSubmit={signIn}>
       <label>Work email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@company.com" autoComplete="username" required/></label>
-      <label>Password<input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Your password" autoComplete="current-password" required/></label>
+      <label>Password<div className="admin-password-field"><input type={showPassword?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="Your password" autoComplete="current-password" required/><button type="button" aria-label={showPassword?"Hide password":"Show password"} onClick={()=>setShowPassword(v=>!v)}>{showPassword?<EyeOff size={16}/>:<Eye size={16}/>}</button></div></label>
       {error&&<p className="admin-error" role="alert">{error}</p>}
       <button type="submit" disabled={busy}>{busy?'Signing in…':'Sign in to admin'} <ArrowRight size={15}/></button>
     </form>
