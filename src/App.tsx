@@ -642,12 +642,19 @@ function AppShell({ page }: { page: Page }) {
   async function openProjectSettings(projectId: string) {
     setSelectedProjectForSecrets(projectId);
     try {
-      const [secRes, hookRes] = await Promise.all([
-        fetch(`${api}/projects/${projectId}/secrets`, { headers: { Authorization: `Bearer ${accessToken}` } }),
-        fetch(`${api}/projects/${projectId}/webhook-config`, { headers: { Authorization: `Bearer ${accessToken}` } }),
-      ]);
+      const project = snapshot?.projects?.find((item: any) => item.id === projectId);
+      const secRes = await fetch(`${api}/projects/${projectId}/secrets`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (secRes.ok) setProjectSecrets(await secRes.json());
-      if (hookRes.ok) setWebhookConfig(await hookRes.json());
+      if (project?.repo) {
+        const hookRes = await fetch(`${api}/projects/${projectId}/webhook-config`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (hookRes.ok) setWebhookConfig(await hookRes.json());
+      } else {
+        setWebhookConfig(null);
+      }
     } catch {}
   }
 
@@ -1257,7 +1264,7 @@ function AppShell({ page }: { page: Page }) {
                     </div>
                     <div className="flex items-center gap-3">
                       <Button kind="light" onClick={() => openProjectSettings(p.id)}>
-                        <KeyRound size={13} /> Secrets & Webhook
+                        <KeyRound size={13} /> {p.repo ? 'Secrets & Webhook' : 'Secrets'}
                       </Button>
                     </div>
                   </div>
