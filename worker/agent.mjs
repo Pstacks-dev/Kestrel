@@ -174,7 +174,9 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       }
     }
 
-    args.push(JOB_IMAGE, command);
+    // The official Node image entrypoint expects an executable, not a shell command string.
+    // Explicitly invoke a login shell so compound pipeline commands (&&, pipes, env expansion) run correctly.
+    args.push(JOB_IMAGE, 'sh', '-lc', command);
 
     const child = spawn(DOCKER, args, { cwd, shell: false, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let timedOut = false;
