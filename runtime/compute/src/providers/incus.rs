@@ -281,6 +281,12 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_identifiers_use_the_same_safe_name_contract() {
+        assert!(validate_instance_name("before-upgrade").is_ok());
+        assert!(validate_instance_name("../snapshot").is_err());
+    }
+
+    #[test]
     fn project_name_rejects_query_injection() {
         let mut value = config();
         value.project = "tenant&project=default".into();
