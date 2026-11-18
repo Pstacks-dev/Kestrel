@@ -1548,16 +1548,9 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && isMain) {
   const recovery = setInterval(async () => {
     try {
       await query('select * from public.recover_stale_leases()');
-    } catch {
-      // In case the migration hasn't been applied yet, fallback to inline recovery
-      try {
-        await query(
-          "update public.jobs set status = case when attempt >= 3 then 'failed' else 'queued' end, worker_id = null, lease_token = null, lease_expires_at = null, finished_at = case when attempt >= 3 then now() else null end where status = 'running' and lease_expires_at < now()"
-        );
-        await query(
-          "update public.workers set state = 'offline' where last_seen_at < now() - interval '45 seconds' and state not in ('offline', 'draining')"
-        );
-      } catch {}
+    } catch (error) {
+      // Do not run a weaker fallback that can bypass retry limits or dependency recovery.
+      console.error('Scheduled worker recovery failed:', error.message);
     }
   }, 5000).unref();
 
