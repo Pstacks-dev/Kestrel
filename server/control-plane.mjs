@@ -1081,7 +1081,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          left join public.deployment_environments de on de.id = j.deployment_environment_id
          left join public.deployment_releases current_release on current_release.id = de.current_release_id
          where p.organization_id = $1 and j.status = 'queued'
-           and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and w.runtime = 'rust'))
+           and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
            and not exists (
              select 1 from unnest(j.needs) d(id)
              join public.jobs dep on dep.run_id = j.run_id and dep.external_id = d.id
@@ -1090,7 +1090,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          order by j.created_at
          limit 1
          for update of j skip locked`,
-        [w.organization_id, w.id]
+        [w.organization_id, w.id, w.runtime]
       );
 
       if (!candidate.rowCount) return null;
@@ -1244,6 +1244,29 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
 
   await transaction(async (c) => {
     const completedStatus = r.rows[0].status;
+    const deploymentJob = await c.query(
+      'select deployment_release_id from public.jobs where id = $1 and job_type = \'deployment\'',
+      [req.params.jobId]
+    );
+    if (deploymentJob.rowCount && deploymentJob.rows[0].deployment_release_id && completedStatus !== 'queued') {
+      const releaseId = deploymentJob.rows[0].deployment_release_id;
+      await c.query(
+        `update public.deployment_releases
+         set status = case when $2 = 'succeeded' then 'healthy' else 'failed' end,
+             deployed_at = case when $2 = 'succeeded' then now() else null end,
+             health_checked_at = now(),
+             error_message = case when $2 = 'succeeded' then null else 'Deployment failed health verification or container startup' end
+         where id = $1`,
+        [releaseId, completedStatus]
+      );
+      if (completedStatus === 'succeeded') {
+        await c.query(
+          'update public.deployment_environments set current_release_id = $2, updated_at = now() where id = (select environment_id from public.deployment_releases where id = $2)',
+          [req.params.jobId, releaseId]
+        );
+      }
+    }
+
     if (completedStatus === 'queued') {
       await c.query(
         "insert into public.job_logs(job_id, stream, message) values($1, 'system', $2)",
