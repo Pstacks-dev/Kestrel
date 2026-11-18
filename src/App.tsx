@@ -48,7 +48,6 @@ type Page =
   | 'overview'
   | 'pipelines'
   | 'runs'
-  | 'workers'
   | 'projects'
   | 'artifacts'
   | 'settings';
@@ -57,7 +56,6 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'overview', label: 'Overview', icon: Activity, group: 'WORKSPACE' },
   { id: 'pipelines', label: 'Pipelines', icon: Workflow, group: 'WORKSPACE' },
   { id: 'runs', label: 'Run history', icon: Clock3, group: 'WORKSPACE' },
-  { id: 'workers', label: 'Workers', icon: Server, group: 'INFRASTRUCTURE' },
   { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
   { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
@@ -1429,67 +1427,6 @@ function AppShell({ page }: { page: Page }) {
                 </form>
               </div>
             )}
-          </div>
-        )}
-
-        {/* WORKERS */}
-        {page === 'workers' && !inspectedRun && (
-          <div className="page-content">
-            <PageHeading
-              eyebrow="YOUR BUILD MACHINES"
-              title="Build machines"
-              desc="Connect a computer to Kestrel so it can run your pipeline builds, tests and deployment tasks."
-            />
-            <div className="panel">
-              <div className="panel-head">
-                <div>
-                  <h3>Connected computers</h3>
-                  <p>See which computers are available to run your projects.</p>
-                </div>
-                <Button kind="light" onClick={connect}>
-                  Refresh status <Activity size={14} />
-                </Button>
-              </div>
-              {snapshot?.workers?.length ? (
-                snapshot.workers.map((w: any) => (
-                  <div className="table-row" key={w.id}>
-                    <Server size={18} />
-                    <div className="flex-1">
-                      <b>{w.hostname}</b>
-                      <small>
-                        Worker ID: {w.id} · {w.arch} · {w.region}
-                      </small>
-                    </div>
-                    <span className="row-meta font-mono text-xs">{w.maxConcurrency} jobs at a time</span>
-                    <span
-                      className={`pill ${
-                        w.state === 'online' || w.state === 'busy' ? 'pill-green' : 'pill-muted'
-                      }`}
-                    >
-                      {w.state === 'online' ? 'Ready' : w.state === 'busy' ? 'Running a job' : w.state}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="empty-state">
-                  <div className="empty-icon"><Server size={22} /></div>
-                  <h3>No computer connected yet</h3>
-                  <p> Kestrel needs a computer to do the actual work when you run a pipeline. Connect a Linux machine with Docker installed to get started.</p>
-                  <Button kind="light" onClick={() => go('docs')}>Open setup guide <ArrowRight size={14} /></Button>
-                </div>
-              )}
-            </div>
-            <div className="panel info-panel mt-6">
-              <b>What is a build machine?</b>
-              <p>A build machine is a computer that Kestrel uses to run your project's commands — such as installing packages, building your app and running tests. You can use a dedicated Linux computer or server.</p>
-              <b className="mt-4">How connecting works</b>
-              <ol className="mt-2">
-                <li>Prepare a Linux computer with Docker installed.</li>
-                <li>Register that computer in Kestrel to receive its private connection details.</li>
-                <li>Start the Kestrel worker on that computer. It will appear here when connected.</li>
-              </ol>
-              <small>Keep the connection token private. It gives that computer permission to receive and run your build jobs.</small>
-            </div>
           </div>
         )}
 
