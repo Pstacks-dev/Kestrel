@@ -366,11 +366,23 @@ async fn main() -> Result<()> {
     fs::create_dir_all(&cfg.workdir).await?;
     let http = client(&cfg)?;
     let mut active = JoinSet::new();
+    let mut registered = false;
+    let mut last_heartbeat = std::time::Instant::now() - Duration::from_secs(30);
     loop {
-        if let Err(error) = register(&http, &cfg).await { warn!(%error, "worker registration failed"); }
-        if let Err(error) = heartbeat(&http, &cfg).await { warn!(%error, "worker heartbeat failed"); }
+        if !registered {
+            match register(&http, &cfg).await {
+                Ok(()) => registered = true,
+                Err(error) => warn!(%error, "worker registration failed; will retry"),
+            }
+        }
+        if registered && last_heartbeat.elapsed() >= Duration::from_secs(10) {
+            match heartbeat(&http, &cfg).await {
+                Ok(()) => last_heartbeat = std::time::Instant::now(),
+                Err(error) => warn!(%error, "worker heartbeat failed; will retry"),
+            }
+        }
 
-        while active.len() < cfg.concurrency as usize {
+        while registered && active.len() < cfg.concurrency as usize {
             match claim(&http, &cfg).await {
                 Ok(Some(job)) => {
                     info!(job_id = %job.id, project_id = %job.project_id, "claimed job");
