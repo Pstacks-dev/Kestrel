@@ -348,6 +348,128 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
     } catch { fail(res, 500, 'Could not complete compute operation'); }
   });
 
+  app.get('/api/compute/instances/:instanceId/snapshots', userAuth, async (req, res) => {
+    const access = await query(
+      `select i.id from public.compute_instances i
+       join public.organization_members m on m.organization_id = i.organization_id
+       where i.id = $1 and m.user_id = $2`,
+      [req.params.instanceId, req.user.id]
+    );
+    if (!access.rowCount) return fail(res, 404, 'VM not found');
+    const result = await query(
+      `select id, instance_id as "instanceId", name, status,
+              error_message as "errorMessage", created_at as "createdAt"
+       from public.compute_snapshots where instance_id = $1 and deleted_at is null
+       order by created_at desc`,
+      [req.params.instanceId]
+    );
+    res.json({ snapshots: result.rows });
+  });
+
+  app.post('/api/compute/instances/:instanceId/snapshots', userAuth, async (req, res) => {
+    const name = String(req.body?.name || '');
+    if (!validName(name)) return fail(res, 400, 'Snapshot name must use lowercase letters, numbers and hyphens');
+    try {
+      const queued = await transaction(async (c) => {
+        const vm = await c.query(
+          `select i.* from public.compute_instances i
+           join public.organization_members m on m.organization_id = i.organization_id
+           where i.id = $1 and m.user_id = $2 and m.role = any($3) and i.deleted_at is null
+           for update of i`,
+          [req.params.instanceId, req.user.id, MEMBER_ROLES]
+        );
+        if (!vm.rowCount) return { error: 'VM not found or access denied', status: 404 };
+        const instance = vm.rows[0];
+        if (instance.provider === 'firecracker') return { error: 'Snapshots are not supported by the Firecracker pool', status: 400 };
+        if (!['running', 'stopped'].includes(instance.status)) return { error: 'VM must be running or stopped before creating a snapshot', status: 409 };
+        const pending = await c.query(
+          "select id from public.compute_operations where instance_id = $1 and status in ('queued','claimed') limit 1",
+          [instance.id]
+        );
+        if (pending.rowCount) return { error: 'A VM operation is already in progress', status: 409 };
+        const snapshot = await c.query(
+          `insert into public.compute_snapshots(instance_id, organization_id, name, created_by)
+           values($1,$2,$3,$4) returning id, instance_id as "instanceId", name, status`,
+          [instance.id, instance.organization_id, name, req.user.id]
+        );
+        const payload = { providerId: instance.provider_id, name };
+        const operation = await c.query(
+          `insert into public.compute_operations(instance_id, organization_id, node_id, action, payload, snapshot_id)
+           values($1,$2,$3,'snapshot_create',$4,$5) returning id`,
+          [instance.id, instance.organization_id, instance.node_id, JSON.stringify(payload), snapshot.rows[0].id]
+        );
+        return { snapshot: snapshot.rows[0], operationId: operation.rows[0].id };
+      });
+      if (queued.error) return fail(res, queued.status, queued.error);
+      res.status(202).json(queued);
+    } catch (error) {
+      res.status(error.code === '23505' ? 409 : 500).json({ error: error.code === '23505' ? 'Snapshot name already exists for this VM' : 'Could not queue VM snapshot' });
+    }
+  });
+
+  app.post('/api/compute/snapshots/:snapshotId/restore', userAuth, async (req, res) => {
+    try {
+      const queued = await transaction(async (c) => {
+        const snapshot = await c.query(
+          `select s.*, i.node_id, i.provider_id, i.provider, i.status as instance_status
+           from public.compute_snapshots s
+           join public.compute_instances i on i.id = s.instance_id
+           join public.organization_members m on m.organization_id = s.organization_id
+           where s.id = $1 and m.user_id = $2 and m.role = any($3) and s.status = 'ready'
+           for update of s, i`,
+          [req.params.snapshotId, req.user.id, MEMBER_ROLES]
+        );
+        if (!snapshot.rowCount) return { error: 'Snapshot not found or unavailable', status: 404 };
+        const item = snapshot.rows[0];
+        if (item.provider === 'firecracker') return { error: 'Snapshots are not supported by the Firecracker pool', status: 400 };
+        const pending = await c.query(
+          "select id from public.compute_operations where instance_id = $1 and status in ('queued','claimed') limit 1",
+          [item.instance_id]
+        );
+        if (pending.rowCount) return { error: 'A VM operation is already in progress', status: 409 };
+        await c.query("update public.compute_snapshots set status = 'restoring', updated_at = now() where id = $1", [item.id]);
+        const operation = await c.query(
+          `insert into public.compute_operations(instance_id, organization_id, node_id, action, payload, snapshot_id)
+           values($1,$2,$3,'snapshot_restore',$4,$5) returning id`,
+          [item.instance_id, item.organization_id, item.node_id,
+            JSON.stringify({ providerId: item.provider_id, snapshotProviderId: item.provider_snapshot_id }), item.id]
+        );
+        return { snapshotId: item.id, operationId: operation.rows[0].id, status: 'restoring' };
+      });
+      if (queued.error) return fail(res, queued.status, queued.error);
+      res.status(202).json(queued);
+    } catch { fail(res, 500, 'Could not queue snapshot restore'); }
+  });
+
+  app.delete('/api/compute/snapshots/:snapshotId', userAuth, async (req, res) => {
+    try {
+      const queued = await transaction(async (c) => {
+        const snapshot = await c.query(
+          `select s.*, i.node_id, i.provider_id, i.provider
+           from public.compute_snapshots s
+           join public.compute_instances i on i.id = s.instance_id
+           join public.organization_members m on m.organization_id = s.organization_id
+           where s.id = $1 and m.user_id = $2 and m.role = any($3) and s.status = 'ready'
+           for update of s`,
+          [req.params.snapshotId, req.user.id, MEMBER_ROLES]
+        );
+        if (!snapshot.rowCount) return { error: 'Snapshot not found or unavailable', status: 404 };
+        const item = snapshot.rows[0];
+        if (item.provider === 'firecracker') return { error: 'Snapshots are not supported by the Firecracker pool', status: 400 };
+        await c.query("update public.compute_snapshots set status = 'deleting', updated_at = now() where id = $1", [item.id]);
+        const operation = await c.query(
+          `insert into public.compute_operations(instance_id, organization_id, node_id, action, payload, snapshot_id)
+           values($1,$2,$3,'snapshot_delete',$4,$5) returning id`,
+          [item.instance_id, item.organization_id, item.node_id,
+            JSON.stringify({ providerId: item.provider_id, snapshotProviderId: item.provider_snapshot_id }), item.id]
+        );
+        return { snapshotId: item.id, operationId: operation.rows[0].id, status: 'deleting' };
+      });
+      if (queued.error) return fail(res, queued.status, queued.error);
+      res.status(202).json(queued);
+    } catch { fail(res, 500, 'Could not queue snapshot deletion'); }
+  });
+
   app.get('/api/compute/quotas', userAuth, async (req, res) => {
     const organizationId = String(req.query.organizationId || '');
     if (!organizationId) return fail(res, 400, 'organizationId required');
