@@ -975,7 +975,7 @@ app.post('/api/workers/register', workerAuth, async (req, res) => {
     await query(
       `update public.workers
        set hostname = $2, architecture = $3, region = $4,
-           max_concurrency = $5, state = 'online', last_seen_at = now()
+           max_concurrency = $5,\n           state = case when state in ('draining', 'offline') then state else 'online' end,\n           last_seen_at = now()
        where id = $1 and organization_id = $6`,
       [workerId, hostname, arch, region, Math.min(128, Math.max(1, Number(maxConcurrency))), req.worker.organizationId]
     );
@@ -989,7 +989,7 @@ app.post('/api/workers/heartbeat', workerAuth, async (req, res) => {
   const r = await query(
     `update public.workers
      set last_seen_at = now(),
-         state = case when $2 then 'draining' else 'online' end
+         state = case when state in ('draining', 'offline') or $2 then 'draining'\n                      when exists (select 1 from public.jobs j where j.worker_id = workers.id and j.status = 'running') then 'busy'\n                      else 'online' end
      where id = $1 and id = $3 returning id`,
     [req.body.workerId, !!req.body.draining, req.worker.id]
   );
@@ -1045,7 +1045,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       );
 
       const active = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [w.id]);
-      if (active.rows[0].n >= w.max_concurrency || w.state === 'draining') return null;
+      if (active.rows[0].n >= w.max_concurrency || ['draining', 'offline'].includes(w.state)) return null;
 
       // Skip jobs whose dependencies have failed, canceled, or were skipped
       await c.query(
@@ -1295,6 +1295,30 @@ app.post('/api/admin/workers', sensitiveLimiter, userAuth, platformAdmin, async 
     });
   } catch (e) {
     res.status(500).json({ error: 'Could not provision worker' });
+  }
+});
+
+// Change worker scheduling state without revoking its credential.
+app.post('/api/admin/workers/:workerId/state', sensitiveLimiter, userAuth, platformAdmin, async (req, res) => {
+  const { state } = req.body || {};
+  if (!['online', 'draining', 'offline'].includes(state)) {
+    return res.status(400).json({ error: 'State must be online, draining or offline' });
+  }
+  try {
+    const result = await query(
+      `update public.workers set state = $2
+       where id = $1 returning id, state, last_seen_at`,
+      [req.params.workerId, state]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Worker not found' });
+    await query(
+      `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+       select organization_id, $2, $3, 'worker', id, $4::jsonb from public.workers where id = $1`,
+      [req.params.workerId, req.user.id, `worker.state.${state}`, JSON.stringify({ state })]
+    );
+    res.json({ ok: true, worker: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not update worker state' });
   }
 });
 
