@@ -416,7 +416,7 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
         [req.organizationId]
       ),
       query(
-        `select id, hostname, architecture as arch, region, state,
+        `select id, hostname, architecture as arch, region, state, runtime,
                 last_seen_at as "lastSeenAt", max_concurrency as "maxConcurrency"
          from public.workers
          where organization_id = $1
