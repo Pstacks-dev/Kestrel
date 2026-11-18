@@ -74,14 +74,19 @@ fn config() -> Result<Config> {
     let worker_id = get("KESTREL_WORKER_ID", &format!("{}-{}", get("HOSTNAME", "worker"), &uuid::Uuid::new_v4().to_string()[..8]));
     let api = get("KESTREL_API_URL", "");
     let token = get("KESTREL_WORKER_TOKEN", "");
+    let image = get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim");
     anyhow::ensure!(!api.is_empty() && !token.is_empty(), "KESTREL_API_URL and KESTREL_WORKER_TOKEN are required");
+    if get("NODE_ENV", "development") == "production" {
+        anyhow::ensure!(image.contains("@sha256:") && image.rsplit("@sha256:").next().is_some_and(|d| d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit())),
+            "production KESTREL_JOB_IMAGE must be pinned by immutable SHA-256 digest");
+    }
     Ok(Config {
         api: api.trim_end_matches('/').to_string(), token, worker_id,
         hostname: get("HOSTNAME", "kestrel-worker"), region: get("KESTREL_REGION", "unknown"),
         concurrency: get("KESTREL_CONCURRENCY", "1").parse().unwrap_or(1).clamp(1, 32),
         workdir: PathBuf::from(get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work")),
         host_workdir: PathBuf::from(get("KESTREL_WORKER_HOST_WORKDIR", &get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work"))),
-        image: get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim"),
+        image,
         network: if get("KESTREL_JOB_NETWORK", "bridge") == "none" { "none".into() } else { "bridge".into() }, docker: get("KESTREL_DOCKER_BIN", "docker"),
     })
 }
