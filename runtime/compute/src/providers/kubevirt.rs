@@ -40,7 +40,6 @@ impl KubeVirtConfig {
 pub struct KubeVirtProvider {
     pub config: KubeVirtConfig,
     client: Client,
-    bearer_token: String,
 }
 
 impl KubeVirtProvider {
@@ -48,12 +47,6 @@ impl KubeVirtProvider {
     /// The token is never returned from this provider or included in error messages.
     pub fn new(config: KubeVirtConfig) -> Result<Self, ComputeError> {
         config.validate()?;
-        let token = fs::read_to_string(&config.service_account_token_path)
-            .map_err(|_| ComputeError::NotConfigured("Unable to read Kubernetes service-account token".into()))?;
-        let bearer_token = token.trim().to_owned();
-        if bearer_token.is_empty() || bearer_token.len() > 16_384 || bearer_token.bytes().any(|b| b.is_ascii_whitespace()) {
-            return Err(ComputeError::NotConfigured("Kubernetes service-account token is empty or malformed".into()));
-        }
         let ca_pem = fs::read(&config.ca_certificate_path)
             .map_err(|_| ComputeError::NotConfigured("Unable to read Kubernetes CA certificate".into()))?;
         let ca = Certificate::from_pem(&ca_pem)
@@ -65,7 +58,7 @@ impl KubeVirtProvider {
             .timeout(Duration::from_secs(35))
             .build()
             .map_err(|e| ComputeError::Provider(format!("Kubernetes HTTP client: {e}")))?;
-        Ok(Self { config, client, bearer_token })
+        Ok(Self { config, client })
     }
 
     fn snapshot_collection_url(&self) -> String {
@@ -99,7 +92,13 @@ impl KubeVirtProvider {
     }
 
     async fn request(&self, method: Method, url: String, body: Option<Value>) -> Result<Value, ComputeError> {
-        let mut request = self.client.request(method, url).bearer_auth(&self.bearer_token);
+        let token = tokio::fs::read_to_string(&self.config.service_account_token_path).await
+            .map_err(|_| ComputeError::NotConfigured("Unable to read current Kubernetes service-account token".into()))?;
+        let token = token.trim();
+        if token.is_empty() || token.len() > 16_384 || token.bytes().any(|b| b.is_ascii_whitespace()) {
+            return Err(ComputeError::NotConfigured("Kubernetes service-account token is empty or malformed".into()));
+        }
+        let mut request = self.client.request(method, url).bearer_auth(token);
         if let Some(body) = body { request = request.json(&body); }
         let response = request.send().await.map_err(|e| ComputeError::Provider(format!("Kubernetes API request failed: {e}")))?;
         let status = response.status();
