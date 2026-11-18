@@ -235,6 +235,19 @@ impl ComputeProvider for FirecrackerProvider {
                 .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker kernel: {e}")))?;
             tokio::fs::copy(rootfs, jail_root.join("rootfs.ext4")).await
                 .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker rootfs: {e}")))?;
+            if let Some(key) = &spec.ssh_public_key {
+                let user_data_path = jail_root.join("cloud-init-user-data");
+                let cloudinit_path = jail_root.join("cloudinit.iso");
+                let user_data = format!("#cloud-config\\nusers:\\n  - name: kestrel\\n    groups: [sudo]\\n    shell: /bin/bash\\n    sudo: ['ALL=(ALL) NOPASSWD:ALL']\\n    ssh_authorized_keys:\\n      - {}\\nssh_pwauth: false\\n", key);
+                tokio::fs::write(&user_data_path, user_data).await
+                    .map_err(|e| ComputeError::Provider(format!("Cannot write Firecracker cloud-init data: {e}")))?;
+                let status = Command::new("cloud-localds").arg(&cloudinit_path).arg(&user_data_path).status().await
+                    .map_err(|e| ComputeError::NotConfigured(format!("cloud-localds is required to inject Firecracker SSH keys: {e}")))?;
+                let _ = tokio::fs::remove_file(&user_data_path).await;
+                if !status.success() {
+                    return Err(ComputeError::Provider("Could not build Firecracker cloud-init seed image".into()));
+                }
+            }
             let tap = self.create_tap(&spec.name).await?;
             self.api_request(&spec.name, "PUT", "/machine-config", Some(json!({
                 "vcpu_count":spec.vcpus,"mem_size_mib":spec.memory_mib,"smt":false,"track_dirty_pages":false
@@ -245,6 +258,11 @@ impl ComputeProvider for FirecrackerProvider {
             self.api_request(&spec.name, "PUT", "/drives/rootfs", Some(json!({
                 "drive_id":"rootfs","path_on_host":"/rootfs.ext4","is_root_device":true,"is_read_only":false
             }))).await?;
+            if spec.ssh_public_key.is_some() {
+                self.api_request(&spec.name, "PUT", "/drives/cloudinit", Some(json!({
+                    "drive_id":"cloudinit","path_on_host":"/cloudinit.iso","is_root_device":false,"is_read_only":true
+                }))).await?;
+            }
             self.api_request(&spec.name, "PUT", "/network-interfaces/eth0", Some(json!({
                 "iface_id":"eth0","host_dev_name":tap,"guest_mac":Self::guest_mac(&spec.name)
             }))).await?;
