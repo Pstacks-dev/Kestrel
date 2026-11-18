@@ -23,6 +23,8 @@ test('compute migration provisions tenant VM inventory, provider nodes and durab
   assert.match(sql, /create table if not exists public\.compute_instances/i);
   assert.match(sql, /create table if not exists public\.compute_operations/i);
   assert.match(sql, /create table if not exists public\.compute_quotas/i);
+  assert.match(sql, /create table if not exists public\.compute_snapshots/i);
+  assert.match(sql, /snapshot_create/i);
   assert.match(sql, /enable row level security/i);
   assert.match(sql, /members read compute instances/i);
   assert.match(sql, /token_hash text not null/i);
@@ -33,6 +35,8 @@ test('compute control plane exposes authenticated tenant and host-agent operatio
   assert.match(routes, /\/api\/compute\/instances/);
   assert.match(routes, /\/api\/compute\/agent\/claim/);
   assert.match(routes, /\/api\/compute\/agent\/complete/);
+  assert.match(routes, /\/api\/compute\/snapshots/);
+  assert.match(routes, /snapshot_restore/);
   assert.match(routes, /lease_expires_at = now\(\) \+ interval '90 seconds'/);
   assert.match(routes, /desired_state = 'online'/);
 });
