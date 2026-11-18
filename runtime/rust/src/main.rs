@@ -158,6 +158,15 @@ async fn stage_git_source(_cfg: &Config, job: &Job, workspace: &Path) -> Result<
     Ok(())
 }
 
+async fn cancellation_requested(http: &Client, cfg: &Config, job: &Job) -> Result<bool> {
+    let response = http.get(format!("{}/api/workers/jobs/{}/status", cfg.api, job.id))
+        .header("x-kestrel-lease", &job.lease_token)
+        .send().await?;
+    anyhow::ensure!(response.status().is_success(), "could not check job cancellation status");
+    let body: serde_json::Value = response.json().await?;
+    Ok(body["status"].as_str() == Some("canceled"))
+}
+
 async fn flush_log(http: &Client, cfg: &Config, job: &Job, stream: &str, message: &str) -> Result<()> {
     let entries = vec![LogEntry { stream, message }];
     post(http, cfg, &format!("/api/workers/jobs/{}/logs", job.id),
@@ -266,6 +275,9 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
         let mut lease_pulse = time::interval(Duration::from_secs(10));
         lease_pulse.tick().await;
         let mut timed_out = false;
+        let mut canceled = false;
+        let mut cancel_poll = time::interval(Duration::from_secs(5));
+        cancel_poll.tick().await;
         let process_status = loop {
             tokio::select! {
                 result = child.wait() => break result.context("waiting for Docker job")?,
@@ -277,6 +289,17 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
                 _ = lease_pulse.tick() => {
                     if let Err(error) = flush_log(http, cfg, &job, "stdout", "").await {
                         warn!(job_id = %job.id, %error, "job lease refresh failed");
+                    }
+                }
+                _ = cancel_poll.tick() => {
+                    match cancellation_requested(http, cfg, &job).await {
+                        Ok(true) => {
+                            canceled = true;
+                            let _ = Command::new(&cfg.docker).args(["kill", &container]).output().await;
+                            break child.wait().await.context("waiting for canceled Docker job")?;
+                        }
+                        Ok(false) => {}
+                        Err(error) => warn!(job_id = %job.id, %error, "job cancellation check failed"),
                     }
                 }
                 _ = &mut deadline => {
@@ -293,11 +316,14 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
         let _ = stdout_reader.await;
         let _ = stderr_reader.await;
         let _ = fs::remove_file(&secret_file).await;
-        exit_code = if timed_out { 124 } else { process_status.code().unwrap_or(1) };
+        exit_code = if timed_out { 124 } else if canceled { 130 } else { process_status.code().unwrap_or(1) };
         if timed_out {
             let _ = flush_log(http, cfg, &job, "system", "Job timed out and was terminated").await;
         }
-        status = if exit_code == 0 { "succeeded" } else { "failed" };
+        if canceled {
+            let _ = flush_log(http, cfg, &job, "system", "Job cancellation requested; container stopped").await;
+        }
+        status = if canceled { "canceled" } else if exit_code == 0 { "succeeded" } else { "failed" };
     }
 
     if exit_code == 0 {
