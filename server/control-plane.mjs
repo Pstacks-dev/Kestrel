@@ -425,11 +425,11 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
       query(
         `select a.id, a.name, a.run_id as "runId", a.object_key as "objectKey",
                 a.size_bytes as "sizeBytes", a.sha256, a.content_type as "contentType",
-                a.created_at as "createdAt"
+                a.created_at as "createdAt", a.expires_at as "expiresAt"
          from public.artifacts a
          join public.pipeline_runs r on r.id = a.run_id
          join public.projects p on p.id = r.project_id
-         where p.organization_id = $1
+         where p.organization_id = $1 and a.deleted_at is null
          order by a.created_at desc
          limit 100`,
         [req.organizationId]
