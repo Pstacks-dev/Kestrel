@@ -234,12 +234,12 @@ impl ComputeProvider for FirecrackerProvider {
                 .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker kernel: {e}")))?;
             let rootfs_target = jail_root.join("rootfs.ext4");
             let requested_disk_bytes = u64::from(spec.disk_gib) * 1024 * 1024 * 1024;
-            let source_disk_bytes = tokio::fs::metadata(rootfs).await
+            let source_disk_bytes = tokio::fs::metadata(&rootfs).await
                 .map_err(|e| ComputeError::Provider(format!("Cannot inspect Firecracker rootfs image: {e}")))?.len();
             if source_disk_bytes > requested_disk_bytes {
                 return Err(ComputeError::InvalidSpec("Requested Firecracker disk is smaller than the installed rootfs image".into()));
             }
-            tokio::fs::copy(rootfs, &rootfs_target).await
+            tokio::fs::copy(&rootfs, &rootfs_target).await
                 .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker rootfs: {e}")))?;
             let rootfs_file = tokio::fs::OpenOptions::new().write(true).open(&rootfs_target).await
                 .map_err(|e| ComputeError::Provider(format!("Cannot open staged Firecracker rootfs: {e}")))?;
