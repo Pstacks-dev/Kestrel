@@ -170,28 +170,40 @@ impl ComputeProvider for IncusProvider {
         self.get_instance(&spec.name).await
     }
     async fn get_instance(&self, id: &str) -> Result<Instance, ComputeError> {
-        if id.is_empty() || id.len() > 63 || !id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-') {
-            return Err(ComputeError::InvalidSpec("Invalid Incus instance identifier".into()));
-        }
+        validate_instance_name(id)?;
         let response = self.request(Method::GET, &format!("instances/{id}"), None).await?;
         let metadata = response.get("metadata").ok_or_else(|| ComputeError::Provider("Incus instance metadata missing".into()))?;
         self.parse_instance(id, metadata)
     }
     async fn start_instance(&self, id: &str) -> Result<(), ComputeError> {
+        validate_instance_name(id)?;
         let response = self.request(Method::PUT, &format!("instances/{id}/state"), Some(json!({"action":"start","timeout":30,"force":false}))).await?;
         self.operation_from(response).await?;
         Ok(())
     }
     async fn stop_instance(&self, id: &str) -> Result<(), ComputeError> {
+        validate_instance_name(id)?;
         let response = self.request(Method::PUT, &format!("instances/{id}/state"), Some(json!({"action":"stop","timeout":30,"force":false}))).await?;
         self.operation_from(response).await?;
         Ok(())
     }
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError> {
+        validate_instance_name(id)?;
         let response = self.request(Method::DELETE, &format!("instances/{id}"), None).await?;
         self.operation_from(response).await?;
         Ok(())
     }
+}
+
+fn validate_instance_name(id: &str) -> Result<(), ComputeError> {
+    if id.is_empty() || id.len() > 63
+        || !id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        || !id.as_bytes()[0].is_ascii_alphanumeric()
+        || !id.as_bytes()[id.len() - 1].is_ascii_alphanumeric()
+    {
+        return Err(ComputeError::InvalidSpec("Invalid Incus instance identifier".into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
