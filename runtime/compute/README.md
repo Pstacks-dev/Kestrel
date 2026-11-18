@@ -113,7 +113,9 @@ KESTREL_FIRECRACKER_GID=1000
 ```
 
 Install a compatible kernel as vmlinux and each supported guest root
-filesystem as a pre-installed ext4 file in the rootfs directory. The VM
+filesystem as a pre-installed ext4 file in the rootfs directory. Guest images
+must include cloud-init when SSH public-key injection is requested; install
+the cloud-localds utility on the host agent. The VM
 request's image field must be the filename only (for example
 ubuntu-24.04.ext4). The agent needs the host privileges required by the
 jailer; Firecracker itself is configured to run under the non-root UID/GID.
@@ -164,8 +166,8 @@ needed for its selected backend.
   existing Firecracker instances.
 - SSH public keys can be injected at guest creation, but Kestrel does not yet
   provide an SSH proxy, web console or private network ingress.
-- Firecracker host TAP/network provisioning, managed IP allocation, snapshots,
-  backup/restore, live migration, monitoring metrics and managed TLS ingress
+- Firecracker managed IP allocation, snapshots, backup/restore, live migration,
+  monitoring metrics and managed TLS ingress
   are not yet implemented. Provider capabilities intentionally report these
   as unavailable.
 - Incus and KubeVirt image/storage profiles and KubeVirt image pull secrets
