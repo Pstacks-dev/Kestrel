@@ -3,7 +3,7 @@ import express from 'express';
 const BUCKET = 'kestrel-project-files';
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
-function cleanRelativePath(value) {
+export function cleanRelativePath(value) {
   const raw = String(value || '').replace(/\\/g, '/');
   if (!raw || raw.length > 1024 || raw.startsWith('/') || /[\u0000-\u001f\u007f]/.test(raw)) return null;
   const parts = raw.split('/');
