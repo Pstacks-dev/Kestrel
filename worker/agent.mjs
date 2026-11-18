@@ -432,9 +432,8 @@ async function execute(job) {
 
   const leaseHeartbeat = setInterval(async () => {
     try {
-      await api(`/api/workers/jobs/${job.id}/logs`, {
+      await api(`/api/workers/jobs/${job.id}/lease`, {
         leaseToken: job.leaseToken,
-        entries: [],
       });
     } catch (e) {
       if (e.message.includes('409') || e.message.includes('expired')) {
