@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
+import { isIP } from 'node:net';
 
 const MEMBER_ROLES = ['owner', 'admin', 'developer'];
 const PROVIDERS = ['incus', 'firecracker', 'kubevirt'];
-const ACTIVE_INSTANCE_STATES = ['provisioning', 'starting', 'running', 'stopping', 'stopped', 'deleting'];
 
 const fail = (res, status, error) => res.status(status).json({ error });
 const tokenHash = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
@@ -19,7 +19,8 @@ function nodeAgentAuth(query) {
   return async (req, res, next) => {
     try {
       const nodeId = String(req.headers['x-compute-node-id'] || '');
-      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const authorization = String(req.headers.authorization || '');
+      const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
       if (!nodeId || !token) return fail(res, 401, 'Compute node credentials required');
       const result = await query(
         `select n.id, n.provider, n.state, n.desired_state
@@ -93,10 +94,6 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
         await c.query(
           'insert into public.compute_node_credentials(node_id, token_hash) values($1,$2)',
           [id, tokenHash(token)]
-        );
-        await c.query(
-          'insert into public.audit_events(actor_id, action, target_type, target_id, metadata) values($1,$2,$3,$4,$5)',
-          [req.user.id, 'compute.node.created', 'compute_node', id, JSON.stringify({ provider, region })]
         );
       });
       res.status(201).json({ node: { id, provider, hostname, region, state: 'offline' }, agentToken: token });
@@ -232,7 +229,7 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
     const { operationId, leaseToken, success, providerId, state, ipv4 = [], error } = req.body || {};
     if (typeof operationId !== 'string' || typeof leaseToken !== 'string' || typeof success !== 'boolean' ||
         (providerId != null && (typeof providerId !== 'string' || providerId.length > 255)) ||
-        !Array.isArray(ipv4) || ipv4.length > 16 || ipv4.some((ip) => typeof ip !== 'string' || ip.length > 64)) {
+        !Array.isArray(ipv4) || ipv4.length > 16 || ipv4.some((ip) => typeof ip !== 'string' || isIP(ip) !== 4)) {
       return fail(res, 400, 'Invalid compute operation result');
     }
     try {
