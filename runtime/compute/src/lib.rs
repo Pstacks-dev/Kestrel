@@ -61,6 +61,13 @@ impl InstanceSpec {
 #[serde(rename_all = "camelCase")]
 pub struct Instance { pub id: Uuid, pub provider_id: String, pub name: String, pub state: InstanceState, pub ipv4: Vec<String> }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSnapshot {
+    pub provider_id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities { pub virtual_machines: bool, pub snapshots: bool, pub live_migration: bool, pub console: bool, pub cluster_scheduling: bool }
@@ -83,6 +90,18 @@ pub trait ComputeProvider: Send + Sync {
     async fn start_instance(&self, id: &str) -> Result<(), ComputeError>;
     async fn stop_instance(&self, id: &str) -> Result<(), ComputeError>;
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError>;
+    async fn create_snapshot(&self, _instance_id: &str, _name: &str) -> Result<InstanceSnapshot, ComputeError> {
+        Err(ComputeError::NotImplemented("Snapshots are not supported by this provider".into()))
+    }
+    async fn list_snapshots(&self, _instance_id: &str) -> Result<Vec<InstanceSnapshot>, ComputeError> {
+        Err(ComputeError::NotImplemented("Snapshot listing is not supported by this provider".into()))
+    }
+    async fn restore_snapshot(&self, _instance_id: &str, _snapshot_id: &str) -> Result<(), ComputeError> {
+        Err(ComputeError::NotImplemented("Snapshot restore is not supported by this provider".into()))
+    }
+    async fn delete_snapshot(&self, _instance_id: &str, _snapshot_id: &str) -> Result<(), ComputeError> {
+        Err(ComputeError::NotImplemented("Snapshot deletion is not supported by this provider".into()))
+    }
 }
 
 #[cfg(test)]
