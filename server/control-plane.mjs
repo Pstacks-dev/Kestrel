@@ -989,7 +989,7 @@ app.post('/api/workers/heartbeat', workerAuth, async (req, res) => {
   const r = await query(
     `update public.workers
      set last_seen_at = now(),
-         state = case when state in ('draining', 'offline') or $2 then 'draining'\n                      when exists (select 1 from public.jobs j where j.worker_id = workers.id and j.status = 'running') then 'busy'\n                      else 'online' end
+         state = case when state = 'offline' then 'offline'\n                      when state = 'draining' or $2 then 'draining'\n                      when exists (select 1 from public.jobs j where j.worker_id = workers.id and j.status = 'running') then 'busy'\n                      else 'online' end
      where id = $1 and id = $3 returning id`,
     [req.body.workerId, !!req.body.draining, req.worker.id]
   );
