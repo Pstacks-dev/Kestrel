@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { redactSecrets } from '../server/lib/security.mjs';
+import { createDockerEnvFile, createLocalJobEnv } from './lib/job-env.mjs';
 
 const API = process.env.KESTREL_API_URL || '';
 const TOKEN = process.env.KESTREL_WORKER_TOKEN || '';
@@ -74,12 +75,8 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       const shellCmd = isWindows ? 'cmd.exe' : '/bin/sh';
       const shellArgs = isWindows ? ['/d', '/s', '/c', command] : ['-c', command];
 
-      const env = {
-        ...process.env,
-        CI: 'true',
-        KESTREL: 'true',
-        ...job.secrets,
-      };
+      // Do not leak the worker's API token or Supabase credentials into build processes.
+      const env = createLocalJobEnv(process.env, job.secrets || {});
 
       const child = spawn(shellCmd, shellArgs, {
         cwd,
@@ -138,6 +135,8 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
     });
   }
 
+  // Keep decrypted secrets out of Docker CLI arguments and the host process list.
+  const envFile = await createDockerEnvFile(job.secrets || {});
   // Default Docker container executor
   return new Promise((resolve) => {
     const containerName = `kestrel-job-${String(job.id).replace(/[^a-zA-Z0-9_.-]/g, '')}`;
@@ -176,16 +175,9 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       'CI=true',
       '--env',
       'KESTREL=true',
+      '--env-file',
+      envFile.path,
     ];
-
-    // Inject decrypted secrets into container environment safely
-    if (job.secrets && typeof job.secrets === 'object') {
-      for (const [key, val] of Object.entries(job.secrets)) {
-        if (/^[A-Za-z0-9_]+$/.test(key)) {
-          args.push('--env', `${key}=${String(val)}`);
-        }
-      }
-    }
 
     args.push(JOB_IMAGE, command);
 
@@ -229,6 +221,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
       activeJobs.delete(job.id);
+      envFile.cleanup().catch((error) => console.error('job env cleanup:', error.message));
       resolve({
         exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
         durationMs: Date.now() - start,
@@ -239,6 +232,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
       activeJobs.delete(job.id);
+      envFile.cleanup().catch((error) => console.error('job env cleanup:', error.message));
       onLine('stderr', redactSecrets(e.message, secretValues));
       resolve({ exitCode: 1, durationMs: Date.now() - start });
     });
