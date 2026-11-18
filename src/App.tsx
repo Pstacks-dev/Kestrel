@@ -111,20 +111,20 @@ function Landing() {
       <section className="hero wrap">
         <div className="hero-copy">
           <div className="eyebrow">
-            <span className="live-dot" /> DISTRIBUTED DELIVERY INFRASTRUCTURE
+            <span className="eyebrow-mark" /> DISTRIBUTED DELIVERY INFRASTRUCTURE
           </div>
           <h1>
-            Ship with confidence.
+            Run every build.
             <br />
-            <span>Scale without limits.</span>
+            <span>See every step.</span>
           </h1>
           <p className="hero-lead">
-            A distributed CI/CD platform that turns every commit into a coordinated build, test and deployment
-            pipeline — across the machines you control.
+            Kestrel coordinates repository pipelines, schedules jobs across available execution workers, and brings logs,
+            artifacts and release status into one workspace.
           </p>
           <div className="hero-ctas">
             <Button onClick={() => go('signup')}>
-              Get started free <ArrowRight size={16} />
+              Create your workspace <ArrowRight size={16} />
             </Button>
             <button className="text-cta" onClick={() => go('docs')}>
               Read the documentation <ArrowUpRight size={15} />
@@ -142,7 +142,7 @@ function Landing() {
         <div className="hero-visual">
           <div className="visual-top">
             <span>
-              <i className="live-dot" /> PIPELINE EXECUTION
+              <i className="eyebrow-mark" /> PIPELINE EXECUTION
             </span>
             <span>CONTROL PLANE VIEW</span>
           </div>
@@ -196,7 +196,7 @@ function Landing() {
             <span>
               CONTROL PLANE <b>ORCHESTRATES</b>
             </span>
-            <span>WORKER CAPACITY IS LIVE DATA</span>
+            <span>CAPACITY REPORTED BY WORKERS</span>
           </div>
         </div>
       </section>
