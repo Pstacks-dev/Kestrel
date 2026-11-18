@@ -301,7 +301,8 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
                     }
                 }
                 _ = lease_pulse.tick() => {
-                    if let Err(error) = flush_log(http, cfg, &job, "stdout", "").await {
+                    if let Err(error) = http.post(format!("{}/api/workers/jobs/{}/lease", cfg.api, job.id))
+                        .header("x-kestrel-lease", &job.lease_token).send().await {
                         warn!(job_id = %job.id, %error, "job lease refresh failed");
                     }
                 }
