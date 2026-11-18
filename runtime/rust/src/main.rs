@@ -79,10 +79,10 @@ async fn post<T: Serialize + ?Sized>(http: &Client, cfg: &Config, path: &str, bo
 }
 
 async fn register(http: &Client, cfg: &Config) -> Result<()> {
+    let arch = format!("linux/{}", env::consts::ARCH);
     post(http, cfg, "/api/workers/register", &WorkerInfo {
         worker_id: &cfg.worker_id, hostname: &cfg.hostname,
-        arch: format!("linux/{}", env::consts::ARCH).leak(), region: &cfg.region,
-        max_concurrency: cfg.concurrency,
+        arch: &arch, region: &cfg.region, max_concurrency: cfg.concurrency,
     }).await?;
     info!(worker_id = %cfg.worker_id, "registered with Kestrel control plane");
     Ok(())
@@ -194,15 +194,32 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
         command.arg(&cfg.image).args(["sh", "-lc", &job.command])
             .stdout(Stdio::piped()).stderr(Stdio::piped());
         let timeout = Duration::from_secs(job.timeout_seconds.unwrap_or(1800).clamp(1, 7200));
-        let output = tokio::select! {
-            result = command.output() => result.context("starting isolated Docker job")?,
-            _ = time::sleep(timeout) => {
-                let _ = Command::new(&cfg.docker).args(["kill", &container]).output().await;
-                std::process::Output { status: std::process::ExitStatus::default(), stdout: vec![], stderr: b"Job timed out".to_vec() }
+        let output_future = command.output();
+        tokio::pin!(output_future);
+        let deadline = time::sleep(timeout);
+        tokio::pin!(deadline);
+        let mut lease_pulse = time::interval(Duration::from_secs(10));
+        lease_pulse.tick().await;
+        let mut timed_out = false;
+        let output = loop {
+            tokio::select! {
+                result = &mut output_future => break result.context("starting isolated Docker job")?,
+                _ = lease_pulse.tick() => {
+                    // Empty log batches extend the 45-second job lease while a quiet command runs.
+                    if let Err(error) = flush_log(http, cfg, &job, "stdout", "").await {
+                        warn!(job_id = %job.id, %error, "job lease refresh failed");
+                    }
+                }
+                _ = &mut deadline => {
+                    timed_out = true;
+                    let _ = Command::new(&cfg.docker).args(["kill", &container]).output().await;
+                    break output_future.await.context("collecting timed-out Docker job")?;
+                }
             }
         };
-        exit_code = output.status.code().unwrap_or(1);
+        exit_code = if timed_out { 124 } else { output.status.code().unwrap_or(1) };
         output_text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        if timed_out { output_text.push_str("\\nJob timed out"); }
         status = if exit_code == 0 { "succeeded" } else { "failed" };
     }
 
