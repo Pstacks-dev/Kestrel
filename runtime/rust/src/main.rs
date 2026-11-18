@@ -153,7 +153,14 @@ async fn stage_git_source(_cfg: &Config, job: &Job, workspace: &Path) -> Result<
         let output = Command::new("git").arg("-C").arg(workspace).args(["checkout", "--detach", commit]).output().await?;
         anyhow::ensure!(output.status.success(), "could not checkout requested commit");
     } else if let Some(branch) = &job.branch {
-        let _ = Command::new("git").arg("-C").arg(workspace).args(["checkout", branch]).output().await?;
+        let valid = Command::new("git").args(["check-ref-format", "--branch", branch]).output().await?;
+        anyhow::ensure!(valid.status.success(), "requested Git branch name is invalid");
+        let fetched = Command::new("git").arg("-C").arg(workspace)
+            .args(["fetch", "--depth", "1", "origin", branch]).output().await?;
+        anyhow::ensure!(fetched.status.success(), "could not fetch requested Git branch");
+        let checked_out = Command::new("git").arg("-C").arg(workspace)
+            .args(["checkout", "-B", branch, "FETCH_HEAD"]).output().await?;
+        anyhow::ensure!(checked_out.status.success(), "could not checkout requested Git branch");
     }
     Ok(())
 }
