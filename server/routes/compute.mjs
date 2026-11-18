@@ -102,6 +102,46 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
     }
   });
 
+  app.post('/api/admin/compute/nodes/:nodeId/rotate-token', userAuth, platformAdmin, async (req, res) => {
+    const token = crypto.randomBytes(32).toString('base64url');
+    const result = await query(
+      `update public.compute_node_credentials set token_hash = $2, rotated_at = now(), revoked_at = null
+       where node_id = $1 returning node_id`,
+      [req.params.nodeId, tokenHash(token)]
+    );
+    if (!result.rowCount) return fail(res, 404, 'Compute node credentials not found');
+    res.json({ nodeId: req.params.nodeId, agentToken: token });
+  });
+
+  app.put('/api/admin/compute/quotas/:organizationId', userAuth, platformAdmin, async (req, res) => {
+    const values = {
+      maxInstances: Number(req.body?.maxInstances),
+      maxVcpu: Number(req.body?.maxVcpu),
+      maxMemoryMiB: Number(req.body?.maxMemoryMiB),
+      maxDiskGiB: Number(req.body?.maxDiskGiB),
+    };
+    if (!Number.isInteger(values.maxInstances) || values.maxInstances < 0 || values.maxInstances > 10000 ||
+        !Number.isInteger(values.maxVcpu) || values.maxVcpu < 0 || values.maxVcpu > 4096 ||
+        !Number.isInteger(values.maxMemoryMiB) || values.maxMemoryMiB < 0 || values.maxMemoryMiB > 4194304 ||
+        !Number.isInteger(values.maxDiskGiB) || values.maxDiskGiB < 0 || values.maxDiskGiB > 1048576) {
+      return fail(res, 400, 'Invalid workspace compute quota');
+    }
+    try {
+      const result = await query(
+        `insert into public.compute_quotas
+         (organization_id, max_instances, max_vcpu, max_memory_mib, max_disk_gib, updated_at)
+         values($1,$2,$3,$4,$5,now())
+         on conflict (organization_id) do update set max_instances = excluded.max_instances,
+           max_vcpu = excluded.max_vcpu, max_memory_mib = excluded.max_memory_mib,
+           max_disk_gib = excluded.max_disk_gib, updated_at = now()
+         returning organization_id as "organizationId", max_instances as "maxInstances",
+           max_vcpu as "maxVcpu", max_memory_mib as "maxMemoryMiB", max_disk_gib as "maxDiskGiB"`,
+        [req.params.organizationId, values.maxInstances, values.maxVcpu, values.maxMemoryMiB, values.maxDiskGiB]
+      );
+      res.json({ quota: result.rows[0] });
+    } catch { fail(res, 500, 'Could not update workspace compute quota'); }
+  });
+
   app.post('/api/admin/compute/nodes/:nodeId/state', userAuth, platformAdmin, async (req, res) => {
     const desiredState = String(req.body?.desiredState || '');
     if (!['online', 'draining', 'offline'].includes(desiredState)) return fail(res, 400, 'Invalid desired node state');
