@@ -191,8 +191,38 @@ async fn flush_log(http: &Client, cfg: &Config, job: &Job, stream: &str, message
 }
 
 
+async fn discover_artifacts(workspace: &Path, directory: &Path, output: &mut Vec<String>) -> Result<()> {
+    if output.len() >= 50 { return Ok(()); }
+    if !fs::try_exists(directory).await? { return Ok(()); }
+    let mut entries = fs::read_dir(directory).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        if output.len() >= 50 { break; }
+        let file_type = entry.file_type().await?;
+        if file_type.is_symlink() { continue; }
+        let path = entry.path();
+        if file_type.is_dir() {
+            discover_artifacts(workspace, &path, output).await?;
+        } else if file_type.is_file() {
+            let relative = path.strip_prefix(workspace)
+                .map_err(|_| anyhow!("artifact path escaped workspace"))?
+                .to_string_lossy().replace('\\', "/");
+            if safe_relative_path(&relative).is_ok() { output.push(relative); }
+        }
+    }
+    Ok(())
+}
+
 async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Path) -> Result<()> {
-    for raw in job.artifact_paths.as_deref().unwrap_or(&[]) {
+    let mut discovered = Vec::new();
+    let declared = job.artifact_paths.as_deref().unwrap_or(&[]);
+    let paths: Vec<String> = if declared.is_empty() {
+        for folder in ["dist", "build", "artifacts"] {
+            discover_artifacts(workspace, &workspace.join(folder), &mut discovered).await?;
+        }
+        discovered
+    } else { declared.to_vec() };
+    let mut total_bytes = 0u64;
+    for raw in &paths {
         let relative = safe_relative_path(raw)?;
         let source = workspace.join(&relative);
         if !source.is_file() { warn!(path = %raw, "declared artifact does not exist; skipping"); continue; }
@@ -202,11 +232,13 @@ async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Pa
         anyhow::ensure!(canonical_source.starts_with(&root), "artifact path escapes job workspace: {raw}");
         let metadata = fs::metadata(&canonical_source).await?;
         anyhow::ensure!(metadata.len() <= 100 * 1024 * 1024, "artifact exceeds 100 MiB: {raw}");
+        total_bytes += metadata.len();
+        anyhow::ensure!(total_bytes <= 250 * 1024 * 1024, "artifact collection exceeds 250 MiB");
         let bytes = fs::read(&canonical_source).await?;
-        let name = relative.file_name().and_then(|n| n.to_str()).ok_or_else(|| anyhow!("invalid artifact filename"))?;
+        let name = relative.to_string_lossy().to_string();
         let response = http.put(format!("{}/api/workers/jobs/{}/artifacts/upload", cfg.api, job.id))
             .header("x-kestrel-lease", &job.lease_token)
-            .header("x-artifact-name", name)
+            .header("x-artifact-name", &name)
             .header("x-artifact-content-type", "application/octet-stream")
             .header("content-type", "application/octet-stream")
             .body(bytes).send().await?;
