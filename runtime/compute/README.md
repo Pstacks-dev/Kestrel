@@ -114,9 +114,11 @@ KESTREL_FIRECRACKER_GID=1000
 ```
 
 Install a compatible kernel as vmlinux and each supported guest root
-filesystem as a pre-installed ext4 file in the rootfs directory. Guest images
+filesystem as a raw ext4 image in the rootfs directory. The image must not be
+larger than the requested VM disk; the agent grows the copied filesystem with
+resize2fs to the requested disk size. Guest images
 must include cloud-init when SSH public-key injection is requested; install
-the cloud-localds utility on the host agent. The VM
+the cloud-localds utility and e2fsprogs (resize2fs) on the host agent. The VM
 request's image field must be the filename only (for example
 ubuntu-24.04.ext4). The agent needs the host privileges required by the
 jailer; Firecracker itself is configured to run under the non-root UID/GID.
