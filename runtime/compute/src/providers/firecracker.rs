@@ -182,6 +182,7 @@ impl ComputeProvider for FirecrackerProvider {
             "drive_id":"rootfs","path_on_host":"/rootfs.ext4","is_root_device":true,"is_read_only":false
         }))).await?;
         self.api_request(&spec.name, "PUT", "/actions", Some(json!({"action_type":"InstanceStart"}))).await?;
+        child.kill_on_drop(false);
         children.insert(spec.name.clone(), child);
         Ok(self.instance(&spec.name, InstanceState::Running))
     }
