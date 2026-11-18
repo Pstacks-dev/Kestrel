@@ -1099,7 +1099,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          finished_at = case
            when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then now()
            else null end
-         where r.organization_id = $1
+         where r.id in (select pr.id from public.pipeline_runs pr join public.projects p on p.id = pr.project_id where p.organization_id = $1)
            and r.status in ('queued','running')
            and exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('failed','skipped','canceled'))`,
         [w.organization_id]
