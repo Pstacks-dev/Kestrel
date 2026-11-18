@@ -13,6 +13,8 @@ pub struct FirecrackerConfig {
     pub firecracker_binary: PathBuf,
     pub kernel_image_dir: PathBuf,
     pub rootfs_image_dir: PathBuf,
+    /// Operator-managed Linux bridge with DHCP/routing and firewall policy.
+    pub network_bridge: String,
     pub uid: u32,
     pub gid: u32,
 }
@@ -29,6 +31,11 @@ impl FirecrackerConfig {
         }
         if self.uid == 0 || self.gid == 0 {
             return Err(ComputeError::NotConfigured("Firecracker must run as a non-root UID and GID".into()));
+        }
+        if self.network_bridge.is_empty() || self.network_bridge.len() > 15
+            || !self.network_bridge.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
+        {
+            return Err(ComputeError::NotConfigured("Firecracker network bridge must be a valid Linux interface name".into()));
         }
         Ok(())
     }
@@ -100,6 +107,43 @@ impl FirecrackerProvider {
         Err(ComputeError::Provider("Timed out waiting for the Firecracker API socket".into()))
     }
 
+    fn tap_name(id: &str) -> String {
+        let digest = Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("kestrel:tap:{id}").as_bytes());
+        format!("kt{}", &digest.simple().to_string()[..11])
+    }
+
+    fn guest_mac(id: &str) -> String {
+        let digest = Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("kestrel:mac:{id}").as_bytes());
+        let bytes = digest.as_bytes();
+        format!("02:fc:{:02x}:{:02x}:{:02x}:{:02x}", bytes[0], bytes[1], bytes[2], bytes[3])
+    }
+
+    async fn create_tap(&self, id: &str) -> Result<String, ComputeError> {
+        let tap = Self::tap_name(id);
+        let uid = self.config.uid.to_string();
+        let created = Command::new("ip").args(["tuntap", "add", "dev", &tap, "mode", "tap", "user", &uid])
+            .status().await.map_err(|e| ComputeError::Provider(format!("Cannot create Firecracker TAP interface: {e}")))?;
+        if !created.success() { return Err(ComputeError::Provider("Linux refused to create the Firecracker TAP interface".into())); }
+        let attached = Command::new("ip").args(["link", "set", "dev", &tap, "master", &self.config.network_bridge])
+            .status().await.map_err(|e| ComputeError::Provider(format!("Cannot attach Firecracker TAP interface to bridge: {e}")))?;
+        if !attached.success() {
+            let _ = Command::new("ip").args(["link", "delete", "dev", &tap]).status().await;
+            return Err(ComputeError::Provider("Could not attach Firecracker TAP interface to configured bridge".into()));
+        }
+        let up = Command::new("ip").args(["link", "set", "dev", &tap, "up"])
+            .status().await.map_err(|e| ComputeError::Provider(format!("Cannot activate Firecracker TAP interface: {e}")))?;
+        if !up.success() {
+            let _ = Command::new("ip").args(["link", "delete", "dev", &tap]).status().await;
+            return Err(ComputeError::Provider("Could not bring Firecracker TAP interface online".into()));
+        }
+        Ok(tap)
+    }
+
+    async fn delete_tap(&self, id: &str) {
+        let tap = Self::tap_name(id);
+        let _ = Command::new("ip").args(["link", "delete", "dev", &tap]).status().await;
+    }
+
     fn instance(&self, id: &str, state: InstanceState) -> Instance {
         let stable_id = Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("kestrel:firecracker:{id}").as_bytes());
         Instance { id: stable_id, provider_id: id.to_owned(), name: id.to_owned(), state, ipv4: Vec::new() }
@@ -162,26 +206,39 @@ impl ComputeProvider for FirecrackerProvider {
             return Err(error);
         }
         let jail_root = self.jail_root(&spec.name);
-        tokio::fs::create_dir_all(jail_root.join("run")).await
-            .map_err(|e| ComputeError::Provider(format!("Cannot prepare Firecracker jail: {e}")))?;
-        let pid = child.id().ok_or_else(|| ComputeError::Provider("Firecracker jailer did not expose a process ID".into()))?;
-        tokio::fs::write(jail_root.join("firecracker.pid"), pid.to_string()).await
-            .map_err(|e| ComputeError::Provider(format!("Cannot persist Firecracker process ID: {e}")))?;
-        tokio::fs::copy(self.config.kernel_image_dir.join("vmlinux"), jail_root.join("vmlinux")).await
-            .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker kernel: {e}")))?;
-        tokio::fs::copy(rootfs, jail_root.join("rootfs.ext4")).await
-            .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker rootfs: {e}")))?;
-
-        self.api_request(&spec.name, "PUT", "/machine-config", Some(json!({
-            "vcpu_count":spec.vcpus,"mem_size_mib":spec.memory_mib,"smt":false,"track_dirty_pages":false
-        }))).await?;
-        self.api_request(&spec.name, "PUT", "/boot-source", Some(json!({
-            "kernel_image_path":"/vmlinux","boot_args":"console=ttyS0 reboot=k panic=1 pci=off"
-        }))).await?;
-        self.api_request(&spec.name, "PUT", "/drives/rootfs", Some(json!({
-            "drive_id":"rootfs","path_on_host":"/rootfs.ext4","is_root_device":true,"is_read_only":false
-        }))).await?;
-        self.api_request(&spec.name, "PUT", "/actions", Some(json!({"action_type":"InstanceStart"}))).await?;
+        let setup = async {
+            tokio::fs::create_dir_all(jail_root.join("run")).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot prepare Firecracker jail: {e}")))?;
+            let pid = child.id().ok_or_else(|| ComputeError::Provider("Firecracker jailer did not expose a process ID".into()))?;
+            tokio::fs::write(jail_root.join("firecracker.pid"), pid.to_string()).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot persist Firecracker process ID: {e}")))?;
+            tokio::fs::copy(self.config.kernel_image_dir.join("vmlinux"), jail_root.join("vmlinux")).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker kernel: {e}")))?;
+            tokio::fs::copy(rootfs, jail_root.join("rootfs.ext4")).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker rootfs: {e}")))?;
+            let tap = self.create_tap(&spec.name).await?;
+            self.api_request(&spec.name, "PUT", "/machine-config", Some(json!({
+                "vcpu_count":spec.vcpus,"mem_size_mib":spec.memory_mib,"smt":false,"track_dirty_pages":false
+            }))).await?;
+            self.api_request(&spec.name, "PUT", "/boot-source", Some(json!({
+                "kernel_image_path":"/vmlinux","boot_args":"console=ttyS0 reboot=k panic=1 pci=off"
+            }))).await?;
+            self.api_request(&spec.name, "PUT", "/drives/rootfs", Some(json!({
+                "drive_id":"rootfs","path_on_host":"/rootfs.ext4","is_root_device":true,"is_read_only":false
+            }))).await?;
+            self.api_request(&spec.name, "PUT", "/network-interfaces/eth0", Some(json!({
+                "iface_id":"eth0","host_dev_name":tap,"guest_mac":Self::guest_mac(&spec.name)
+            }))).await?;
+            self.api_request(&spec.name, "PUT", "/actions", Some(json!({"action_type":"InstanceStart"}))).await?;
+            Ok::<(), ComputeError>(())
+        }.await;
+        if let Err(error) = setup {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            self.delete_tap(&spec.name).await;
+            let _ = tokio::fs::remove_dir_all(self.config.api_socket_dir.join("firecracker").join(&spec.name)).await;
+            return Err(error);
+        }
         child.kill_on_drop(false);
         children.insert(spec.name.clone(), child);
         Ok(self.instance(&spec.name, InstanceState::Running))
@@ -243,6 +300,7 @@ impl ComputeProvider for FirecrackerProvider {
                 return Err(ComputeError::Provider("Firecracker process could not be terminated".into()));
             }
         }
+        self.delete_tap(id).await;
         let jail = self.config.api_socket_dir.join("firecracker").join(id);
         tokio::fs::remove_dir_all(jail).await
             .map_err(|e| ComputeError::Provider(format!("Unable to remove Firecracker jail: {e}")))?;
@@ -261,6 +319,7 @@ mod tests {
             firecracker_binary:PathBuf::from("/usr/bin/firecracker"),
             kernel_image_dir:PathBuf::from("/var/lib/kestrel/kernels"),
             rootfs_image_dir:PathBuf::from("/var/lib/kestrel/rootfs"),
+            network_bridge:"br-kestrel".into(),
             uid:1000,gid:1000,
         }
     }
