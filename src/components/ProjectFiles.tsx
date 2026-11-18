@@ -123,7 +123,7 @@ export function ProjectFiles({ projectId, accessToken, apiBase }: { projectId: s
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }}
         onDrop={(event) => { event.preventDefault(); setDragging(false); void uploadFiles(event.dataTransfer.files); }}>
         <Upload size={22}/>
-        <b>Drop project files or folders here</b>
+        <b>Drop files here, or choose a folder</b>
         <span>Or choose files from your computer · Maximum 20 MB per file</span>
         <div className="project-files-actions">
           <button type="button" onClick={() => fileInput.current?.click()} disabled={busy}>Choose files</button>
