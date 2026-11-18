@@ -193,7 +193,7 @@ impl ComputeProvider for KubeVirtProvider {
 
     async fn start_instance(&self, id: &str) -> Result<(), ComputeError> {
         validate_resource_name(id)?;
-        self.request(Method::PUT, self.resource_url("vm", Some(id), Some("start")), Some(json!({"apiVersion":"subresources.kubevirt.io/v1","kind":"StartOptions"}))).await.map(|_| ())
+        self.request(Method::PUT, self.resource_url("vm", Some(id), Some("start")), Some(json!({"apiVersion":"subresources.kubevirt.io/v1alpha3","kind":"VirtualMachineStartOptions"}))).await.map(|_| ())
     }
 
     async fn stop_instance(&self, id: &str) -> Result<(), ComputeError> {
