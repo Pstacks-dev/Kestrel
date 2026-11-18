@@ -11,7 +11,7 @@ This document records what the repository can do and what must be configured bef
 - HMAC-verified GitHub push and pull-request webhook receiver with delivery deduplication.
 - Encrypted project secrets and log redaction.
 - Worker enrollment issues a one-time credential; only a hash is stored.
-- Docker worker agent supports isolated execution, bounded concurrency, job timeouts and graceful draining.
+- Docker worker agent supports isolated execution, bounded concurrency, job timeouts and graceful draining. Build secrets are passed through short-lived mode-0600 env files rather than Docker CLI arguments; local executor processes receive an allowlisted host environment.
 - Security hardening and private artifact bucket are tracked in `db/migrations/005_internal_access_and_artifact_bucket.sql`.
 - Artifact checksum columns and deployment target/history schema are tracked in migrations `006_artifact_integrity_and_deployments.sql` and `007_deployment_rollback_source.sql`.
 - Deployment foreign-key indexes are tracked in `008_deployment_foreign_key_indexes.sql`.
@@ -23,7 +23,7 @@ This document records what the repository can do and what must be configured bef
 - Artifact byte transfer is implemented: workers receive lease-bound signed upload tokens, upload directly to private Supabase Storage, and the control plane verifies size and SHA-256 before making files downloadable; workspace members receive short-lived signed download links. The API caps individual files at 100 MiB; the Netlify adapter caps releases at 100 files and 300 MiB total. This still requires a real worker upload/download test.
 - Vercel and Netlify provider adapters, deployment history, owner/admin approval/rejection, provider status refresh and rollback are implemented. Vercel rollback creates a new deployment from the prior successful commit; Netlify production rollback restores the prior successful deploy. They still require real provider credentials and end-to-end tests before CD is certified.
 - A worker agent is not a managed fleet. A Linux host, Docker Engine, network policy, monitoring, backup and a frequent lease-recovery scheduler must be provisioned separately.
-- Signup and workspace creation have not been live-tested against a newly created account in production Vercel.
+- Signup and workspace creation have not been live-tested against a newly created account in production Vercel. The production API health endpoint and PostgreSQL connection have been verified after the transaction-pooler credential correction; account lifecycle still needs a real-user test.
 - Supabase leaked-password protection must be enabled in Authentication settings by a project owner.
 
 ## Required server configuration
@@ -69,16 +69,8 @@ Do not use `local` or `mock` executors in production.
 Internal table grants are restricted, direct client access to project secrets and webhook signing keys is revoked, and stale-lease recovery is service-role-only. The security advisor may still report RLS-enabled internal tables with no policies (intentional: no direct client access) and the two organization helper functions as SECURITY DEFINER (retained for RLS evaluation). Enable leaked-password protection in Supabase Authentication settings.
 
 
-## Production database connection recovery
+## Production database connection
 
-The production health route currently reaches PostgreSQL but reports SQLSTATE `28P01` (password authentication failed for user `postgres`). TLS is configured to verify the Supabase production CA bundle; do not disable certificate verification to work around this authentication error.
+**Verified 18 November 2026:** the Vercel production deployment connects to Supabase PostgreSQL through the transaction pooler. `https://kestrel-ci-cd.vercel.app/api/health` returned HTTP 200 with `database: connected` after the sensitive `SUPABASE_DB_URL` value was corrected. TLS certificate verification remains enabled with the pinned Supabase CA bundle.
 
-To repair the connection:
-
-1. In Supabase Dashboard, open project `afttaoyshnzaifxzjozv` and choose **Connect**.
-2. Select **Transaction pooler** (port `6543`) for the Vercel serverless API. Copy the complete connection string from the dashboard; do not construct the pooler hostname or cluster index from the region.
-3. The shared pooler username must include the project reference: `postgres.afttaoyshnzaifxzjozv`. Replace only the password placeholder with the current database password. URL-encode reserved characters in the password.
-4. In Vercel project `kestrel_ci_cd`, update the sensitive `SUPABASE_DB_URL` variable for Production, Preview and Development, then redeploy.
-5. Verify `https://kestrel-ci-cd.vercel.app/api/health` returns HTTP 200 and check Vercel runtime logs for the absence of `28P01` and `SELF_SIGNED_CERT_IN_CHAIN`.
-
-Do not share the connection string in chat, GitHub issues, source files, or screenshots. Do not reset the database password unless the current password cannot be recovered and every dependent service can be updated together.
+Never copy a live database URL into this document, chat, GitHub issues, source files, or screenshots. If the database password is rotated, update the Vercel `SUPABASE_DB_URL` secret in all required environments and redeploy; then verify `/api/health` and runtime logs. A password was exposed during setup and should be rotated before broader use.
