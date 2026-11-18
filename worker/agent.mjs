@@ -18,7 +18,7 @@ const REPO_URL = process.env.KESTREL_REPOSITORY_URL;
 const CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.KESTREL_CONCURRENCY || 1)));
 const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
-const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK || 'bridge';
+const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK === 'none' ? 'none' : 'bridge';
 const EXECUTOR = process.env.KESTREL_WORKER_EXECUTOR || 'docker'; // 'docker' | 'local' | 'mock'
 
 if (process.env.NODE_ENV === 'production' && !/@sha256:[a-f0-9]{64}$/i.test(JOB_IMAGE) && EXECUTOR === 'docker') {
