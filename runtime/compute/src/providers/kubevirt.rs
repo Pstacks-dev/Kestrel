@@ -175,7 +175,7 @@ fn validate_resource_name(name: &str) -> Result<(), ComputeError> {
 impl ComputeProvider for KubeVirtProvider {
     fn kind(&self) -> ProviderKind { ProviderKind::KubeVirt }
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { virtual_machines: true, snapshots: true, live_migration: true, console: true, cluster_scheduling: true }
+        ProviderCapabilities { virtual_machines: true, snapshots: false, live_migration: false, console: false, cluster_scheduling: false }
     }
 
     async fn health(&self) -> Result<(), ComputeError> {
