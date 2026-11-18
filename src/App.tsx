@@ -909,7 +909,10 @@ function AppShell({ page }: { page: Page }) {
   }
 
   useEffect(() => {
-    if (page === 'deployments' && selectedProject && accessToken) loadDeployments(selectedProject);
+    if (page !== 'deployments' || !selectedProject || !accessToken) return;
+    loadDeployments(selectedProject);
+    const timer = setInterval(() => loadDeployments(selectedProject), 5000);
+    return () => clearInterval(timer);
   }, [page, selectedProject, accessToken]);
 
   async function downloadArtifact(artifactId: string) {
@@ -1643,12 +1646,13 @@ function AppShell({ page }: { page: Page }) {
                     <p>{environment.workerName} · Worker {environment.workerState} · Port {environment.hostPort}:{environment.containerPort}</p>
                   </div>
                   <span className={`pill ${environment.currentReleaseStatus === 'healthy' ? 'pill-green' : 'pill-muted'}`}>
-                    {environment.currentReleaseStatus || 'NOT DEPLOYED'}
+                    {environment.pendingReleaseStatus || environment.currentReleaseStatus || 'NOT DEPLOYED'}
                   </span>
                 </div>
                 <div className="deployment-meta">
                   <span>Health path: <b>{environment.healthPath}</b></span>
                   <span>Current image: <b>{environment.currentImage || 'None'}</b></span>
+                  <span>Last health check: <b>{environment.lastHealthCheck ? new Date(environment.lastHealthCheck).toLocaleString() : 'Not checked'}</b></span>
                   {environment.publicUrl && <a href={environment.publicUrl} target="_blank" rel="noreferrer">Open application <ArrowUpRight size={13} /></a>}
                 </div>
                 <div className="deployment-release-actions">
