@@ -1533,9 +1533,9 @@ function InfoPage({ page }: { page: 'docs' | 'pricing' }) {
               ['04', 'Pipeline execution', 'Define DAG job dependencies and watch streaming logs in real time.'],
             ]
           : [
-              ['COMMUNITY', 'Local development', 'Run Kestrel locally and evaluate the containerized workflow.'],
-              ['SELF-HOSTED', 'Your infrastructure', 'Run the control plane and workers on machines you manage.'],
-              ['ENTERPRISE', 'Scale execution', 'Add worker fleets horizontally with zero lock-in.'],
+              ['FREE BETA', 'Kestrel is free to use', 'Use the Kestrel workspace, project management, pipeline orchestration and execution visibility without a subscription during the initial beta.'],
+              ['FAIR USE', 'Capacity is managed', 'Build concurrency, job duration, upload size and monthly execution allowances will be bounded to protect shared worker capacity.'],
+              ['FUTURE PLANS', 'Paid tiers come later', 'We will introduce paid plans only when usage and infrastructure grow enough to justify them. No paid subscription is required for the initial beta.'],
             ]
         ).map((x) => (
           <article className="info-card" key={x[0]}>
