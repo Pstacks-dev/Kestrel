@@ -278,7 +278,21 @@ impl ComputeProvider for KubeVirtProvider {
             "spec":{"target":{"apiGroup":"kubevirt.io","kind":"VirtualMachine","name":instance_id},
                 "virtualMachineSnapshotName":snapshot_id}
         });
-        self.request(Method::POST, self.restore_collection_url(), Some(manifest)).await.map(|_| ())
+        self.request(Method::POST, self.restore_collection_url(), Some(manifest)).await?;
+        let restore_url = format!("{}/{}", self.restore_collection_url(), restore_name);
+        for _ in 0..30 {
+            let restore = self.request(Method::GET, restore_url.clone(), None).await?;
+            if restore.pointer("/status/complete").and_then(Value::as_bool) == Some(true) {
+                return Ok(());
+            }
+            if restore.pointer("/status/conditions").and_then(Value::as_array).is_some_and(|conditions|
+                conditions.iter().any(|condition| condition.get("type").and_then(Value::as_str) == Some("Failure")
+                    && condition.get("status").and_then(Value::as_str) == Some("True"))) {
+                return Err(ComputeError::Provider("KubeVirt snapshot restore entered a failed state".into()));
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+        Err(ComputeError::Provider("Timed out waiting for KubeVirt snapshot restore".into()))
     }
 
     async fn delete_snapshot(&self, instance_id: &str, snapshot_id: &str) -> Result<(), ComputeError> {
