@@ -315,6 +315,15 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_names_are_deterministic_and_kubernetes_safe() {
+        let first = KubeVirtProvider::provider_snapshot_name("vm-01", "before-upgrade");
+        let second = KubeVirtProvider::provider_snapshot_name("vm-01", "before-upgrade");
+        assert_eq!(first, second);
+        assert!(first.len() <= 63);
+        assert!(validate_resource_name(&first).is_ok());
+    }
+
+    #[test]
     fn resource_names_are_validated_before_url_construction() {
         assert!(validate_resource_name("vm-01").is_ok());
         assert!(validate_resource_name("../secrets").is_err());
