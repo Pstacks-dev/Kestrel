@@ -1157,9 +1157,27 @@ app.post('/api/workers/jobs/:jobId/logs', workerAuth, async (req, res) => {
     );
   }
 
-  // Extend lease by 45 seconds on successful heartbeat / log flush
-  await query("update public.jobs set lease_expires_at = now() + interval '45 seconds' where id = $1", [req.params.jobId]);
+  // Refresh only while the same worker still owns the same unexpired lease.
+  await query(
+    "update public.jobs set lease_expires_at = now() + interval '45 seconds' where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running' and lease_expires_at > now()",
+    [req.params.jobId, leaseToken, req.worker.id]
+  );
   res.json({ ok: true });
+});
+
+// Refresh a running job lease without inserting a fake/empty log entry.
+app.post('/api/workers/jobs/:jobId/lease', workerAuth, async (req, res) => {
+  const lease = String(req.get('x-kestrel-lease') || req.body?.leaseToken || '');
+  const result = await query(
+    `update public.jobs
+     set lease_expires_at = now() + interval '45 seconds'
+     where id = $1 and worker_id = $2 and lease_token = $3
+       and status = 'running' and lease_expires_at > now()
+     returning id, lease_expires_at`,
+    [req.params.jobId, req.worker.id, lease]
+  );
+  if (!result.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
+  res.json({ ok: true, leaseExpiresAt: result.rows[0].lease_expires_at });
 });
 
 // Worker-side cancellation polling. The lease token prevents another worker from inspecting this job.
