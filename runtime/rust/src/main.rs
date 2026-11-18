@@ -248,11 +248,11 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
                 if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                     continue;
                 }
-                anyhow::ensure!(!value.contains('\\n') && !value.contains('\\r') && !value.contains('\\0'), "secret contains unsupported newline or NUL");
+                anyhow::ensure!(!value.contains('\n') && !value.contains('\r') && !value.contains('\0'), "secret contains unsupported newline or NUL");
                 contents.push_str(key);
                 contents.push('=');
                 contents.push_str(value);
-                contents.push('\\n');
+                contents.push('\n');
             }
             if !contents.is_empty() {
                 use std::os::unix::fs::OpenOptionsExt;
