@@ -11,13 +11,11 @@ services:
     environment:
       KESTREL_WORKER_EXECUTOR: docker
       KESTREL_WORKER_WORKDIR: /var/lib/kestrel/work
+      KESTREL_WORKER_HOST_WORKDIR: ${KESTREL_WORKER_HOST_WORKDIR:-/srv/kestrel-worker/work}
       KESTREL_DOCKER_BIN: docker
     volumes:
       # Required so the worker can create isolated job containers.
       - /var/run/docker.sock:/var/run/docker.sock
-      - kestrel-worker-work:/var/lib/kestrel/work
+      - ${KESTREL_WORKER_HOST_WORKDIR:-/srv/kestrel-worker/work}:/var/lib/kestrel/work
     init: true
     stop_grace_period: 30s
-
-volumes:
-  kestrel-worker-work:
