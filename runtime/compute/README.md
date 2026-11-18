@@ -1,52 +1,173 @@
 # Kestrel Compute
 
-Kestrel Compute is a provider-neutral VM control layer. Kestrel owns the
-customer-facing API, tenancy, quotas, scheduling, audit trail and dashboard.
-A dedicated Linux host agent holds the credentials needed to talk to the
-selected virtualization engine.
+Kestrel Compute is a provider-neutral VM control plane. Kestrel owns customer
+tenancy, quota checks, placement, VM inventory, operation leases and the
+dashboard. A trusted Linux host agent holds provider credentials and executes
+provider API calls. Provider sockets, cluster tokens and host credentials are
+never sent to the browser or customer workloads.
 
-## Supported provider directions
+## Provider backends
 
-| Provider | Intended role | Host requirements |
+| Provider | Role | Host requirements |
 | --- | --- | --- |
-| Incus | General-purpose Linux VMs and system containers; first integration target | Linux, KVM for VMs, Incus daemon and trusted client certificates |
-| Firecracker | Lightweight microVMs for isolated workloads | Linux/KVM, Firecracker, jailer, kernel and prepared root filesystems |
-| KubeVirt | VM scheduling on an existing Kubernetes cluster | Kubernetes cluster with KubeVirt installed and scoped service-account RBAC |
+| Incus | General-purpose Linux VMs | Linux/KVM host, Incus daemon, dedicated project and trusted mTLS client identity |
+| Firecracker | Lightweight microVMs | Linux/KVM host, /dev/kvm, jailer, compatible kernel and prepared ext4 rootfs images |
+| KubeVirt | VMs on Kubernetes | Kubernetes cluster with KubeVirt, namespace-scoped service account and cluster CA |
 
-These providers are alternatives assigned to separate compute nodes or pools.
-They are not nested inside one another. Incus is the first provider to complete:
-it offers a direct VM management API without requiring Kestrel to introduce
-Kubernetes as a dependency.
+They are alternative provider pools, not nested engines. Kestrel schedules a
+VM only onto an online node with the requested provider, region and sufficient
+unallocated vCPU, memory, disk and instance capacity.
 
-## Security boundaries
+## Implemented control-plane features
 
-- Never expose the Incus privileged socket, Firecracker API socket or
-  Kubernetes cluster credentials to the browser or public control plane.
-- Only the Kestrel host agent may hold provider credentials. Use per-node
-  identities, narrow permissions and credential rotation.
-- Use a dedicated Incus project, Firecracker jailer isolation, or a dedicated
-  Kubernetes namespace with narrowly scoped RBAC.
-- Enforce organization quotas before scheduling and enforce CPU, memory, disk,
-  network and instance-count limits at the provider.
-- Do not accept customer-controlled host paths, device mappings, raw provider
-  configuration or arbitrary API URLs.
-- Keep host kernels, QEMU/Firecracker, firmware and guest images patched.
-
-## Current implementation status
-
-The shared Rust provider contract and VM resource validation are in place.
-
-- **Incus:** mTLS REST client, project-scoped requests, asynchronous operation waiting, VM create/lookup/start/stop/delete calls and configuration/URL-scope tests.
-- **Firecracker:** jailer process launch, per-instance chroot layout, staged kernel/rootfs, Unix-domain HTTP API, machine configuration, boot source, root drive, instance start, state lookup, graceful guest shutdown and process/jail cleanup. The image field is a pre-installed rootfs filename in the configured rootfs directory; the host must supply a compatible kernel and ext4 rootfs. The jailer must run with the privileges needed to create its chroot, while Firecracker itself runs under the configured non-root UID/GID.
-- **KubeVirt:** HTTPS client with a pinned cluster CA and namespace-scoped service-account token, VM manifest creation, resource mapping, optional cloud-init SSH key, lookup, start/stop subresources and deletion. The configured namespace's RBAC must grant only the required VirtualMachine and VirtualMachineInstance operations.
-
-These implementations have not yet passed a fresh CI run or been exercised against real Incus, Firecracker or KubeVirt hosts. They are code-level integrations, not proof that a provider is provisioned or that a customer VM can be reached.
-
-## Remaining integration
-
-Persistent Kestrel VM records, provider-node registration, resource-aware scheduling, asynchronous provisioning reconciliation, quotas, tenant authorization, network attachment/IP allocation, SSH/console proxying, snapshots and monitoring still need to be connected to the control plane and dashboard. Firecracker networking also needs a trusted host-side TAP/network setup; customer workloads must never receive provider sockets or host credentials. Incus and KubeVirt image/storage profiles need explicit operator-managed configuration.
+- Migration 017_compute_providers.sql creates provider-node inventory,
+  hashed node credentials, tenant VM records, durable operations and workspace
+  compute quotas.
+- Platform operators provision provider nodes through
+  POST /api/admin/compute/nodes. The returned agent token is shown once;
+  only its SHA-256 hash is stored.
+- Workspace members with owner, admin or developer role can list VMs, create
+  VMs, and queue start, stop and delete operations.
+- The scheduler serializes quota and node-capacity reservations in PostgreSQL.
+  It does not assign work to stale, offline or draining nodes.
+- The host agent registers, heartbeats, claims operations using a 90-second
+  lease, renews long-running leases, executes the provider action and reports
+  the resulting provider ID, state and IP addresses.
+- Expired operations are retried within a bounded attempt count. Exhausted
+  create operations fail and release their capacity reservation.
+- The existing Kestrel workspace interface has a Compute page with VM
+  creation, quota usage, status and lifecycle controls.
 
 ## Build and test
 
-    cargo test --manifest-path runtime/compute/Cargo.toml
-    cargo clippy --manifest-path runtime/compute/Cargo.toml --all-targets -- -D warnings
+```sh
+cargo test --manifest-path runtime/compute/Cargo.toml
+cargo clippy --manifest-path runtime/compute/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path runtime/compute-agent/Cargo.toml
+cargo clippy --manifest-path runtime/compute-agent/Cargo.toml --all-targets -- -D warnings
+cargo build --release --manifest-path runtime/compute-agent/Cargo.toml
+```
+
+## Provisioning a provider node
+
+First apply migrations in numeric order through 017_compute_providers.sql to
+the Kestrel PostgreSQL database. A platform administrator then provisions a
+node with a provider, region and physical capacity:
+
+```http
+POST /api/admin/compute/nodes
+Authorization: Bearer <platform-admin-session>
+Content-Type: application/json
+
+{
+  "id": "incus-ibadan-01",
+  "provider": "incus",
+  "hostname": "incus-ibadan-01",
+  "region": "ng-ibadan",
+  "totalVcpu": 16,
+  "totalMemoryMib": 32768,
+  "totalDiskGib": 1000,
+  "maxInstances": 40
+}
+```
+
+The response contains a one-time agentToken. Store it in a root-readable
+environment file on the matching Linux host. Never put this token in Vite
+variables, customer projects, images or browser storage.
+
+### Common agent environment
+
+```sh
+KESTREL_API_URL=https://your-kestrel-api.example
+KESTREL_COMPUTE_NODE_ID=incus-ibadan-01
+KESTREL_COMPUTE_NODE_TOKEN=<one-time-node-token>
+KESTREL_COMPUTE_PROVIDER=incus
+```
+
+### Incus node
+
+```sh
+KESTREL_INCUS_ENDPOINT=https://127.0.0.1:8443
+KESTREL_INCUS_PROJECT=kestrel
+KESTREL_INCUS_CLIENT_CERT=/etc/kestrel/incus-client.crt
+KESTREL_INCUS_CLIENT_KEY=/etc/kestrel/incus-client.key
+KESTREL_INCUS_SERVER_CA=/etc/kestrel/incus-server-ca.crt
+```
+
+The client certificate must be trusted by the Incus daemon and restricted to
+the dedicated Kestrel project. The configured image is an Incus image alias
+available to that project.
+
+### Firecracker node
+
+```sh
+KESTREL_COMPUTE_PROVIDER=firecracker
+KESTREL_FIRECRACKER_CHROOT_BASE=/var/lib/kestrel/jailer
+KESTREL_FIRECRACKER_JAILER=/usr/bin/jailer
+KESTREL_FIRECRACKER_BINARY=/usr/bin/firecracker
+KESTREL_FIRECRACKER_KERNEL_DIR=/var/lib/kestrel/kernels
+KESTREL_FIRECRACKER_ROOTFS_DIR=/var/lib/kestrel/rootfs
+KESTREL_FIRECRACKER_UID=1000
+KESTREL_FIRECRACKER_GID=1000
+```
+
+Install a compatible kernel as vmlinux and each supported guest root
+filesystem as a pre-installed ext4 file in the rootfs directory. The VM
+request's image field must be the filename only (for example
+ubuntu-24.04.ext4). The agent needs the host privileges required by the
+jailer; Firecracker itself is configured to run under the non-root UID/GID.
+Use a dedicated filesystem and operator-owned directories for the jailer
+chroot base.
+
+### KubeVirt node
+
+```sh
+KESTREL_COMPUTE_PROVIDER=kubevirt
+KESTREL_KUBEVIRT_API_SERVER=https://kubernetes.example:6443
+KESTREL_KUBEVIRT_NAMESPACE=kestrel-workloads
+KESTREL_KUBEVIRT_TOKEN_FILE=/etc/kestrel/kubevirt-token
+KESTREL_KUBEVIRT_CA_FILE=/etc/kestrel/kubernetes-ca.crt
+```
+
+The service account must be restricted to the configured namespace and only
+the VirtualMachine and VirtualMachineInstance operations Kestrel needs. The
+image field is a containerDisk image reference accessible to the cluster.
+
+### Run the host agent
+
+Build the binary on a compatible Linux host and run it under a service manager
+with a protected environment file:
+
+```sh
+cargo build --release --manifest-path runtime/compute-agent/Cargo.toml
+./target/release/kestrel-compute-agent
+```
+
+The agent runs one provider backend per node. It must not be placed inside a
+customer build container. Give it only the host permissions and credentials
+needed for its selected backend.
+
+## Security boundaries and limitations
+
+- Customer VM requests cannot specify host paths, sockets, raw provider
+  configuration, Kubernetes API URLs or arbitrary device mappings.
+- Provider credentials remain on the trusted host agent. Compute node tokens
+  are stored as one-way hashes and agent requests require a matching node ID.
+- Workspace quotas and node capacity are reserved transactionally before an
+  operation is queued. RLS protects tenant VM and operation reads.
+- Firecracker API sockets are kept inside per-instance jailer directories.
+  The agent persists process IDs so a restarted agent can reconnect to
+  existing Firecracker instances.
+- SSH public keys can be injected at guest creation, but Kestrel does not yet
+  provide an SSH proxy, web console or private network ingress.
+- Firecracker host TAP/network provisioning, managed IP allocation, snapshots,
+  backup/restore, live migration, monitoring metrics and managed TLS ingress
+  are not yet implemented. Provider capabilities intentionally report these
+  as unavailable.
+- Incus and KubeVirt image/storage profiles and KubeVirt image pull secrets
+  are operator-managed. Customer-controlled image credentials are not exposed.
+- Provider API implementations and the control-plane integration have not yet
+  been verified against real Incus, Firecracker or KubeVirt hosts. No hosted
+  compute node has been provisioned for this repository, and a green CI run
+  has not yet been observed. Do not treat this as production-ready until
+  migration, provider-host and end-to-end VM tests pass.
