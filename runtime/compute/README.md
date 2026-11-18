@@ -164,8 +164,9 @@ needed for its selected backend.
 - Firecracker API sockets are kept inside per-instance jailer directories.
   The agent persists process IDs so a restarted agent can reconnect to
   existing Firecracker instances.
-- SSH public keys can be injected at guest creation, but Kestrel does not yet
-  provide an SSH proxy, web console or private network ingress.
+- SSH public keys can be injected at guest creation. The UI exposes a direct
+  SSH command when the provider reports a guest IPv4 address; Kestrel does not
+  yet provide an SSH proxy, web console or private network ingress.
 - Firecracker managed IP allocation, snapshots, backup/restore, live migration,
   monitoring metrics and managed TLS ingress
   are not yet implemented. Provider capabilities intentionally report these
