@@ -67,3 +67,18 @@ Do not use `local` or `mock` executors in production.
 ## Known Supabase security follow-up
 
 Internal table grants are restricted, direct client access to project secrets and webhook signing keys is revoked, and stale-lease recovery is service-role-only. The security advisor may still report RLS-enabled internal tables with no policies (intentional: no direct client access) and the two organization helper functions as SECURITY DEFINER (retained for RLS evaluation). Enable leaked-password protection in Supabase Authentication settings.
+
+
+## Production database connection recovery
+
+The production health route currently reaches PostgreSQL but reports SQLSTATE `28P01` (password authentication failed for user `postgres`). TLS is configured to verify the Supabase production CA bundle; do not disable certificate verification to work around this authentication error.
+
+To repair the connection:
+
+1. In Supabase Dashboard, open project `afttaoyshnzaifxzjozv` and choose **Connect**.
+2. Select **Transaction pooler** (port `6543`) for the Vercel serverless API. Copy the complete connection string from the dashboard; do not construct the pooler hostname or cluster index from the region.
+3. The shared pooler username must include the project reference: `postgres.afttaoyshnzaifxzjozv`. Replace only the password placeholder with the current database password. URL-encode reserved characters in the password.
+4. In Vercel project `kestrel_ci_cd`, update the sensitive `SUPABASE_DB_URL` variable for Production, Preview and Development, then redeploy.
+5. Verify `https://kestrel-ci-cd.vercel.app/api/health` returns HTTP 200 and check Vercel runtime logs for the absence of `28P01` and `SELF_SIGNED_CERT_IN_CHAIN`.
+
+Do not share the connection string in chat, GitHub issues, source files, or screenshots. Do not reset the database password unless the current password cannot be recovered and every dependent service can be updated together.
