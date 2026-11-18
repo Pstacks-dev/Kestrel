@@ -45,6 +45,9 @@ async function queueRelease({ query, transaction, environmentId, userId, image, 
     if (!envResult.rowCount) throw Object.assign(new Error('Deployment environment not found or access denied'), { status: 404 });
     const env = envResult.rows[0];
     if (env.runtime !== 'rust') throw Object.assign(new Error('This environment must be assigned to a Rust execution worker'), { status: 409 });
+    if (env.environment_key === 'production' && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) {
+      throw Object.assign(new Error('Production releases must use an immutable image SHA-256 digest'), { status: 400 });
+    }
     const pending = await c.query(
       "select id from public.deployment_releases where environment_id = $1 and status in ('queued', 'deploying') limit 1",
       [environmentId]
