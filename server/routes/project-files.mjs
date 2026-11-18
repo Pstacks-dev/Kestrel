@@ -40,7 +40,7 @@ async function storageRequest(path, options = {}) {
   return data;
 }
 
-export function registerProjectFileRoutes(app, { userAuth, query }) {
+export function registerProjectFileRoutes(app, { userAuth, workerAuth, query }) {
   async function projectAccess(req, res, write = false) {
     const result = await query(
       `select p.organization_id, m.role
@@ -59,6 +59,64 @@ export function registerProjectFileRoutes(app, { userAuth, query }) {
     }
     return result.rows[0];
   }
+
+  // Workers receive short-lived download URLs only for projects in their own organization.
+  app.get('/api/workers/projects/:projectId/source-files', workerAuth, async (req, res) => {
+    try {
+      const project = await query(
+        'select organization_id, source_type from public.projects where id = $1',
+        [req.params.projectId]
+      );
+      if (!project.rowCount || project.rows[0].organization_id !== req.worker.organizationId) {
+        return res.status(404).json({ error: 'Project source not found' });
+      }
+      if (project.rows[0].source_type !== 'upload') {
+        return res.status(409).json({ error: 'This project uses a Git source' });
+      }
+
+      const root = [project.rows[0].organization_id, req.params.projectId].join('/');
+      const files = [];
+      let totalBytes = 0;
+      async function walk(prefix, relative, depth = 0) {
+        if (depth > 20) throw Object.assign(new Error('Uploaded source folder nesting is too deep'), { status: 413 });
+        const entries = await storageRequest(`/object/list/${BUCKET}`, {
+          method: 'POST',
+          body: JSON.stringify({ prefix, limit: 500, offset: 0, sortBy: { column: 'name', order: 'asc' } }),
+        });
+        for (const entry of entries || []) {
+          const relativePath = cleanRelativePath([relative, entry.name].filter(Boolean).join('/'));
+          if (!relativePath) continue;
+          if (!entry.id && !entry.metadata) {
+            await walk(`${prefix}/${entry.name}`, relativePath, depth + 1);
+            continue;
+          }
+          const sizeBytes = Number(entry.metadata?.size || 0);
+          totalBytes += sizeBytes;
+          if (files.length >= 500 || totalBytes > 250 * 1024 * 1024) {
+            throw Object.assign(new Error('Uploaded source exceeds the 500-file or 250 MiB execution limit'), { status: 413 });
+          }
+          const objectKey = `${root}/${relativePath}`;
+          const signed = await storageRequest(`/object/sign/${BUCKET}/${objectKey.split('/').map(encodeURIComponent).join('/')}`, {
+            method: 'POST',
+            body: JSON.stringify({ expiresIn: 300 }),
+          });
+          const { url } = storageConfig();
+          const signedUrl = signed?.signedURL || signed?.signedUrl;
+          if (!signedUrl) throw new Error('Storage did not return a source download URL');
+          files.push({
+            path: relativePath,
+            sizeBytes,
+            url: signedUrl.startsWith('http') ? signedUrl : `${url}/storage/v1${signedUrl.startsWith('/') ? '' : '/'}${signedUrl}`,
+          });
+        }
+      }
+      await walk(root, '');
+      res.json({ files, totalBytes });
+    } catch (error) {
+      console.error('Worker uploaded-source lookup failed:', error.message);
+      res.status(error.status || 503).json({ error: error.message || 'Could not prepare uploaded source' });
+    }
+  });
 
   app.get('/api/projects/:projectId/files', userAuth, async (req, res) => {
     try {
