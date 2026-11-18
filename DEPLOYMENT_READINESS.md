@@ -17,8 +17,8 @@ This document records what the repository can do and what must be configured bef
 
 ## Not complete / not certified
 
-- Artifact byte transfer is implemented: workers receive lease-bound signed upload tokens, upload directly to private Supabase Storage, and the control plane verifies size and SHA-256 before making files downloadable; workspace members receive short-lived signed download links. This still requires a real worker upload/download test.
-- Vercel and Netlify provider adapters, deployment history, owner/admin approval/rejection, provider status refresh and rollback are implemented. They still require real provider credentials and end-to-end tests before CD is certified.
+- Artifact byte transfer is implemented: workers receive lease-bound signed upload tokens, upload directly to private Supabase Storage, and the control plane verifies size and SHA-256 before making files downloadable; workspace members receive short-lived signed download links. The API caps individual files at 100 MiB; the Netlify adapter caps releases at 100 files and 300 MiB total. This still requires a real worker upload/download test.
+- Vercel and Netlify provider adapters, deployment history, owner/admin approval/rejection, provider status refresh and rollback are implemented. Vercel rollback creates a new deployment from the prior successful commit; Netlify production rollback restores the prior successful deploy. They still require real provider credentials and end-to-end tests before CD is certified.
 - A worker agent is not a managed fleet. A Linux host, Docker Engine, network policy, monitoring, backup and a frequent lease-recovery scheduler must be provisioned separately.
 - Signup and workspace creation have not been live-tested against a newly created account in production Vercel.
 - Supabase leaked-password protection must be enabled in Authentication settings by a project owner.
