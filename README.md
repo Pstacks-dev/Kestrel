@@ -32,7 +32,7 @@ Kestrel is a production-hardened, distributed CI/CD platform built with:
 
 ---
 
-## Completed & Production-Hardened Features
+## Implemented Product Capabilities (Code-Level; Deployment Verification Required)
 
 1. **Authentication & Session Security**:
    - Supabase Auth sign-up / sign-in with server-side JWT verification on every authenticated request.
@@ -202,6 +202,6 @@ npm run check
 
 ## 6. Known Limitations & Production Notes
 
-- **Kernel Sharing**: Docker containers share the host Linux kernel. For untrusted, hostile multi-tenant public PRs, deploy workers with microVM isolation (e.g. Firecracker, Kata Containers, or gVisor).
+- **Worker provisioning**: No hosted Kestrel worker is included in this repository deployment. Customer jobs execute only when a dedicated Linux Docker worker has been provisioned, registered, and is online. Without one, jobs remain queued.\n- **Artifact delivery**: Artifact object transfer and authenticated downloads remain unfinished; current artifact metadata registration is not a complete artifact delivery system.\n- **Deployments and rollback**: Deployment-provider integrations and rollback workflows are not implemented yet.\n- **Usage controls**: Free-beta quotas, concurrency ceilings, and storage accounting must be defined and enforced before public onboarding.\n- **Kernel Sharing**: Docker containers share the host Linux kernel. For untrusted, hostile multi-tenant public PRs, deploy workers with microVM isolation (e.g. Firecracker, Kata Containers, or gVisor).
 - **Network Egress**: Jobs default to `--network none` for security. Workloads requiring dependency downloads should configure a controlled egress proxy.
 - **Serverless API Timeout**: On Vercel Hobby plans, function maximum duration is 15 seconds. Heavy control plane workflows should be sized accordingly.
