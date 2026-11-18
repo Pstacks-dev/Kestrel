@@ -102,7 +102,7 @@ export default function Admin(){
         body:JSON.stringify({maxInstances:Number(quotaInstances),maxVcpu:Number(quotaVcpu),maxMemoryMiB:Number(quotaMemory),maxDiskGiB:Number(quotaDisk)})
       });
       const j=await r.json();if(!r.ok)throw new Error(j.error||'Quota update failed');
-      setError('Workspace compute quota updated.');
+      setError('');
     }catch(e:any){setError(e.message||'Quota update failed')}
     finally{setBusy(false)}
   }
