@@ -43,7 +43,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
     let uploadedObjectKey = null;
     try {
       const lease = String(req.get('x-kestrel-lease') || '');
-      const name = String(req.get('x-artifact-name') || '').slice(0, 255);
+      const name = String(req.get('x-artifact-name') || '').slice(0, 512);
       const run = await query(
         `select j.run_id, p.organization_id
          from public.jobs j join public.pipeline_runs r on r.id = j.run_id
@@ -53,8 +53,10 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
         [req.params.jobId, lease, req.worker.id]
       );
       if (!run.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
-      if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
-        return res.status(400).json({ error: 'Artifact name must be a simple file name' });
+      const nameParts = name.split('/');
+      if (!name || name.length > 512 || name.startsWith('/') || name.includes('\\') ||
+          nameParts.some((part) => !part || part === '.' || part === '..' || /[\u0000-\u001f]/.test(part))) {
+        return res.status(400).json({ error: 'Artifact name must be a safe relative file path' });
       }
       if (!Buffer.isBuffer(req.body) || !req.body.length || req.body.length > MAX_ARTIFACT_BYTES) {
         return res.status(413).json({ error: 'Artifact must be between 1 byte and 100 MiB' });
