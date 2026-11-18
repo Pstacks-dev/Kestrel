@@ -1492,7 +1492,7 @@ function AppShell({ page }: { page: Page }) {
                     <div className="flex-1">
                       <b>{a.name || a.id}</b>
                       <small>
-                        Key: {a.objectKey} · Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content:{' '}
+                        Run: {String(a.runId).slice(0, 8)} · Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content:{' '}
                         {a.contentType || 'application/octet-stream'}
                       </small>
                     </div>
@@ -1515,6 +1515,7 @@ function AppShell({ page }: { page: Page }) {
                   desc="Artifacts produced in dist/ or build/ directories will appear here when completed."
                 />
               )}
+              {actionMessage && <div className="action-message">{actionMessage}</div>}
             </div>
           </div>
         )}
