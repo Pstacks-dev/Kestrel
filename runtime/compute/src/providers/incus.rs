@@ -229,6 +229,10 @@ impl ComputeProvider for IncusProvider {
     async fn delete_snapshot(&self, instance_id: &str, snapshot_id: &str) -> Result<(), ComputeError> {
         validate_instance_name(instance_id)?;
         validate_instance_name(snapshot_id)?;
+        let snapshots = self.list_snapshots(instance_id).await?;
+        if !snapshots.iter().any(|snapshot| snapshot.provider_id == snapshot_id) {
+            return Ok(());
+        }
         let response = self.request(Method::DELETE, &format!("instances/{instance_id}/snapshots/{snapshot_id}"), None).await?;
         self.operation_from(response).await?;
         Ok(())
