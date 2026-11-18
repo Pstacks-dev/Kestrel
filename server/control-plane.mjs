@@ -845,6 +845,12 @@ app.post('/api/runs/:runId/cancel', sensitiveLimiter, userAuth, async (req, res)
         "update public.jobs set status = 'canceled', finished_at = now(), canceled_at = now() where run_id = $1 and status in ('queued', 'running')",
         [runId]
       );
+      await c.query(
+        `update public.deployment_releases
+         set status = 'failed', health_checked_at = now(), error_message = 'Deployment run was canceled'
+         where pipeline_run_id = $1 and status in ('queued', 'deploying')`,
+        [runId]
+      );
       // Mark run as canceled
       await c.query(
         "update public.pipeline_runs set status = 'canceled', finished_at = now(), canceled_at = now(), canceled_by = $2 where id = $1",
@@ -898,6 +904,12 @@ app.post('/api/runs/:runId/retry', sensitiveLimiter, userAuth, async (req, res) 
              lease_expires_at = null,
              canceled_at = null
          where run_id = $1 and status in ('failed', 'canceled', 'skipped')`,
+        [runId]
+      );
+      await c.query(
+        `update public.deployment_releases
+         set status = 'queued', health_checked_at = null, error_message = null, deployed_at = null
+         where pipeline_run_id = $1 and status = 'failed'`,
         [runId]
       );
       // Reset run status to queued
