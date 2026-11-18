@@ -198,7 +198,7 @@ impl ComputeProvider for KubeVirtProvider {
 
     async fn stop_instance(&self, id: &str) -> Result<(), ComputeError> {
         validate_resource_name(id)?;
-        self.request(Method::PUT, self.resource_url("vm", Some(id), Some("stop")), Some(json!({"apiVersion":"subresources.kubevirt.io/v1","kind":"StopOptions"}))).await.map(|_| ())
+        self.request(Method::PUT, self.resource_url("vm", Some(id), Some("stop")), Some(json!({"apiVersion":"subresources.kubevirt.io/v1alpha3","kind":"VirtualMachineStopOptions"}))).await.map(|_| ())
     }
 
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError> {
