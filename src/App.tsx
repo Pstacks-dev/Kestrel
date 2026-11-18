@@ -582,8 +582,7 @@ function AppShell({ page }: { page: Page }) {
 
       // Update selected project default
       if (snapData.projects?.length && !selectedProject) {
-        const gitProject = snapData.projects.find((project: any) => project.sourceType !== 'upload');
-        if (gitProject) setSelectedProject(gitProject.id);
+        setSelectedProject(snapData.projects[0].id);
       }
     } catch (e: any) {
       setHealth(e.message || 'Connection failed');
@@ -983,16 +982,16 @@ function AppShell({ page }: { page: Page }) {
                 </div>
                 <span className="pill pill-muted">{counts.projects} projects</span>
               </div>
-              {snapshot?.projects?.some((p: any) => p.sourceType !== 'upload') ? (
+              {snapshot?.projects?.length ? (
                 <form className="pipeline-form" onSubmit={triggerRun}>
                   <label>
                     Project
                     <select
                       required
-                      value={selectedProject || snapshot.projects.find((p: any) => p.sourceType !== 'upload')?.id}
+                      value={selectedProject || snapshot.projects[0].id}
                       onChange={(e) => setSelectedProject(e.target.value)}
                     >
-                      {snapshot.projects.filter((p: any) => p.sourceType !== 'upload').map((p: any) => (
+                      {snapshot.projects.map((p: any) => (
                         <option key={p.id} value={p.id}>
                           {p.name} ({p.defaultBranch})
                         </option>
@@ -1021,7 +1020,7 @@ function AppShell({ page }: { page: Page }) {
                 <Empty
                   icon={Workflow}
                   title="No projects registered"
-                  desc="Connect a Git repository to run pipelines. Uploaded-source execution is being added separately."
+                  desc="Connect a Git repository or upload source files directly. Kestrel workers execute both project types."
                   action="Manage projects"
                   onClick={() => go('projects')}
                 />
