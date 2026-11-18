@@ -1219,7 +1219,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
     // Update worker state to online if no remaining running jobs
     const remaining = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [req.worker.id]);
     await c.query(
-      "update public.workers set state = case when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
+      "update public.workers set state = case when state in ('draining', 'offline') then state when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
       [req.worker.id, remaining.rows[0].n]
     );
   });
