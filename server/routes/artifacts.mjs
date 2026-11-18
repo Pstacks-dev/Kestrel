@@ -66,6 +66,12 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       if (!run.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
       const objectKey = run.rows[0].organization_id + '/' + run.rows[0].run_id + '/' + crypto.randomUUID() + '-' + name;
       const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
+      const session = await query(
+        `insert into public.artifact_upload_sessions(job_id, worker_id, object_key, name, size_bytes, sha256, content_type)
+         values($1, $2, $3, $4, $5, $6, $7)
+         returning id, expires_at`,
+        [req.params.jobId, req.worker.id, objectKey, name, sizeBytes, sha256, contentType]
+      );
       const signed = await storageRequest('/object/upload/sign/' + BUCKET + '/' + encodedKey, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -73,17 +79,16 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       });
       const signedPath = signed?.url || signed?.signedURL || signed?.signedUrl;
       const { url } = storageConfig();
-      let uploadUrl;
-      if (typeof signedPath === 'string' && signedPath.startsWith('http')) uploadUrl = signedPath;
-      else if (typeof signedPath === 'string') uploadUrl = url + (signedPath.startsWith('/storage/v1') ? signedPath : '/storage/v1' + (signedPath.startsWith('/') ? '' : '/') + signedPath);
-      else if (signed?.token) uploadUrl = url + '/storage/v1/object/upload/sign/' + BUCKET + '/' + encodedKey + '?token=' + encodeURIComponent(signed.token);
-      if (!uploadUrl) throw new Error('Storage did not return a signed upload URL');
-      const session = await query(
-        `insert into public.artifact_upload_sessions(job_id, worker_id, object_key, name, size_bytes, sha256, content_type)
-         values($1, $2, $3, $4, $5, $6, $7)
-         returning id, expires_at`,
-        [req.params.jobId, req.worker.id, objectKey, name, sizeBytes, sha256, contentType]
-      );
+      let uploadUrl = typeof signedPath === 'string'
+        ? (signedPath.startsWith('http') ? signedPath : url + (signedPath.startsWith('/storage/v1') ? signedPath : '/storage/v1' + (signedPath.startsWith('/') ? '' : '/') + signedPath))
+        : url + '/storage/v1/object/upload/sign/' + BUCKET + '/' + encodedKey;
+      if (signed?.token) {
+        const parsed = new URL(uploadUrl);
+        if (!parsed.searchParams.has('token')) parsed.searchParams.set('token', signed.token);
+        uploadUrl = parsed.toString();
+      } else if (!signedPath) {
+        throw new Error('Storage did not return a signed upload URL');
+      }
       res.status(201).json({ sessionId: session.rows[0].id, uploadUrl, expiresAt: session.rows[0].expires_at });
     } catch (error) {
       console.error('Artifact upload URL creation failed:', error.message);
