@@ -87,7 +87,7 @@ impl IncusProvider {
         if !operation.starts_with("/1.0/operations/") || operation.contains("..") {
             return Err(ComputeError::Provider("Incus returned an invalid operation URL".into()));
         }
-        let path = format!("{}{}", operation, if operation.contains('?') { "&timeout=30" } else { "?timeout=30" });
+        let path = format!("{}/wait{}", operation, if operation.contains('?') { "&timeout=30" } else { "?timeout=30" });
         let result = self.request(Method::GET, &path, None).await?;
         let status = result.pointer("/metadata/status_code").and_then(Value::as_i64).unwrap_or(0);
         if status != 200 {
@@ -168,11 +168,13 @@ impl ComputeProvider for IncusProvider {
         self.parse_instance(id, metadata)
     }
     async fn start_instance(&self, id: &str) -> Result<(), ComputeError> {
-        self.request(Method::PUT, &format!("instances/{id}/state"), Some(json!({"action":"start","timeout":30,"force":false}))).await?;
+        let response = self.request(Method::PUT, &format!("instances/{id}/state"), Some(json!({"action":"start","timeout":30,"force":false}))).await?;
+        self.operation_from(response).await?;
         Ok(())
     }
     async fn stop_instance(&self, id: &str) -> Result<(), ComputeError> {
-        self.request(Method::PUT, &format!("instances/{id}/state"), Some(json!({"action":"stop","timeout":30,"force":false}))).await?;
+        let response = self.request(Method::PUT, &format!("instances/{id}/state"), Some(json!({"action":"stop","timeout":30,"force":false}))).await?;
+        self.operation_from(response).await?;
         Ok(())
     }
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError> {
