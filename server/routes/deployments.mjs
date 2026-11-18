@@ -115,6 +115,7 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
                 w.hostname as "workerName", w.state as "workerState", w.runtime,
                 current_release.release_number as "currentReleaseNumber",
                 current_release.image as "currentImage", current_release.status as "currentReleaseStatus",
+                current_release.health_checked_at as "lastHealthCheck", current_release.error_message as "lastHealthError",
                 pending_release.status as "pendingReleaseStatus", e.created_at as "createdAt"
          from public.deployment_environments e
          join public.workers w on w.id = e.worker_id
