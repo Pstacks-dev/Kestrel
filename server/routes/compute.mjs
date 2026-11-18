@@ -51,7 +51,9 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
   app.get('/api/admin/compute/nodes', userAuth, platformAdmin, async (_req, res) => {
     try {
       const result = await query(
-        `select n.id, n.provider, n.hostname, n.region, n.architecture, n.state, n.desired_state as "desiredState",
+        `select n.id, n.provider, n.hostname, n.region, n.architecture,
+                case when n.desired_state = 'offline' or n.last_seen_at is null or n.last_seen_at < now() - interval '45 seconds' then 'offline' else n.state end as state,
+                n.desired_state as "desiredState",
                 n.total_vcpu as "totalVcpu", n.total_memory_mib as "totalMemoryMib",
                 n.total_disk_gib as "totalDiskGib", n.allocated_vcpu as "allocatedVcpu",
                 n.allocated_memory_mib as "allocatedMemoryMib", n.allocated_disk_gib as "allocatedDiskGib",
