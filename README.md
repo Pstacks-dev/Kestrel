@@ -147,7 +147,8 @@ Deploying the frontend and short-lived HTTP API to Vercel:
    - `SUPABASE_ANON_KEY`: Supabase anon key
    - `SUPABASE_DB_URL`: Supabase transaction pooler URL (port 6543)
    - `DB_POOL_MAX`: `1`
-   - `DB_SSL_REJECT_UNAUTHORIZED`: `true`
+   - `SUPABASE_DB_SSL_CA`: Supabase database CA certificate in PEM format (recommended; enables verified TLS)
+   - `DB_SSL_REJECT_UNAUTHORIZED`: `false` only as a temporary compatibility fallback if the pooler's certificate chain cannot be verified; TLS encryption remains enabled
    - `KESTREL_ENCRYPTION_KEY`: 32-character secret key for AES-256-GCM
    - `CRON_SECRET`: Secret token for Vercel Cron
 3. Vercel Cron automatically calls `/api/cron/recovery` every minute to clean up stale worker leases.
@@ -161,7 +162,9 @@ Deploying the frontend and short-lived HTTP API to Vercel:
 | :--- | :--- | :--- |
 | `SUPABASE_URL` | Server | Supabase API URL |
 | `SUPABASE_ANON_KEY` | Server | Supabase public/anon key (used for server-side user JWT validation) |
-| `SUPABASE_DB_URL` | Server | PostgreSQL connection string |
+| `SUPABASE_DB_URL` | Server | Supabase transaction-pooler PostgreSQL connection string |
+| `SUPABASE_DB_SSL_CA` | Server (optional) | Supabase database CA certificate PEM; when set, certificate verification is enforced |
+| `DB_SSL_REJECT_UNAUTHORIZED` | Server (optional) | Set to `false` only as a temporary TLS certificate-verification fallback; never disable TLS itself |
 | `KESTREL_ENCRYPTION_KEY` | Server | AES-256-GCM key for encrypting project secrets at rest |
 | `CRON_SECRET` | Server (Vercel) | Optional secret protecting `/api/cron/recovery` |
 | `KESTREL_GIT_ALLOWED_HOSTS`| Server | Comma-separated list of allowed Git hostnames (`github.com,gitlab.com`) |
