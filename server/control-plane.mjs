@@ -20,6 +20,7 @@ import {
 } from './lib/auth.mjs';
 import { registerProjectFileRoutes } from './routes/project-files.mjs';
 import { registerArtifactRoutes } from './routes/artifacts.mjs';
+import { registerDeploymentRoutes } from './routes/deployments.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -967,7 +968,7 @@ app.get('/api/jobs/:jobId/logs', userAuth, async (req, res) => {
 // Worker Protocol Endpoints
 // ==========================================
 app.post('/api/workers/register', workerAuth, async (req, res) => {
-  const { workerId, hostname = workerId, arch = 'linux/amd64', region = 'unknown', maxConcurrency = 1 } = req.body || {};
+  const { workerId, hostname = workerId, arch = 'linux/amd64', region = 'unknown', maxConcurrency = 1, runtime = 'node' } = req.body || {};
   if (workerId !== req.worker.id) {
     return res.status(403).json({ error: 'Worker identity mismatch' });
   }
@@ -975,9 +976,9 @@ app.post('/api/workers/register', workerAuth, async (req, res) => {
     await query(
       `update public.workers
        set hostname = $2, architecture = $3, region = $4,
-           max_concurrency = $5,\n           state = case when state in ('draining', 'offline') then state else 'online' end,\n           last_seen_at = now()
+           max_concurrency = $5, runtime = $7,\n           state = case when state in ('draining', 'offline') then state else 'online' end,\n           last_seen_at = now()
        where id = $1 and organization_id = $6`,
-      [workerId, hostname, arch, region, Math.min(128, Math.max(1, Number(maxConcurrency))), req.worker.organizationId]
+      [workerId, hostname, arch, region, Math.min(128, Math.max(1, Number(maxConcurrency))), req.worker.organizationId, runtime === 'rust' ? 'rust' : 'node']
     );
     res.json({ ok: true, workerId });
   } catch (e) {
@@ -1067,11 +1068,20 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
 
       // Find candidate job where all dependencies succeeded
       const candidate = await c.query(
-        `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id
+        `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id,
+                de.id as deployment_env_id, de.host_port as deployment_host_port,
+                de.container_port as deployment_container_port, de.health_path as deployment_health_path,
+                de.health_timeout_seconds as deployment_health_timeout,
+                de.public_url as deployment_public_url, de.secret_names as deployment_secret_names,
+                current_release.image as previous_deployment_image,
+                current_release.container_name as previous_deployment_container
          from public.jobs j
          join public.pipeline_runs r on r.id = j.run_id
          join public.projects p on p.id = r.project_id
+         left join public.deployment_environments de on de.id = j.deployment_environment_id
+         left join public.deployment_releases current_release on current_release.id = de.current_release_id
          where p.organization_id = $1 and j.status = 'queued'
+           and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and w.runtime = 'rust'))
            and not exists (
              select 1 from unnest(j.needs) d(id)
              join public.jobs dep on dep.run_id = j.run_id and dep.external_id = d.id
@@ -1080,7 +1090,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          order by j.created_at
          limit 1
          for update of j skip locked`,
-        [w.organization_id]
+        [w.organization_id, w.id]
       );
 
       if (!candidate.rowCount) return null;
@@ -1101,6 +1111,9 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       );
 
       await c.query("update public.workers set state = 'busy', last_seen_at = now() where id = $1", [w.id]);
+      if (j.job_type === 'deployment' && j.deployment_release_id) {
+        await c.query("update public.deployment_releases set status = 'deploying' where id = $1 and status = 'queued'", [j.deployment_release_id]);
+      }
 
       // Fetch and decrypt project secrets for this job
       const secretsQuery = await c.query(
@@ -1129,6 +1142,19 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         cpuMillicores: j.cpu_millicores,
         timeoutSeconds: j.timeout_seconds,
         secrets,
+        jobType: j.job_type || 'build',
+        deployment: j.job_type === 'deployment' ? {
+          environmentId: j.deployment_env_id,
+          releaseId: j.deployment_release_id,
+          hostPort: j.deployment_host_port,
+          containerPort: j.deployment_container_port,
+          healthPath: j.deployment_health_path,
+          healthTimeoutSeconds: j.deployment_health_timeout,
+          publicUrl: j.deployment_public_url,
+          secretNames: j.deployment_secret_names || [],
+          previousImage: j.previous_deployment_image,
+          previousContainer: j.previous_deployment_container,
+        } : null,
       };
     });
 
@@ -1427,6 +1453,7 @@ app.get('/api/cron/recovery', async (req, res) => {
 // Private project file storage endpoints; membership is checked on every request.
 registerProjectFileRoutes(app, { userAuth, workerAuth, query });
 registerArtifactRoutes(app, { userAuth, workerAuth, query });
+registerDeploymentRoutes(app, { userAuth, query, transaction });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
