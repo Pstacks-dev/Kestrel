@@ -120,7 +120,7 @@ fn validate_id(id: &str) -> Result<(), ComputeError> {
 impl ComputeProvider for FirecrackerProvider {
     fn kind(&self) -> ProviderKind { ProviderKind::Firecracker }
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { virtual_machines: true, snapshots: false, live_migration: false, console: true, cluster_scheduling: false }
+        ProviderCapabilities { virtual_machines: true, snapshots: false, live_migration: false, console: false, cluster_scheduling: false }
     }
 
     async fn health(&self) -> Result<(), ComputeError> {
