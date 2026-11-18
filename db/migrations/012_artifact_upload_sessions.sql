@@ -16,3 +16,5 @@ create index if not exists idx_artifact_upload_sessions_expiry
   on public.artifact_upload_sessions(expires_at);
 
 alter table public.artifact_upload_sessions enable row level security;
+
+create unique index if not exists idx_artifacts_object_key_unique on public.artifacts(object_key);
