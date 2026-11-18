@@ -758,6 +758,9 @@ app.post('/api/runs', sensitiveLimiter, userAuth, async (req, res) => {
       if (!pr.rowCount || !['owner', 'admin', 'developer'].includes(pr.rows[0].role)) {
         throw Object.assign(new Error('Project access denied'), { status: 403 });
       }
+      if (pr.rows[0].source_type === 'upload') {
+        throw Object.assign(new Error('Pipelines for uploaded source projects are not enabled until the upload-to-worker source handoff is deployed.'), { status: 409 });
+      }
 
       const safe = validatePipelineJobs(jobs);
       const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1', [projectId]);
