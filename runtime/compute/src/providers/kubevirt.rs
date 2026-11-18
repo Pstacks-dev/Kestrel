@@ -277,8 +277,13 @@ impl ComputeProvider for KubeVirtProvider {
             "spec":{"target":{"apiGroup":"kubevirt.io","kind":"VirtualMachine","name":instance_id},
                 "virtualMachineSnapshotName":snapshot_id}
         });
-        self.request(Method::POST, self.restore_collection_url(), Some(manifest)).await?;
         let restore_url = format!("{}/{}", self.restore_collection_url(), restore_name);
+        let existing = self.request(Method::GET, restore_url.clone(), None).await;
+        if existing.is_err() {
+            self.request(Method::POST, self.restore_collection_url(), Some(manifest)).await?;
+        } else if existing.as_ref().ok().and_then(|value| value.pointer("/status/complete")).and_then(Value::as_bool) == Some(true) {
+            return Ok(());
+        }
         for _ in 0..30 {
             let restore = self.request(Method::GET, restore_url.clone(), None).await?;
             if restore.pointer("/status/complete").and_then(Value::as_bool) == Some(true) {
@@ -297,10 +302,9 @@ impl ComputeProvider for KubeVirtProvider {
     async fn delete_snapshot(&self, instance_id: &str, snapshot_id: &str) -> Result<(), ComputeError> {
         validate_resource_name(instance_id)?;
         validate_resource_name(snapshot_id)?;
-        let snapshot = self.request(Method::GET, self.snapshot_url(snapshot_id), None).await?;
-        let owner = snapshot.pointer("/metadata/labels/kestrel.io~1instance").and_then(Value::as_str);
-        if owner != Some(instance_id) {
-            return Err(ComputeError::Provider("KubeVirt snapshot does not belong to this VM".into()));
+        let snapshots = self.list_snapshots(instance_id).await?;
+        if !snapshots.iter().any(|snapshot| snapshot.provider_id == snapshot_id) {
+            return Ok(());
         }
         self.request(Method::DELETE, self.snapshot_url(snapshot_id),
             Some(json!({"apiVersion":"v1","kind":"DeleteOptions","propagationPolicy":"Foreground"}))).await.map(|_| ())
