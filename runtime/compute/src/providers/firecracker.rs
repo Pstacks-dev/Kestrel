@@ -218,7 +218,6 @@ impl ComputeProvider for FirecrackerProvider {
             .arg("--chroot-base-dir").arg(&self.config.api_socket_dir)
             .arg("--").arg("--api-sock").arg("/run/firecracker.socket")
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
-            .kill_on_drop(true)
             .spawn().map_err(|e| ComputeError::Provider(format!("Unable to start Firecracker jailer: {e}")))?;
         if let Err(error) = self.wait_for_socket(&spec.name, &mut child).await {
             let _ = child.kill().await;
@@ -293,7 +292,6 @@ impl ComputeProvider for FirecrackerProvider {
             let _ = tokio::fs::remove_dir_all(self.config.api_socket_dir.join("firecracker").join(&spec.name)).await;
             return Err(error);
         }
-        child.kill_on_drop(false);
         children.insert(spec.name.clone(), child);
         drop(children);
         self.get_instance(&spec.name).await
