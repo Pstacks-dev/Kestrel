@@ -20,7 +20,9 @@ pub struct InstanceSpec {
     pub name: String,
     pub image: String,
     pub vcpus: u16,
+    #[serde(rename = "memoryMiB")]
     pub memory_mib: u32,
+    #[serde(rename = "diskGiB")]
     pub disk_gib: u16,
     pub region: Option<String>,
     pub ssh_public_key: Option<String>,
