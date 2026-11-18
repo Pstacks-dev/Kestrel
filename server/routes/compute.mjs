@@ -132,15 +132,32 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
     res.json({ ok: true, node: result.rows[0] });
   });
 
-  app.post('/api/compute/agent/heartbeat', agentAuth, async (_req, res) => {
-    const result = await query(
-      `update public.compute_nodes set
-         state = case when desired_state = 'offline' then 'offline' when desired_state = 'draining' then 'draining' else 'online' end,
-         last_seen_at = now(), updated_at = now()
-       where id = $1 returning state, desired_state as "desiredState"`,
-      [req.computeNode.id]
-    );
-    res.json({ ok: true, ...result.rows[0] });
+  app.post('/api/compute/agent/heartbeat', agentAuth, async (req, res) => {
+    const { operationId, leaseToken } = req.body || {};
+    try {
+      const result = await transaction(async (c) => {
+        const node = await c.query(
+          `update public.compute_nodes set
+             state = case when desired_state = 'offline' then 'offline' when desired_state = 'draining' then 'draining' else 'online' end,
+             last_seen_at = now(), updated_at = now()
+           where id = $1 returning state, desired_state as "desiredState"`,
+          [req.computeNode.id]
+        );
+        if (operationId || leaseToken) {
+          if (typeof operationId !== 'string' || typeof leaseToken !== 'string') return { leaseValid: false, node: node.rows[0] };
+          const lease = await c.query(
+            `update public.compute_operations set lease_expires_at = now() + interval '90 seconds'
+             where id = $1 and node_id = $2 and status = 'claimed' and lease_token = $3
+               and lease_expires_at > now() returning id`,
+            [operationId, req.computeNode.id, leaseToken]
+          );
+          if (!lease.rowCount) return { leaseValid: false, node: node.rows[0] };
+        }
+        return { leaseValid: true, node: node.rows[0] };
+      });
+      if (!result.leaseValid) return fail(res, 409, 'Compute operation lease is invalid or expired');
+      res.json({ ok: true, ...result.node });
+    } catch { fail(res, 500, 'Compute node heartbeat failed'); }
   });
 
   app.post('/api/compute/agent/claim', agentAuth, async (_req, res) => {
@@ -282,11 +299,11 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
           [organizationId]
         );
         const usageResult = await c.query(
-          `select count(*)::int as used_instances,
-             coalesce(sum(vcpus),0)::bigint as used_vcpu,
-             coalesce(sum(memory_mib),0)::bigint as used_memory,
-             coalesce(sum(disk_gib),0)::bigint as used_disk
-           from public.compute_instances where organization_id = $1 and status <> 'deleted'`,
+          `select count(*) filter (where status not in ('deleted','failed'))::int as used_instances,
+             coalesce(sum(vcpus) filter (where status not in ('deleted','failed')),0)::bigint as used_vcpu,
+             coalesce(sum(memory_mib) filter (where status not in ('deleted','failed')),0)::bigint as used_memory,
+             coalesce(sum(disk_gib) filter (where status not in ('deleted','failed')),0)::bigint as used_disk
+           from public.compute_instances where organization_id = $1`,
           [organizationId]
         );
         const quota = { ...quotaResult.rows[0], ...usageResult.rows[0] };
