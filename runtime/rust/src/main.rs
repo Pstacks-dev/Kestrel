@@ -281,7 +281,8 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
                 }
                 _ = &mut deadline => {
                     timed_out = true;
-                    let _ = child.kill().await;
+                    // Stop the container itself; killing only the Docker CLI would orphan the build.
+                    let _ = Command::new(&cfg.docker).args(["kill", &container]).output().await;
                     break child.wait().await.context("waiting for timed-out Docker job")?;
                 }
             }
@@ -346,8 +347,11 @@ async fn main() -> Result<()> {
         } else {
             tokio::select! {
                 result = active.join_next() => {
-                    if let Some(Err(error)) = result { error!(%error, "worker job task panicked"); }
-                    else if let Some(Ok(Err(error))) = result { error!(%error, "worker job execution failed"); }
+                    match result {
+                        Some(Ok(Ok(()))) | None => {}
+                        Some(Ok(Err(error))) => error!(%error, "worker job execution failed"),
+                        Some(Err(error)) => error!(%error, "worker job task panicked"),
+                    }
                 }
                 _ = time::sleep(Duration::from_secs(3)) => {}
             }
