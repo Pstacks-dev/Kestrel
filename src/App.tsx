@@ -816,6 +816,43 @@ function AppShell({ page }: { page: Page }) {
     } catch {}
   }
 
+  async function downloadArtifact(artifactId: string) {
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/artifacts/${artifactId}/download`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not prepare artifact download');
+      const link = document.createElement('a');
+      link.href = data.url;
+      link.download = data.name || 'kestrel-artifact';
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error: any) {
+      setActionMessage(error.message || 'Artifact download failed');
+    }
+  }
+
+  async function deleteArtifact(artifactId: string) {
+    if (!window.confirm('Permanently delete this stored artifact?')) return;
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/artifacts/${artifactId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not delete artifact');
+      setActionMessage('Artifact deleted.');
+      await connect();
+    } catch (error: any) {
+      setActionMessage(error.message || 'Artifact deletion failed');
+    }
+  }
+
   const counts = useMemo(
     () => ({
       projects: snapshot?.projects?.length ?? 0,
@@ -1461,7 +1498,14 @@ function AppShell({ page }: { page: Page }) {
                     </div>
                     <span className="text-xs text-neutral-400 font-mono">
                       {new Date(a.createdAt).toLocaleDateString()}
+                      {a.expiresAt ? ` · Expires ${new Date(a.expiresAt).toLocaleDateString()}` : ' · No expiry'}
                     </span>
+                    <button className="outline-button" onClick={() => downloadArtifact(a.id)} title="Download artifact">
+                      <ArrowDownRight size={15} /> Download
+                    </button>
+                    <button className="outline-button" onClick={() => deleteArtifact(a.id)} title="Delete artifact">
+                      <Trash2 size={15} /> Delete
+                    </button>
                   </div>
                 ))
               ) : (
