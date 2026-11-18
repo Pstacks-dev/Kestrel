@@ -33,7 +33,8 @@ if (supabaseUrl && supabaseAnonKey) {
 }
 
 app.disable('x-powered-by');
-app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
+// Vercel terminates public requests at its edge proxy; trust exactly one hop there.
+app.set('trust proxy', process.env.VERCEL ? 1 : process.env.TRUST_PROXY === 'true' ? 1 : false);
 
 app.use(
   helmet({
@@ -297,6 +298,7 @@ app.get('/api/health', async (_req, res) => {
       time: now(),
     });
   } catch (e) {
+    console.error('Database health check failed:', { code: e.code, message: e.message });
     res.status(503).json({
       ok: false,
       database: 'unavailable',
@@ -362,6 +364,7 @@ app.get('/api/workspaces', userAuth, async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
+    console.error('Workspace lookup failed:', { code: e.code, message: e.message });
     res.status(500).json({ error: 'Could not fetch workspaces' });
   }
 });
@@ -439,6 +442,7 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
       serverTime: now(),
     });
   } catch (e) {
+    console.error('Workspace snapshot lookup failed:', { code: e.code, message: e.message });
     res.status(500).json({ error: 'Could not load workspace snapshot' });
   }
 });
