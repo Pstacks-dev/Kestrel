@@ -1388,7 +1388,8 @@ app.get('/api/admin/audit', userAuth, platformAdmin, async (_req, res) => {
 app.get('/api/cron/recovery', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret) return res.status(503).json({ error: 'Cron authentication is not configured' });
+  if (authHeader !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: 'Unauthorized cron request' });
   }
   try {
