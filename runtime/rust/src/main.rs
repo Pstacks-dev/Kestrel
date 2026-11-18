@@ -67,7 +67,7 @@ fn config() -> Result<Config> {
         workdir: PathBuf::from(get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work")),
         host_workdir: PathBuf::from(get("KESTREL_WORKER_HOST_WORKDIR", &get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work"))),
         image: get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim"),
-        network: get("KESTREL_JOB_NETWORK", "bridge"), docker: get("KESTREL_DOCKER_BIN", "docker"),
+        network: if get("KESTREL_JOB_NETWORK", "bridge") == "none" { "none".into() } else { "bridge".into() }, docker: get("KESTREL_DOCKER_BIN", "docker"),
     })
 }
 
