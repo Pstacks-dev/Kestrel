@@ -311,10 +311,10 @@ impl ComputeProvider for FirecrackerProvider {
             return Ok(self.instance(id, InstanceState::Failed));
         }
         let state = self.api_request(id, "GET", "/vm", None).await
-            .and_then(|v| match v.get("state").and_then(Value::as_str) {
-                Some("Running") => Ok(InstanceState::Running),
-                Some("Paused") => Ok(InstanceState::Stopped),
-                _ => Ok(InstanceState::Unknown),
+            .map(|v| match v.get("state").and_then(Value::as_str) {
+                Some("Running") => InstanceState::Running,
+                Some("Paused") => InstanceState::Stopped,
+                _ => InstanceState::Unknown,
             })?;
         let mut instance = self.instance(id, state);
         instance.ipv4 = self.discover_ipv4(id).await;
