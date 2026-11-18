@@ -61,7 +61,7 @@ impl IncusProvider {
     }
 
     fn api_url(&self, path: &str) -> String {
-        format!("{}/1.0/{}?project={}", self.config.https_endpoint.trim_end_matches('/'), path.trim_start_matches('/'), self.config.project)
+        format!("{}/1.0/{}?project={}", self.config.https_endpoint.trim_end_matches('/'), path.trim_start_matches("/1.0/").trim_start_matches('/'), self.config.project)
     }
 
     async fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value, ComputeError> {
@@ -76,7 +76,7 @@ impl IncusProvider {
         let status = response.status();
         let value: Value = response.json().await
             .map_err(|e| ComputeError::Provider(format!("Invalid Incus API response: {e}")))?;
-        if !status.is_success() || value.get("type").and_then(Value::as_string) == Some("error") {
+        if !status.is_success() || value.get("type").and_then(Value::as_str) == Some("error") {
             let message = value.pointer("/metadata/error").and_then(Value::as_str).unwrap_or("Incus returned an error");
             return Err(ComputeError::Provider(format!("Incus HTTP {status}: {message}")));
         }
