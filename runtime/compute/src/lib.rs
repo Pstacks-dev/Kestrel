@@ -33,15 +33,22 @@ impl InstanceSpec {
             && self.name.as_bytes()[0].is_ascii_alphanumeric()
             && self.name.as_bytes()[self.name.len()-1].is_ascii_alphanumeric();
         if !name_ok { return Err(ComputeError::InvalidSpec("invalid VM name".into())); }
-        if self.image.trim().is_empty() || self.image.len() > 512 {
-            return Err(ComputeError::InvalidSpec("image is required and limited to 512 characters".into()));
+        if self.image.trim().is_empty() || self.image.len() > 512
+            || self.image.bytes().any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
+        {
+            return Err(ComputeError::InvalidSpec("image is required, must not contain whitespace, and is limited to 512 characters".into()));
         }
         if !(1..=64).contains(&self.vcpus) { return Err(ComputeError::InvalidSpec("vCPUs must be 1-64".into())); }
         if !(512..=262144).contains(&self.memory_mib) { return Err(ComputeError::InvalidSpec("memory must be 512-262144 MiB".into())); }
         if !(5..=4096).contains(&self.disk_gib) { return Err(ComputeError::InvalidSpec("disk must be 5-4096 GiB".into())); }
         if let Some(key) = &self.ssh_public_key {
-            if key.len() > 16384 || !(key.starts_with("ssh-ed25519 ") || key.starts_with("ssh-rsa ") || key.starts_with("ecdsa-sha2-")) {
-                return Err(ComputeError::InvalidSpec("unsupported SSH public key".into()));
+            let mut fields = key.split_whitespace();
+            let key_type = fields.next().unwrap_or_default();
+            let key_data = fields.next().unwrap_or_default();
+            let supported = matches!(key_type, "ssh-ed25519" | "ssh-rsa" | "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521");
+            let valid_data = !key_data.is_empty() && key_data.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/' || c == b'=');
+            if key.len() > 16384 || key.bytes().any(|c| c.is_ascii_control()) || !supported || !valid_data {
+                return Err(ComputeError::InvalidSpec("SSH key must be a single-line supported OpenSSH public key".into()));
             }
         }
         Ok(())
