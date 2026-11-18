@@ -71,6 +71,7 @@ fn provider(cfg: &Config) -> Result<Arc<dyn ComputeProvider>> {
             firecracker_binary: PathBuf::from(required("KESTREL_FIRECRACKER_BINARY")?),
             kernel_image_dir: PathBuf::from(required("KESTREL_FIRECRACKER_KERNEL_DIR")?),
             rootfs_image_dir: PathBuf::from(required("KESTREL_FIRECRACKER_ROOTFS_DIR")?),
+            network_bridge: required("KESTREL_FIRECRACKER_BRIDGE")?,
             uid: env::var("KESTREL_FIRECRACKER_UID").unwrap_or_else(|_| "1000".into()).parse()?,
             gid: env::var("KESTREL_FIRECRACKER_GID").unwrap_or_else(|_| "1000".into()).parse()?,
         })?)),
