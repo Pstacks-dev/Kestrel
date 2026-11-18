@@ -160,7 +160,7 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
     } catch { fail(res, 500, 'Compute node heartbeat failed'); }
   });
 
-  app.post('/api/compute/agent/claim', agentAuth, async (_req, res) => {
+  app.post('/api/compute/agent/claim', agentAuth, async (req, res) => {
     try {
       const operation = await transaction(async (c) => {
         const node = await c.query('select * from public.compute_nodes where id = $1 for update', [req.computeNode.id]);
