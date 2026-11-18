@@ -115,10 +115,11 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
                 w.hostname as "workerName", w.state as "workerState", w.runtime,
                 current_release.release_number as "currentReleaseNumber",
                 current_release.image as "currentImage", current_release.status as "currentReleaseStatus",
-                e.created_at as "createdAt"
+                pending_release.status as "pendingReleaseStatus", e.created_at as "createdAt"
          from public.deployment_environments e
          join public.workers w on w.id = e.worker_id
          left join public.deployment_releases current_release on current_release.id = e.current_release_id
+         left join lateral (select status from public.deployment_releases pr where pr.environment_id = e.id and pr.status in ('queued','deploying') order by pr.release_number desc limit 1) pending_release on true
          where e.project_id = $1 order by e.created_at asc`,
         [req.params.projectId]
       );
