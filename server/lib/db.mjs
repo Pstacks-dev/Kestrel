@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { SUPABASE_ROOT_CA_BUNDLE } from './supabase-ca.mjs';
 const { Pool } = pg;
 
 let poolInstance = null;
@@ -19,7 +20,10 @@ export function getPool() {
     ssl:
       process.env.DB_SSL === 'disable'
         ? false
-        : { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' },
+        : {
+            ca: process.env.SUPABASE_DB_CA_CERT?.replace(/\\n/g, '\n') || SUPABASE_ROOT_CA_BUNDLE,
+            rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+          },
   });
 
   poolInstance.on('error', (err) => console.error('Unexpected PostgreSQL pool error', err));
