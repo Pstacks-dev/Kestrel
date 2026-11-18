@@ -37,6 +37,24 @@ jobs:
       - name: Run tests
         run: npm test
 
+  rust-runtime:
+    name: Test native Rust execution runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --manifest-path runtime/rust/Cargo.toml -- --check
+      - name: Run Rust tests
+        run: cargo test --manifest-path runtime/rust/Cargo.toml
+      - name: Run Clippy
+        run: cargo clippy --manifest-path runtime/rust/Cargo.toml -- -D warnings
+
   docker:
     name: Build and smoke-test worker containers
     runs-on: ubuntu-latest
