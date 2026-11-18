@@ -759,9 +759,6 @@ app.post('/api/runs', sensitiveLimiter, userAuth, async (req, res) => {
       if (!pr.rowCount || !['owner', 'admin', 'developer'].includes(pr.rows[0].role)) {
         throw Object.assign(new Error('Project access denied'), { status: 403 });
       }
-      if (pr.rows[0].source_type === 'upload') {
-        throw Object.assign(new Error('Pipelines for uploaded source projects are not enabled until the upload-to-worker source handoff is deployed.'), { status: 409 });
-      }
 
       const safe = validatePipelineJobs(jobs);
       const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1', [projectId]);
@@ -1033,7 +1030,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
 
       // Find candidate job where all dependencies succeeded
       const candidate = await c.query(
-        `select j.*, r.branch, r.commit_sha, p.repository_url, p.id as project_id
+        `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id
          from public.jobs j
          join public.pipeline_runs r on r.id = j.run_id
          join public.projects p on p.id = r.project_id
@@ -1086,6 +1083,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         ...u.rows[0],
         leaseToken: lease,
         repositoryUrl: j.repository_url,
+        sourceType: j.source_type,
         branch: j.branch,
         commitSha: j.commit_sha,
         runId: j.run_id,
@@ -1307,7 +1305,7 @@ app.get('/api/cron/recovery', async (req, res) => {
 });
 
 // Private project file storage endpoints; membership is checked on every request.
-registerProjectFileRoutes(app, { userAuth, query });
+registerProjectFileRoutes(app, { userAuth, workerAuth, query });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
