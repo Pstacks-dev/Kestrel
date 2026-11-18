@@ -283,12 +283,28 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
         const current = op.rows[0];
         const instance = await c.query('select * from public.compute_instances where id = $1 for update', [current.instance_id]);
         if (!instance.rowCount) return null;
-        const nextStatus = success ? (current.action === 'delete' ? 'deleted' : ['running','stopped'].includes(state) ? state : current.action === 'start' ? 'running' : current.action === 'stop' ? 'stopped' : 'stopped') : 'failed';
+        const operationError = success ? null : String(error || 'Provider operation failed').slice(0, 2000);
         await c.query(
           `update public.compute_operations set status = $2, lease_token = null, lease_expires_at = null,
              error_message = $3, finished_at = now() where id = $1`,
-          [operationId, success ? 'succeeded' : 'failed', success ? null : String(error || 'Provider operation failed').slice(0, 2000)]
+          [operationId, success ? 'succeeded' : 'failed', operationError]
         );
+        if (current.action.startsWith('snapshot_')) {
+          const snapshot = await c.query('select * from public.compute_snapshots where id = $1 for update', [current.snapshot_id]);
+          if (!snapshot.rowCount) return null;
+          const snapshotStatus = success
+            ? current.action === 'snapshot_create' ? 'ready' : current.action === 'snapshot_delete' ? 'deleted' : 'ready'
+            : current.action === 'snapshot_restore' ? 'ready' : 'failed';
+          await c.query(
+            `update public.compute_snapshots set provider_snapshot_id = coalesce($2, provider_snapshot_id),
+               status = $3, error_message = $4,
+               deleted_at = case when $3 = 'deleted' then now() else deleted_at end, updated_at = now()
+             where id = $1`,
+            [current.snapshot_id, current.action === 'snapshot_create' ? providerId || null : null, snapshotStatus, operationError]
+          );
+          return { id: operationId, instanceId: current.instance_id, snapshotId: current.snapshot_id, status: success ? 'succeeded' : 'failed' };
+        }
+        const nextStatus = success ? (current.action === 'delete' ? 'deleted' : ['running','stopped'].includes(state) ? state : current.action === 'start' ? 'running' : current.action === 'stop' ? 'stopped' : 'stopped') : 'failed';
         await c.query(
           `update public.compute_instances set
              provider_id = coalesce($2, provider_id),
@@ -298,7 +314,7 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
              deleted_at = case when $3 = 'deleted' then now() else deleted_at end,
              updated_at = now()
            where id = $1`,
-          [current.instance_id, providerId || null, nextStatus, ipv4.length ? ipv4 : null, success ? null : String(error || 'Provider operation failed').slice(0, 2000)]
+          [current.instance_id, providerId || null, nextStatus, ipv4.length ? ipv4 : null, operationError]
         );
         if (current.action === 'delete' && success) {
           await c.query(
