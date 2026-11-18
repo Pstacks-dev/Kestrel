@@ -20,6 +20,7 @@ COPY worker ./worker
 RUN mkdir -p /var/lib/kestrel/work \
  && chown -R node:node /var/lib/kestrel
 
-USER node
+# Runs as root because access to the mounted Docker socket requires daemon privileges.
+# CI job containers themselves run with reduced capabilities and a non-root UID.
 
 CMD ["node", "worker/agent.mjs"]
