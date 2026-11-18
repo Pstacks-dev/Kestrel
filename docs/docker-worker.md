@@ -1,0 +1,85 @@
+# Run a Kestrel Docker worker
+
+This Compose service runs the existing Kestrel worker agent as a separate worker
+process. It connects outbound to the Kestrel control plane; the control plane
+does not need to connect inbound to your PC.
+
+## Requirements
+
+- Docker Desktop with the Linux container engine running, or a Linux Docker host.
+- A deployed Kestrel control-plane API reachable over HTTPS.
+- The worker database migrations and worker protocol endpoints deployed.
+- An administrator account with permission to provision workers.
+
+## 1. Provision a worker credential
+
+In Kestrel, sign in as a platform administrator and call:
+
+`POST /api/admin/workers`
+
+JSON body:
+
+```json
+{
+  "organizationId": "YOUR_ORGANIZATION_ID",
+  "name": "PStacks Docker Worker",
+  "region": "local",
+  "maxConcurrency": 1
+}
+```
+
+The response contains `workerId` and a one-time `token`. Copy both immediately.
+The token is shown only once. Never commit it or paste it into source control.
+
+## 2. Configure the worker
+
+From the repository root, copy `.env.worker.example` to `.env.worker`.
+Set `KESTREL_API_URL` to the public HTTPS base URL of the Kestrel API
+(no trailing slash), then enter the worker ID and one-time token.
+
+The example uses the `bridge` job network so normal build commands can download
+dependencies. Jobs still run in separate containers with resource limits and
+reduced Linux capabilities. Use `KESTREL_JOB_NETWORK=none` for builds that
+must not access the network.
+
+For production, set `KESTREL_JOB_IMAGE` to an immutable image reference pinned
+to a sha256 digest. Do not use a floating tag for production workers.
+
+## 3. Start the worker
+
+```sh
+docker compose --env-file .env.worker -f docker-compose.worker.yml up -d --build
+```
+
+Compose also reads `.env.worker` through the service's `env_file` setting.
+The command above builds the worker image and starts the worker in the background.
+
+View startup, registration, heartbeat, and job logs:
+
+```sh
+docker compose -f docker-compose.worker.yml logs -f kestrel-worker
+```
+
+Stop it:
+
+```sh
+docker compose -f docker-compose.worker.yml down
+```
+
+## 4. Verify in Kestrel
+
+The worker should register and appear online in the Kestrel admin worker
+overview. Queue a pipeline run for the same organization. The worker polls for
+jobs, starts a separate Docker container for each job, streams logs, and reports
+the result.
+
+## Security notes
+
+The worker container mounts the Docker daemon socket. Access to that socket is
+effectively host-root access, so only run trusted worker software and protect
+the host. Do not expose the Docker socket over TCP. Keep the one-time worker
+token private and revoke it from the Kestrel admin API if it is compromised.
+
+The worker needs outbound access to the Kestrel API. Build containers need
+outbound network access only when their pipeline steps fetch dependencies or
+other remote resources.
