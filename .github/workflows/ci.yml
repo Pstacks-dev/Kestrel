@@ -93,6 +93,8 @@ jobs:
         run: cargo test --manifest-path runtime/compute-agent/Cargo.toml
       - name: Run compute agent lints
         run: cargo clippy --manifest-path runtime/compute-agent/Cargo.toml --all-targets -- -D warnings
+      - name: Validate compute bridge firewall script
+        run: bash -n deploy/harden-compute-bridge.sh
 
   compute-providers:
     name: Test Kestrel Compute provider contracts
