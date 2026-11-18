@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 #[derive(Clone)]
 struct Config {
     api: String, token: String, worker_id: String, hostname: String,
-    region: String, concurrency: u32, workdir: PathBuf,
+    region: String, concurrency: u32, workdir: PathBuf, host_workdir: PathBuf,
     image: String, network: String, docker: String,
 }
 
@@ -19,7 +19,7 @@ struct ClaimResponse { job: Option<Job> }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Job {
-    id: String, command: String, lease_token: String, project_id: String,
+    id: String, command: String, #[serde(rename = "leaseToken")] lease_token: String, project_id: String,
     repository_url: Option<String>, source_type: Option<String>,
     branch: Option<String>, commit_sha: Option<String>,
     timeout_seconds: Option<u64>, memory_limit_mb: Option<u32>,
