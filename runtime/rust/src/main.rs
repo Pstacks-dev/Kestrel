@@ -188,8 +188,8 @@ async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Pa
         let source = workspace.join(&relative);
         if !source.is_file() { warn!(path = %raw, "declared artifact does not exist; skipping"); continue; }
         // Never follow a build-created symlink outside the job workspace when collecting artifacts.
-        let root = workspace.canonicalize().await?;
-        let canonical_source = source.canonicalize().await?;
+        let root = workspace.canonicalize()?;
+        let canonical_source = source.canonicalize()?;
         anyhow::ensure!(canonical_source.starts_with(&root), "artifact path escapes job workspace: {raw}");
         let metadata = fs::metadata(&canonical_source).await?;
         anyhow::ensure!(metadata.len() <= 100 * 1024 * 1024, "artifact exceeds 100 MiB: {raw}");
