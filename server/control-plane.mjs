@@ -1073,6 +1073,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
                 de.container_port as deployment_container_port, de.health_path as deployment_health_path,
                 de.health_timeout_seconds as deployment_health_timeout,
                 de.public_url as deployment_public_url, de.secret_names as deployment_secret_names,
+                new_release.image as deployment_image, new_release.container_name as deployment_container_name,
                 current_release.image as previous_deployment_image,
                 current_release.container_name as previous_deployment_container
          from public.jobs j
@@ -1080,6 +1081,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          join public.projects p on p.id = r.project_id
          left join public.deployment_environments de on de.id = j.deployment_environment_id
          left join public.deployment_releases current_release on current_release.id = de.current_release_id
+         left join public.deployment_releases new_release on new_release.id = j.deployment_release_id
          where p.organization_id = $1 and j.status = 'queued'
            and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
            and not exists (
@@ -1146,6 +1148,8 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         deployment: j.job_type === 'deployment' ? {
           environmentId: j.deployment_env_id,
           releaseId: j.deployment_release_id,
+          image: j.deployment_image,
+          containerName: j.deployment_container_name,
           hostPort: j.deployment_host_port,
           containerPort: j.deployment_container_port,
           healthPath: j.deployment_health_path,
