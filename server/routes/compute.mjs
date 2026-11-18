@@ -285,6 +285,27 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
     } catch { fail(res, 500, 'Could not complete compute operation'); }
   });
 
+  app.get('/api/compute/quotas', userAuth, async (req, res) => {
+    const organizationId = String(req.query.organizationId || '');
+    if (!organizationId) return fail(res, 400, 'organizationId required');
+    if (!await requireOrganizationRole(query, req.user.id, organizationId)) return fail(res, 403, 'Workspace access denied');
+    try {
+      await query('insert into public.compute_quotas(organization_id) values($1) on conflict do nothing', [organizationId]);
+      const result = await query(
+        `select q.max_instances as "maxInstances", q.max_vcpu as "maxVcpu",
+                q.max_memory_mib as "maxMemoryMiB", q.max_disk_gib as "maxDiskGiB",
+                count(i.id) filter (where i.status not in ('deleted','failed'))::int as "usedInstances",
+                coalesce(sum(i.vcpus) filter (where i.status not in ('deleted','failed')),0)::bigint as "usedVcpu",
+                coalesce(sum(i.memory_mib) filter (where i.status not in ('deleted','failed')),0)::bigint as "usedMemoryMiB",
+                coalesce(sum(i.disk_gib) filter (where i.status not in ('deleted','failed')),0)::bigint as "usedDiskGiB"
+         from public.compute_quotas q left join public.compute_instances i on i.organization_id = q.organization_id
+         where q.organization_id = $1 group by q.organization_id`,
+        [organizationId]
+      );
+      res.json({ quota: result.rows[0] });
+    } catch { fail(res, 500, 'Could not load compute quota'); }
+  });
+
   app.get('/api/compute/instances', userAuth, async (req, res) => {
     const organizationId = String(req.query.organizationId || '');
     if (!organizationId) return fail(res, 400, 'organizationId required');
