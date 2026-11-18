@@ -1236,13 +1236,21 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
 
   const r = await query(
     `update public.jobs
-     set status = case when $3 = 'failed' and attempt <= max_retries then 'queued' else $3 end,
+     set status = case
+           when status = 'canceled' then 'canceled'
+           when $3 = 'failed' and attempt <= max_retries then 'queued'
+           else $3 end,
          exit_code = $4,
          duration_ms = $5,
-         finished_at = case when $3 = 'failed' and attempt <= max_retries then null else now() end,
+         finished_at = case
+           when status = 'canceled' then coalesce(finished_at, now())
+           when $3 = 'failed' and attempt <= max_retries then null
+           else now() end,
          lease_token = null,
          lease_expires_at = null,
-         worker_id = case when $3 = 'failed' and attempt <= max_retries then null else worker_id end
+         worker_id = case
+           when status = 'canceled' or ($3 = 'failed' and attempt <= max_retries) then null
+           else worker_id end
      where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled') and lease_expires_at > now()
      returning run_id, status`,
     [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id]
