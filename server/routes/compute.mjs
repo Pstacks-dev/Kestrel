@@ -157,7 +157,7 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
         const candidate = await c.query(
           `select o.* from public.compute_operations o
            where o.node_id = $1 and o.status = 'queued' and o.available_at <= now()
-           order by o.created_at for update skip locked limit 1`,
+           order by o.created_at limit 1 for update skip locked`,
           [req.computeNode.id]
         );
         if (!candidate.rowCount) return null;
@@ -276,21 +276,20 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
     }
     try {
       const created = await transaction(async (c) => {
+        await c.query('insert into public.compute_quotas(organization_id) values($1) on conflict do nothing', [organizationId]);
         const quotaResult = await c.query(
-          `select q.max_instances, q.max_vcpu, q.max_memory_mib, q.max_disk_gib,
-             count(i.id) filter (where i.status <> 'deleted')::int as used_instances,
-             coalesce(sum(i.vcpus) filter (where i.status <> 'deleted'),0)::bigint as used_vcpu,
-             coalesce(sum(i.memory_mib) filter (where i.status <> 'deleted'),0)::bigint as used_memory,
-             coalesce(sum(i.disk_gib) filter (where i.status <> 'deleted'),0)::bigint as used_disk
-           from public.compute_quotas q left join public.compute_instances i on i.organization_id = q.organization_id
-           where q.organization_id = $1 group by q.organization_id for update of q`,
+          'select max_instances, max_vcpu, max_memory_mib, max_disk_gib from public.compute_quotas where organization_id = $1 for update',
           [organizationId]
         );
-        if (!quotaResult.rowCount) {
-          await c.query('insert into public.compute_quotas(organization_id) values($1) on conflict do nothing', [organizationId]);
-          return { error: 'Quota record initialized; retry the VM request' };
-        }
-        const quota = quotaResult.rows[0];
+        const usageResult = await c.query(
+          `select count(*)::int as used_instances,
+             coalesce(sum(vcpus),0)::bigint as used_vcpu,
+             coalesce(sum(memory_mib),0)::bigint as used_memory,
+             coalesce(sum(disk_gib),0)::bigint as used_disk
+           from public.compute_instances where organization_id = $1 and status <> 'deleted'`,
+          [organizationId]
+        );
+        const quota = { ...quotaResult.rows[0], ...usageResult.rows[0] };
         if (quota.used_instances >= quota.max_instances || Number(quota.used_vcpu) + vcpus > quota.max_vcpu ||
             Number(quota.used_memory) + memoryMib > Number(quota.max_memory_mib) ||
             Number(quota.used_disk) + diskGib > Number(quota.max_disk_gib)) {
@@ -306,7 +305,7 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
              and n.total_disk_gib - n.allocated_disk_gib >= $5
              and (select count(*) from public.compute_instances i where i.node_id = n.id and i.status not in ('deleted','failed')) < n.max_instances
            order by (n.allocated_vcpu::numeric / n.total_vcpu), n.last_seen_at desc
-           for update skip locked limit 1`,
+           limit 1 for update skip locked`,
           [provider, region, vcpus, memoryMib, diskGib]
         );
         if (!node.rowCount) return { error: 'No healthy compute node has enough capacity for this VM' };
