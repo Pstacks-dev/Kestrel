@@ -315,9 +315,9 @@ async function makeWorkspaceWritable(directory) {
   for (const entry of entries) {
     const target = path.join(directory, entry.name);
     if (entry.isDirectory()) await makeWorkspaceWritable(target);
-    await fs.chown(target, 1000, 1000);
+    await fs.lchown(target, 1000, 1000);
   }
-  await fs.chown(directory, 1000, 1000);
+  await fs.lchown(directory, 1000, 1000);
 }
 
 async function execute(job) {
