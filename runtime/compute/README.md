@@ -141,9 +141,21 @@ KESTREL_KUBEVIRT_TOKEN_FILE=/etc/kestrel/kubevirt-token
 KESTREL_KUBEVIRT_CA_FILE=/etc/kestrel/kubernetes-ca.crt
 ```
 
-The service account must be restricted to the configured namespace and only
-the VirtualMachine and VirtualMachineInstance operations Kestrel needs. The
-image field is a containerDisk image reference accessible to the cluster.
+Create the namespace and apply the supplied least-privilege Role,
+RoleBinding and ServiceAccount:
+
+```sh
+kubectl create namespace kestrel-workloads
+kubectl apply -f deploy/kubevirt-compute-agent-rbac.yaml
+```
+
+The service account is restricted to the configured namespace and only the
+VirtualMachine, VirtualMachineInstance, start/stop subresource and snapshot
+operations Kestrel needs. Supply a token through the configured token file and
+refresh that file before the token expires; the agent rereads it on every API
+request. The image field is a containerDisk image reference accessible to the
+cluster. Snapshot support also requires a compatible CSI snapshot class and
+KubeVirt snapshot controller.
 
 ### Run the host agent
 
