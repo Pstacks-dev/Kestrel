@@ -31,11 +31,16 @@ async function storageRequest(path, options = {}) {
 
 async function removeStoredObject(objectKey) {
   const key = objectKey.split('/').map(encodeURIComponent).join('/');
-  await storageRequest('/object/' + BUCKET + '/' + key, { method: 'DELETE' });
+  try {
+    await storageRequest('/object/' + BUCKET + '/' + key, { method: 'DELETE' });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+  }
 }
 
 export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
   app.put('/api/workers/jobs/:jobId/artifacts/upload', workerAuth, express.raw({ type: 'application/octet-stream', limit: MAX_ARTIFACT_BYTES }), async (req, res) => {
+    let uploadedObjectKey = null;
     try {
       const lease = String(req.get('x-kestrel-lease') || '');
       const name = String(req.get('x-artifact-name') || '').slice(0, 255);
@@ -56,6 +61,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       }
       const digest = crypto.createHash('sha256').update(req.body).digest('hex');
       const objectKey = `${run.rows[0].organization_id}/${run.rows[0].run_id}/${crypto.randomUUID()}-${name}`;
+      uploadedObjectKey = objectKey;
       await storageRequest(`/object/${BUCKET}/${objectKey.split('/').map(encodeURIComponent).join('/')}`, {
         method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'x-upsert': 'false' }, body: req.body,
       });
@@ -67,6 +73,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       );
       res.status(201).json({ artifact: result.rows[0] });
     } catch (error) {
+      if (uploadedObjectKey) await removeStoredObject(uploadedObjectKey).catch(() => {});
       console.error('Artifact upload failed:', error.message);
       res.status(error.status || 500).json({ error: error.message || 'Artifact upload failed' });
     }
