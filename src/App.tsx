@@ -1436,18 +1436,18 @@ function AppShell({ page }: { page: Page }) {
         {page === 'workers' && !inspectedRun && (
           <div className="page-content">
             <PageHeading
-              eyebrow="INFRASTRUCTURE / WORKERS"
-              title="Execution Fleet"
-              desc="Provisioned worker hosts running Docker sandboxes."
+              eyebrow="YOUR BUILD MACHINES"
+              title="Build machines"
+              desc="Connect a computer to Kestrel so it can run your pipeline builds, tests and deployment tasks."
             />
             <div className="panel">
               <div className="panel-head">
                 <div>
-                  <h3>Worker Nodes</h3>
-                  <p>Heartbeats, concurrency caps, and live status.</p>
+                  <h3>Connected computers</h3>
+                  <p>See which computers are available to run your projects.</p>
                 </div>
                 <Button kind="light" onClick={connect}>
-                  Refresh <Activity size={14} />
+                  Refresh status <Activity size={14} />
                 </Button>
               </div>
               {snapshot?.workers?.length ? (
@@ -1457,35 +1457,38 @@ function AppShell({ page }: { page: Page }) {
                     <div className="flex-1">
                       <b>{w.hostname}</b>
                       <small>
-                        ID: {w.id} · Arch: {w.arch} · Region: {w.region}
+                        Worker ID: {w.id} · {w.arch} · {w.region}
                       </small>
                     </div>
-                    <span className="row-meta font-mono text-xs">{w.maxConcurrency} slots</span>
+                    <span className="row-meta font-mono text-xs">{w.maxConcurrency} jobs at a time</span>
                     <span
                       className={`pill ${
                         w.state === 'online' || w.state === 'busy' ? 'pill-green' : 'pill-muted'
                       }`}
                     >
-                      {w.state}
+                      {w.state === 'online' ? 'Ready' : w.state === 'busy' ? 'Running a job' : w.state}
                     </span>
                   </div>
                 ))
               ) : (
-                <Empty
-                  icon={Server}
-                  title="No workers connected"
-                  desc="Start a Kestrel worker agent on a dedicated Linux machine with Docker installed."
-                  action="Read worker setup"
-                  onClick={() => go('docs')}
-                />
+                <div className="empty-state">
+                  <div className="empty-icon"><Server size={22} /></div>
+                  <h3>No computer connected yet</h3>
+                  <p> Kestrel needs a computer to do the actual work when you run a pipeline. Connect a Linux machine with Docker installed to get started.</p>
+                  <Button kind="light" onClick={() => go('docs')}>Open setup guide <ArrowRight size={14} /></Button>
+                </div>
               )}
             </div>
             <div className="panel info-panel mt-6">
-              <b>Worker Agent Start Command</b>
-              <code>node worker/agent.mjs</code>
-              <small>
-                Set KESTREL_API_URL, KESTREL_WORKER_ID, and KESTREL_WORKER_TOKEN in your worker environment.
-              </small>
+              <b>What is a build machine?</b>
+              <p>A build machine is a computer that Kestrel uses to run your project's commands — such as installing packages, building your app and running tests. You can use a dedicated Linux computer or server.</p>
+              <b className="mt-4">How connecting works</b>
+              <ol className="mt-2">
+                <li>Prepare a Linux computer with Docker installed.</li>
+                <li>Register that computer in Kestrel to receive its private connection details.</li>
+                <li>Start the Kestrel worker on that computer. It will appear here when connected.</li>
+              </ol>
+              <small>Keep the connection token private. It gives that computer permission to receive and run your build jobs.</small>
             </div>
           </div>
         )}
