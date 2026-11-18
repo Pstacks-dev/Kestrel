@@ -90,8 +90,15 @@ mod tests {
     use super::*;
     fn spec() -> InstanceSpec { InstanceSpec { name: "kestrel-vm-01".into(), image: "ubuntu:24.04".into(), vcpus: 2, memory_mib: 2048, disk_gib: 30, region: None, ssh_public_key: None } }
     #[test] fn valid_spec_passes() { assert!(spec().validate().is_ok()); }
-    #[test] fn unsafe_name_and_small_memory_are_rejected() {
+    #[test] fn unsafe_name_small_memory_and_multiline_ssh_are_rejected() {
         let mut value = spec(); value.name = "../root".into(); assert!(value.validate().is_err());
         let mut value = spec(); value.memory_mib = 128; assert!(value.validate().is_err());
+        let mut value = spec(); value.ssh_public_key = Some("ssh-ed25519 AAAA\\ncommand".into()); assert!(value.validate().is_err());
+    }
+
+    #[test] fn vm_spec_uses_api_resource_field_names() {
+        let value = serde_json::to_value(spec()).unwrap();
+        assert_eq!(value.get("memoryMiB").and_then(serde_json::Value::as_u64), Some(2048));
+        assert_eq!(value.get("diskGiB").and_then(serde_json::Value::as_u64), Some(30));
     }
 }
