@@ -4,6 +4,16 @@ const { Pool } = pg;
 
 let poolInstance = null;
 
+export function normalizeConnectionString(connectionString) {
+  const parsed = new URL(connectionString);
+  // node-postgres replaces the explicit ssl object when these parameters appear
+  // in a connection string. Keep TLS trust configuration in one place only.
+  for (const parameter of ['sslmode', 'sslrootcert', 'sslcert', 'sslkey']) {
+    parsed.searchParams.delete(parameter);
+  }
+  return parsed.toString();
+}
+
 export function getPool() {
   if (poolInstance) return poolInstance;
   const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
@@ -12,7 +22,7 @@ export function getPool() {
   }
 
   poolInstance = new Pool({
-    connectionString,
+    connectionString: normalizeConnectionString(connectionString),
     max: Number(process.env.DB_POOL_MAX || (process.env.VERCEL ? 1 : 5)),
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000,
