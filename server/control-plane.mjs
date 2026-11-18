@@ -719,9 +719,9 @@ app.post('/api/webhooks/github', async (req, res) => {
       );
       for (const j of safe) {
         await c.query(
-          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries)
-           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries]
+          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries, artifact_paths)
+           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries, j.artifacts]
         );
       }
       await c.query('update public.github_webhooks set last_triggered_at = now() where project_id = $1', [project.id]);
