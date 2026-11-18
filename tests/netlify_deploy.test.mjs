@@ -61,3 +61,33 @@ test('Netlify deployment refuses runs without uploaded site artifacts', async ()
     /no uploaded dist.*build.*files/
   );
 });
+
+
+test('Netlify deployment rejects duplicate output paths before calling the provider', async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalled = false;
+  globalThis.fetch = async () => { providerCalled = true; throw new Error('Provider must not be called'); };
+  try {
+    const bytes = Buffer.from('duplicate');
+    const query = async () => ({
+      rowCount: 2,
+      rows: [
+        { name: 'dist/index.html', object_key: 'runs/run-123/dist/index.html', content_type: 'text/html', size_bytes: bytes.length },
+        { name: 'build/index.html', object_key: 'runs/run-123/build/index.html', content_type: 'text/html', size_bytes: bytes.length },
+      ],
+    });
+    const supabaseAdmin = {
+      storage: { from: () => ({ download: async () => ({ data: new Blob([bytes]), error: null }) }) },
+    };
+    await assert.rejects(
+      deployNetlifyArtifacts({
+        siteId: 'site-123', token: 'n'.repeat(32), branch: 'main', commitSha: 'a'.repeat(40),
+        runId: 'run-123', query, supabaseAdmin, bucket: 'kestrel-artifacts',
+      }),
+      /Duplicate Netlify output path/
+    );
+    assert.equal(providerCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
