@@ -308,6 +308,18 @@ async function collectArtifacts(job, workspace) {
   }
 }
 
+async function makeWorkspaceWritable(directory) {
+  // The agent runs with Docker-daemon privileges; job containers run as UID 1000.
+  // Give that UID ownership of the checked-out workspace before bind-mounting it.
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) await makeWorkspaceWritable(target);
+    await fs.chown(target, 1000, 1000);
+  }
+  await fs.chown(directory, 1000, 1000);
+}
+
 async function execute(job) {
   const workspace = path.join(ROOT, String(job.runId), String(job.id));
   await fs.mkdir(workspace, { recursive: true });
@@ -373,6 +385,8 @@ async function execute(job) {
       const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${m}`));
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');
     }
+
+    if (EXECUTOR === 'docker') await makeWorkspaceWritable(workspace);
 
     const result = await runCommand(
       job.command,
