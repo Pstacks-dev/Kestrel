@@ -10,6 +10,7 @@ services:
       - .env.worker
     environment:
       KESTREL_WORKER_WORKDIR: /var/lib/kestrel/work
+      KESTREL_WORKER_HOST_WORKDIR: ${KESTREL_WORKER_HOST_WORKDIR:-/srv/kestrel-worker/work}
       KESTREL_DOCKER_BIN: docker
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
