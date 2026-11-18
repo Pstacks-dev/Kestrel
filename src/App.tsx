@@ -974,16 +974,16 @@ function AppShell({ page }: { page: Page }) {
                 </div>
                 <span className="pill pill-muted">{counts.projects} projects</span>
               </div>
-              {snapshot?.projects?.length ? (
+              {snapshot?.projects?.some((p: any) => p.sourceType !== 'upload') ? (
                 <form className="pipeline-form" onSubmit={triggerRun}>
                   <label>
                     Project
                     <select
                       required
-                      value={selectedProject || snapshot.projects[0].id}
+                      value={selectedProject || snapshot.projects.find((p: any) => p.sourceType !== 'upload')?.id}
                       onChange={(e) => setSelectedProject(e.target.value)}
                     >
-                      {snapshot.projects.map((p: any) => (
+                      {snapshot.projects.filter((p: any) => p.sourceType !== 'upload').map((p: any) => (
                         <option key={p.id} value={p.id}>
                           {p.name} ({p.defaultBranch})
                         </option>
@@ -1012,7 +1012,7 @@ function AppShell({ page }: { page: Page }) {
                 <Empty
                   icon={Workflow}
                   title="No projects registered"
-                  desc="Register a repository first to make it available for execution."
+                  desc="Connect a Git repository to run pipelines. Uploaded-source execution is being added separately."
                   action="Manage projects"
                   onClick={() => go('projects')}
                 />
@@ -1191,13 +1191,13 @@ function AppShell({ page }: { page: Page }) {
             <PageHeading
               eyebrow="INFRASTRUCTURE / PROJECTS"
               title="Projects & Repositories"
-              desc="Manage registered Git repositories, encrypted secrets, and GitHub webhooks."
+              desc="Create projects from a Git repository or upload source files directly into Kestrel."
             />
             <div className="panel">
               <div className="panel-head">
                 <div>
-                  <h3>Register a repository</h3>
-                  <p>Add a credential-free HTTPS Git URL on an approved host.</p>
+                  <h3>Create a project</h3>
+                  <p>Connect a Git repository or leave the URL empty to create an upload-only project.</p>
                 </div>
               </div>
               <form className="project-form" onSubmit={registerProject}>
@@ -1211,12 +1211,11 @@ function AppShell({ page }: { page: Page }) {
                   />
                 </label>
                 <label>
-                  Repository URL
+                  Repository URL (optional)
                   <input
                     value={projectRepo}
                     onChange={(e) => setProjectRepo(e.target.value)}
                     placeholder="https://github.com/org/repo.git"
-                    required
                   />
                 </label>
                 <label>
@@ -1229,7 +1228,7 @@ function AppShell({ page }: { page: Page }) {
                   />
                 </label>
                 <Button type="submit">
-                  Register project <Plus size={14} />
+                  Create project <Plus size={14} />
                 </Button>
               </form>
             </div>
@@ -1246,11 +1245,11 @@ function AppShell({ page }: { page: Page }) {
                 snapshot.projects.map((p: any) => (
                   <div className="table-row justify-between" key={p.id}>
                     <div className="flex items-center gap-3">
-                      <Github size={18} />
+                      {p.repo ? <Github size={18} /> : <FolderPlus size={18} />}
                       <div>
                         <b>{p.name}</b>
                         <small>
-                          {p.repo} · {p.defaultBranch}
+                          {p.repo ? `${p.repo} · ${p.defaultBranch}` : 'Upload source files to this project'}
                         </small>
                       </div>
                     </div>
