@@ -1653,7 +1653,7 @@ function AppShell({ page }: { page: Page }) {
                 </div>
                 <div className="deployment-release-actions">
                   <input value={deploymentImage} onChange={(e) => setDeploymentImage(e.target.value)} placeholder="Container image, e.g. ghcr.io/org/app:1.2.0" />
-                  <Button onClick={() => deployImage(environment.id)} disabled={!deploymentImage.trim() || ['queued','deploying'].includes(environment.currentReleaseStatus)}>Deploy image <Play size={13} /></Button>
+                  <Button onClick={() => deployImage(environment.id)} disabled={!deploymentImage.trim() || ['queued','deploying'].includes(environment.pendingReleaseStatus)}>Deploy image <Play size={13} /></Button>
                   <Button kind="light" onClick={() => rollbackDeployment(environment.id)} disabled={!environment.currentReleaseId || ['queued','deploying'].includes(environment.currentReleaseStatus)}>Rollback</Button>
                 </div>
                 <div className="deployment-history">
