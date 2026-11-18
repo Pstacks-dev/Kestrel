@@ -1292,6 +1292,9 @@ app.get('/api/cron/recovery', async (req, res) => {
   }
 });
 
+// Private project file storage endpoints; membership is checked on every request.
+registerProjectFileRoutes(app, { userAuth, query });
+
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
   console.error(err);
