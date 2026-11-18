@@ -9,7 +9,7 @@ function retentionDays() {
 }
 
 export function validArtifactName(name) {
-  if (typeof name !== 'string' || !name || name.length > 512 || name.startsWith('/') || name.includes('\\')) return false;
+  if (typeof name !== 'string' || !name || name.length > 512 || name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.includes('\\')) return false;
   return name.split('/').every((part) => part && part !== '.' && part !== '..' && !/[\u0000-\u001f]/.test(part));
 }
 
