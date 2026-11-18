@@ -28,3 +28,8 @@
 .admin-state{font-family:'DM Mono',monospace}
 @media(max-width:720px){.admin-main{padding:26px 16px}.admin-heading{margin-bottom:20px}.admin-metrics article{padding:14px}.admin-panel{padding:16px}.admin-panel-head{gap:12px}.admin-worker-form{gap:14px}.admin-login{padding:26px 22px}}
 @media(prefers-reduced-motion:reduce){.admin-screen *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+.admin-password-field{position:relative;display:flex;align-items:center}
+.admin-password-field input{width:100%;padding-right:44px!important}
+.admin-password-field button{position:absolute;right:10px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:28px;height:28px;border:0;background:transparent;color:#77786f;cursor:pointer}
+.admin-password-field button:hover{color:#20211d}
