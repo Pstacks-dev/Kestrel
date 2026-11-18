@@ -233,8 +233,25 @@ impl ComputeProvider for FirecrackerProvider {
                 .map_err(|e| ComputeError::Provider(format!("Cannot persist Firecracker process ID: {e}")))?;
             tokio::fs::copy(self.config.kernel_image_dir.join("vmlinux"), jail_root.join("vmlinux")).await
                 .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker kernel: {e}")))?;
-            tokio::fs::copy(rootfs, jail_root.join("rootfs.ext4")).await
+            let rootfs_target = jail_root.join("rootfs.ext4");
+            let requested_disk_bytes = u64::from(spec.disk_gib) * 1024 * 1024 * 1024;
+            let source_disk_bytes = tokio::fs::metadata(rootfs).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot inspect Firecracker rootfs image: {e}")))?.len();
+            if source_disk_bytes > requested_disk_bytes {
+                return Err(ComputeError::InvalidSpec("Requested Firecracker disk is smaller than the installed rootfs image".into()));
+            }
+            tokio::fs::copy(rootfs, &rootfs_target).await
                 .map_err(|e| ComputeError::Provider(format!("Cannot stage Firecracker rootfs: {e}")))?;
+            let rootfs_file = tokio::fs::OpenOptions::new().write(true).open(&rootfs_target).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot open staged Firecracker rootfs: {e}")))?;
+            rootfs_file.set_len(requested_disk_bytes).await
+                .map_err(|e| ComputeError::Provider(format!("Cannot resize Firecracker rootfs image: {e}")))?;
+            drop(rootfs_file);
+            let resize = Command::new("resize2fs").arg(&rootfs_target).status().await
+                .map_err(|e| ComputeError::NotConfigured(format!("resize2fs is required to grow Firecracker ext4 rootfs images: {e}")))?;
+            if !resize.success() {
+                return Err(ComputeError::Provider("Could not grow the Firecracker ext4 filesystem to the requested disk size".into()));
+            }
             if let Some(key) = &spec.ssh_public_key {
                 let user_data_path = jail_root.join("cloud-init-user-data");
                 let cloudinit_path = jail_root.join("cloudinit.iso");
