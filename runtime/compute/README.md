@@ -146,12 +146,22 @@ with a protected environment file:
 
 ```sh
 cargo build --release --manifest-path runtime/compute-agent/Cargo.toml
-./target/release/kestrel-compute-agent
+sudo install -D -m 0755 target/release/kestrel-compute-agent /opt/kestrel/bin/kestrel-compute-agent
+sudo install -D -m 0644 deploy/kestrel-compute-agent.service /etc/systemd/system/kestrel-compute-agent.service
+sudo install -d -m 0700 /etc/kestrel
+sudo chmod 0600 /etc/kestrel/compute-agent.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now kestrel-compute-agent
+sudo journalctl -u kestrel-compute-agent -f
 ```
 
 The agent runs one provider backend per node. It must not be placed inside a
 customer build container. Give it only the host permissions and credentials
-needed for its selected backend.
+needed for its selected backend. The supplied systemd unit uses KillMode=process
+so a graceful agent restart does not automatically terminate its supervised
+Firecracker child processes; the provider stores their PIDs and reconnects to
+their private API sockets. Review host service isolation and process cleanup
+policy before using this on shared infrastructure.
 
 ## Security boundaries and limitations
 
