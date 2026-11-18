@@ -1186,7 +1186,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
          finished_at = now(),
          lease_token = null,
          lease_expires_at = null
-     where id = $1 and lease_token = $2 and worker_id = $6 and status = 'running'
+     where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled')
      returning run_id`,
     [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id]
   );
