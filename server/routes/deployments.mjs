@@ -26,6 +26,12 @@ export function validImage(value) {
   return typeof value === 'string' && IMAGE_RE.test(value) && !value.includes('..') && !value.includes('\\');
 }
 
+export function workerCanAcceptDeployments(state, lastSeenAt, now = Date.now()) {
+  const heartbeat = Date.parse(lastSeenAt || '');
+  return ['online', 'busy'].includes(state) && Number.isFinite(heartbeat) &&
+    heartbeat <= now + 5_000 && now - heartbeat <= 45_000;
+}
+
 async function queueRelease({ query, transaction, environmentId, userId, image, rollbackOf = null }) {
   return transaction(async (c) => {
     const envResult = await c.query(
@@ -45,7 +51,7 @@ async function queueRelease({ query, transaction, environmentId, userId, image, 
     if (!envResult.rowCount) throw Object.assign(new Error('Deployment environment not found or access denied'), { status: 404 });
     const env = envResult.rows[0];
     if (env.runtime !== 'rust') throw Object.assign(new Error('This environment must be assigned to a Rust execution worker'), { status: 409 });
-    if (['offline', 'draining'].includes(env.worker_state) || !env.last_seen_at || Date.now() - new Date(env.last_seen_at).getTime() > 45_000) {
+    if (!workerCanAcceptDeployments(env.worker_state, env.last_seen_at)) {
       throw Object.assign(new Error('The assigned worker is offline, draining, or has a stale heartbeat'), { status: 409 });
     }
     if (env.environment_key === 'production' && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) {
