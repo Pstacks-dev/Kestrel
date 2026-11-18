@@ -49,6 +49,7 @@ export function validatePipelineJobs(jobs) {
       cpu,
       timeoutSeconds,
       maxRetries,
+      artifacts: Array.isArray(j.artifacts) ? j.artifacts.map(String).map((p) => p.trim()).filter((p) => p && p.length <= 512 && !p.startsWith('/') && !p.split(/[\\\\/]/).some((part) => part === '..')).slice(0, 50) : [],
     };
   });
 
