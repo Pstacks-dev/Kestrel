@@ -317,6 +317,8 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
         if secret_file_created { let _ = fs::remove_file(&secret_file).await; }
         return Err(anyhow!("deployment was canceled before container start"));
     }
+    // A retry after a worker crash may find a half-created container with this release name.
+    let _ = Command::new(&cfg.docker).args(["rm", "-f", &container]).output().await;
     let start_result = docker_action(cfg, http, job, &args, "run").await;
     let healthy = if start_result.is_ok() {
         deployment_health(cfg, deployment.host_port, &deployment.health_path, deployment.health_timeout_seconds, canceled).await
@@ -328,7 +330,28 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
         if had_previous {
             if let Some(previous) = previous_container {
                 let restored = Command::new(&cfg.docker).args(["start", previous]).output().await;
-                if restored.as_ref().is_ok_and(|o| o.status.success()) {
+                let mut restored_ok = restored.as_ref().is_ok_and(|o| o.status.success());
+                if !restored_ok {
+                    if let Some(previous_image) = deployment.previous_image.as_deref().filter(|v| valid_deployment_image(v)) {
+                        let _ = Command::new(&cfg.docker).args(["rm", "-f", previous]).output().await;
+                        let mut restore_args = vec![
+                            "run".into(), "-d".into(), "--name".into(), previous.into(),
+                            "--restart".into(), "unless-stopped".into(),
+                            "--publish".into(), format!("{}:{}", deployment.host_port, deployment.container_port),
+                            "--network".into(), "bridge".into(), "--cap-drop=ALL".into(),
+                            "--security-opt=no-new-privileges".into(), "--pids-limit".into(), "256".into(),
+                            "--memory".into(), "2048m".into(), "--read-only".into(),
+                            "--tmpfs".into(), "/tmp:rw,nosuid,nodev,noexec,size=256m".into(),
+                        ];
+                        if secret_file_created {
+                            restore_args.push("--env-file".into());
+                            restore_args.push(secret_file.to_string_lossy().to_string());
+                        }
+                        restore_args.push(previous_image.into());
+                        restored_ok = docker_action(cfg, http, job, &restore_args, "restore previous release").await.is_ok();
+                    }
+                }
+                if restored_ok {
                     let restored_health = deployment_health(cfg, deployment.host_port, &deployment.health_path, 30, &AtomicBool::new(false)).await;
                     if restored_health {
                         let _ = flush_log(http, cfg, job, "system", "New release failed health checks; previous release was restored").await;
