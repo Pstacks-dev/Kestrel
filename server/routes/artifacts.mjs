@@ -4,6 +4,11 @@ import crypto from 'node:crypto';
 const BUCKET = 'kestrel-artifacts';
 const MAX_ARTIFACT_BYTES = 100 * 1024 * 1024;
 
+function retentionDays() {
+  const raw = Number.parseInt(process.env.KESTREL_ARTIFACT_RETENTION_DAYS || '', 10);
+  return Number.isInteger(raw) && raw >= 1 && raw <= 3650 ? raw : null;
+}
+
 function storageConfig() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -22,6 +27,11 @@ async function storageRequest(path, options = {}) {
   try { data = body ? JSON.parse(body) : null; } catch { data = body; }
   if (!response.ok) throw Object.assign(new Error(data?.message || 'Artifact storage failed'), { status: response.status });
   return data;
+}
+
+async function removeStoredObject(objectKey) {
+  const key = objectKey.split('/').map(encodeURIComponent).join('/');
+  await storageRequest('/object/' + BUCKET + '/' + key, { method: 'DELETE' });
 }
 
 export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
@@ -50,9 +60,10 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
         method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'x-upsert': 'false' }, body: req.body,
       });
       const result = await query(
-        `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type)
-         values($1, $2, $3, $4, $5, $6) returning id, name, size_bytes, sha256, created_at`,
-        [run.rows[0].run_id, name, objectKey, req.body.length, digest, req.get('x-artifact-content-type') || 'application/octet-stream']
+        `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type, expires_at)
+         values($1, $2, $3, $4, $5, $6, case when $7::int is null then null else now() + make_interval(days => $7::int) end)
+         returning id, name, size_bytes, sha256, created_at, expires_at`,
+        [run.rows[0].run_id, name, objectKey, req.body.length, digest, req.get('x-artifact-content-type') || 'application/octet-stream', retentionDays()]
       );
       res.status(201).json({ artifact: result.rows[0] });
     } catch (error) {
@@ -71,7 +82,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       );
       if (!access.rowCount) return res.status(404).json({ error: 'Pipeline run not found' });
       const result = await query(
-        'select id, name, size_bytes as "sizeBytes", sha256, content_type as "contentType", created_at as "createdAt" from public.artifacts where run_id = $1 order by created_at desc',
+        'select id, name, size_bytes as "sizeBytes", sha256, content_type as "contentType", created_at as "createdAt", expires_at as "expiresAt" from public.artifacts where run_id = $1 and deleted_at is null order by created_at desc',
         [req.params.runId]
       );
       res.json({ artifacts: result.rows });
@@ -87,7 +98,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
          join public.pipeline_runs r on r.id = a.run_id
          join public.projects p on p.id = r.project_id
          join public.organization_members m on m.organization_id = p.organization_id
-         where a.id = $1 and m.user_id = $2`,
+         where a.id = $1 and m.user_id = $2 and a.deleted_at is null and (a.expires_at is null or a.expires_at > now())`,
         [req.params.artifactId, req.user.id]
       );
       if (!result.rowCount) return res.status(404).json({ error: 'Artifact not found' });
@@ -98,9 +109,47 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       const { url } = storageConfig();
       const path = signed?.signedURL || signed?.signedUrl;
       if (!path) throw new Error('Storage did not return a signed download URL');
+      await query('update public.artifacts set download_count = download_count + 1 where id = $1', [req.params.artifactId]);
       res.json({ url: path.startsWith('http') ? path : `${url}/storage/v1${path.startsWith('/') ? '' : '/'}${path}`, name: result.rows[0].name });
     } catch (error) {
       res.status(error.status || 500).json({ error: 'Could not create artifact download link' });
     }
+  });
+
+  app.delete('/api/artifacts/:artifactId', userAuth, async (req, res) => {
+    try {
+      const result = await query(`select a.id, a.object_key, a.name, p.organization_id, m.role
+        from public.artifacts a join public.pipeline_runs r on r.id = a.run_id
+        join public.projects p on p.id = r.project_id
+        join public.organization_members m on m.organization_id = p.organization_id
+        where a.id = $1 and m.user_id = $2 and a.deleted_at is null`, [req.params.artifactId, req.user.id]);
+      if (!result.rowCount) return res.status(404).json({ error: 'Artifact not found' });
+      if (!['owner', 'admin', 'developer'].includes(result.rows[0].role)) return res.status(403).json({ error: 'You do not have permission to delete artifacts' });
+      await removeStoredObject(result.rows[0].object_key);
+      await query('delete from public.artifacts where id = $1', [req.params.artifactId]);
+      await query(`insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+        values($1, $2, 'artifact.deleted', 'artifact', $3, $4::jsonb)`,
+        [result.rows[0].organization_id, req.user.id, req.params.artifactId, JSON.stringify({ name: result.rows[0].name })]);
+      res.json({ ok: true });
+    } catch (error) { res.status(error.status || 500).json({ error: 'Could not delete artifact' }); }
+  });
+
+  app.post('/api/cron/artifacts/cleanup', async (req, res) => {
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) return res.status(503).json({ error: 'Artifact cleanup cron is not configured' });
+    if (req.headers.authorization !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const expired = await query(`select id, object_key from public.artifacts
+        where expires_at is not null and expires_at <= now() order by expires_at asc limit 100`);
+      let deleted = 0;
+      for (const artifact of expired.rows) {
+        try {
+          await removeStoredObject(artifact.object_key);
+          await query('delete from public.artifacts where id = $1 and expires_at <= now()', [artifact.id]);
+          deleted += 1;
+        } catch (error) { console.error('Expired artifact cleanup failed:', { artifactId: artifact.id, message: error.message }); }
+      }
+      res.json({ ok: true, deleted, remainingBatch: expired.rowCount - deleted });
+    } catch (error) { res.status(500).json({ error: 'Artifact cleanup failed' }); }
   });
 }
