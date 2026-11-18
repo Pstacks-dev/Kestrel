@@ -109,7 +109,7 @@ fn docker_host_workspace_path(worker_root: &Path, host_root: &Path, workspace: &
 
 fn safe_relative_path(value: &str) -> Result<PathBuf> {
     let path = Path::new(value);
-    anyhow::ensure!(!path.as_os_str().is_empty() && !path.is_absolute() && !value.contains('\\\\') && !value.contains('\\0'), "invalid source path");
+    anyhow::ensure!(!path.as_os_str().is_empty() && !path.is_absolute() && !value.contains('\\') && !value.contains('\0'), "invalid source path");
     for component in path.components() {
         anyhow::ensure!(matches!(component, Component::Normal(_)), "unsafe source path");
     }
@@ -302,6 +302,6 @@ mod tests {
     #[test]
     fn rejects_absolute_and_windows_paths() {
         assert!(safe_relative_path("/etc/passwd").is_err());
-        assert!(safe_relative_path("..\\\\secrets.txt").is_err());
+        assert!(safe_relative_path("..\\secrets.txt").is_err());
     }
 }
