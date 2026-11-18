@@ -306,7 +306,7 @@ fn valid_deployment_image(image: &str) -> bool {
 }
 
 async fn docker_action(cfg: &Config, http: &Client, job: &Job, args: &[String], action: &str) -> Result<String> {
-    let output = Command::new(&cfg.docker).args(args).output().await
+    let output = Command::new(&cfg.docker).kill_on_drop(true).args(args).output().await
         .with_context(|| format!("starting docker {action}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -454,9 +454,6 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
 
     if secret_file_created { let _ = fs::remove_file(&secret_file).await; }
     let _ = flush_log(http, cfg, job, "system", "Deployment is healthy and the new release is active").await;
-    if let Some(url) = &deployment.public_url {
-        let _ = flush_log(http, cfg, job, "system", &format!("Application URL: {url}")).await;
-    }
     Ok(())
 }
 
