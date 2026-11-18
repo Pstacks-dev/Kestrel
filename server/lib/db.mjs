@@ -10,16 +10,25 @@ export function getPool() {
     throw new Error('SUPABASE_DB_URL is required. Use the Supabase Postgres connection string (server-side only).');
   }
 
+  // Supply Supabase's CA PEM through SUPABASE_DB_SSL_CA to verify the server.
+  // The fallback keeps TLS encryption enabled but skips certificate validation;
+  // use it only while a pooler certificate chain cannot be verified.
+  const sslCa = process.env.SUPABASE_DB_SSL_CA?.replace(/\\n/g, '\n');
+  const ssl =
+    process.env.DB_SSL === 'disable'
+      ? false
+      : {
+          rejectUnauthorized: sslCa ? true : process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+          ...(sslCa ? { ca: sslCa } : {}),
+        };
+
   poolInstance = new Pool({
     connectionString,
     max: Number(process.env.DB_POOL_MAX || (process.env.VERCEL ? 1 : 5)),
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000,
     keepAlive: true,
-    ssl:
-      process.env.DB_SSL === 'disable'
-        ? false
-        : { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' },
+    ssl,
   });
 
   poolInstance.on('error', (err) => console.error('Unexpected PostgreSQL pool error', err));
