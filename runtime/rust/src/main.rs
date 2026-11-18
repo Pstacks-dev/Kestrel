@@ -23,7 +23,7 @@ struct Job {
     repository_url: Option<String>, source_type: Option<String>,
     branch: Option<String>, commit_sha: Option<String>,
     timeout_seconds: Option<u64>, memory_limit_mb: Option<u32>,
-    cpu_millicores: Option<u32>, secrets: Option<HashMap<String, String>>,
+    cpu_millicores: Option<u32>, secrets: Option<HashMap<String, String>>, artifact_paths: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -165,6 +165,28 @@ async fn flush_log(http: &Client, cfg: &Config, job: &Job, stream: &str, message
     Ok(())
 }
 
+
+async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Path) -> Result<()> {
+    for raw in job.artifact_paths.as_deref().unwrap_or(&[]) {
+        let relative = safe_relative_path(raw)?;
+        let source = workspace.join(&relative);
+        if !source.is_file() { warn!(path = %raw, "declared artifact does not exist; skipping"); continue; }
+        let metadata = fs::metadata(&source).await?;
+        anyhow::ensure!(metadata.len() <= 100 * 1024 * 1024, "artifact exceeds 100 MiB: {raw}");
+        let bytes = fs::read(&source).await?;
+        let name = relative.file_name().and_then(|n| n.to_str()).ok_or_else(|| anyhow!("invalid artifact filename"))?;
+        let response = http.put(format!("{}/api/workers/jobs/{}/artifacts/upload", cfg.api, job.id))
+            .header("x-kestrel-lease", &job.lease_token)
+            .header("x-artifact-name", name)
+            .header("x-artifact-content-type", "application/octet-stream")
+            .header("content-type", "application/octet-stream")
+            .body(bytes).send().await?;
+        anyhow::ensure!(response.status().is_success(), "artifact upload failed for {raw}: {}", response.status());
+        info!(path = %raw, "artifact uploaded");
+    }
+    Ok(())
+}
+
 async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
     let started = std::time::Instant::now();
     let workspace = cfg.workdir.join(format!("job-{}", job.id));
@@ -235,6 +257,13 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
         status = if exit_code == 0 { "succeeded" } else { "failed" };
     }
 
+    if exit_code == 0 {
+        if let Err(error) = upload_artifacts(http, cfg, &job, &workspace).await {
+            output_text.push_str(&format!("\\nArtifact upload failed: {error}"));
+            exit_code = 1;
+            status = "failed";
+        }
+    }
     for line in output_text.lines() {
         let stream = if line.starts_with("[stderr]") { "stderr" } else { "stdout" };
         let _ = flush_log(http, cfg, &job, stream, &line.chars().take(8000).collect::<String>()).await;
