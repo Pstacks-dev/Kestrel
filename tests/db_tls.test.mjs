@@ -5,7 +5,7 @@ import { SUPABASE_ROOT_CA_BUNDLE } from '../server/lib/supabase-ca.mjs';
 
 test('Supabase Postgres trust bundle contains valid current production CA certificates', () => {
   const pemCertificates = SUPABASE_ROOT_CA_BUNDLE.match(
-    /-----BEGIN CERTIFICATE-----[\\s\\S]+?-----END CERTIFICATE-----/g
+    /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g
   ) || [];
   assert.equal(pemCertificates.length, 2, 'expected both Supabase production CA generations');
 
