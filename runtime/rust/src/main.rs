@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
+use std::{collections::HashMap, env, path::{Component, Path, PathBuf}, process::Stdio, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 use tokio::{fs, io::{AsyncBufReadExt, BufReader}, process::Command, task::JoinSet, time};
 use tracing::{error, info, warn};
 
@@ -236,11 +236,11 @@ async fn docker_action(cfg: &Config, http: &Client, job: &Job, args: &[String], 
     Ok(stdout.trim().to_string())
 }
 
-async fn deployment_health(cfg: &Config, port: u16, path: &str, timeout_seconds: u64) -> bool {
+async fn deployment_health(cfg: &Config, port: u16, path: &str, timeout_seconds: u64, canceled: &AtomicBool) -> bool {
     let Ok(http) = Client::builder().timeout(Duration::from_secs(3)).build() else { return false; };
     let url = format!("http://127.0.0.1:{port}{path}");
     let deadline = time::Instant::now() + Duration::from_secs(timeout_seconds.clamp(5, 300));
-    while time::Instant::now() < deadline {
+    while time::Instant::now() < deadline && !canceled.load(Ordering::Relaxed) {
         if let Ok(response) = http.get(&url).send().await {
             if response.status().is_success() { return true; }
         }
@@ -249,7 +249,7 @@ async fn deployment_health(cfg: &Config, port: u16, path: &str, timeout_seconds:
     false
 }
 
-async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
+async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: &AtomicBool) -> Result<()> {
     let deployment = job.deployment.as_ref().ok_or_else(|| anyhow!("deployment job has no deployment configuration"))?;
     let image = deployment.image.trim();
     anyhow::ensure!(valid_deployment_image(image), "deployment image reference is invalid");
@@ -259,6 +259,7 @@ async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
 
     let _ = flush_log(http, cfg, job, "system", &format!("Pulling deployment image {image}")).await;
     docker_action(cfg, http, job, &["pull".into(), image.into()], "pull").await?;
+    anyhow::ensure!(!canceled.load(Ordering::Relaxed), "deployment was canceled before container replacement");
 
     let secret_file = std::env::temp_dir().join(format!("kestrel-deploy-{}-{}.env", job.id, uuid::Uuid::new_v4()));
     let mut secret_contents = String::new();
@@ -288,11 +289,10 @@ async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
     let container = deployment.container_name.clone();
     anyhow::ensure!(container.starts_with("kestrel-") && container.len() <= 100 && container.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "deployment container name is invalid");
     let previous_container = deployment.previous_container.as_deref();
-    let mut previous_stopped = false;
+    let had_previous = previous_container.is_some();
     if let Some(previous) = previous_container {
         let stopped = Command::new(&cfg.docker).args(["stop", previous]).output().await?;
-        previous_stopped = stopped.status.success();
-        if previous_stopped {
+        if stopped.status.success() {
             let _ = flush_log(http, cfg, job, "system", "Stopped the currently active release before switching traffic").await;
         }
     }
@@ -312,19 +312,24 @@ async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
     }
     args.push(image.into());
 
+    if canceled.load(Ordering::Relaxed) {
+        if let Some(previous) = previous_container { let _ = Command::new(&cfg.docker).args(["start", previous]).output().await; }
+        if secret_file_created { let _ = fs::remove_file(&secret_file).await; }
+        return Err(anyhow!("deployment was canceled before container start"));
+    }
     let start_result = docker_action(cfg, http, job, &args, "run").await;
     let healthy = if start_result.is_ok() {
-        deployment_health(cfg, deployment.host_port, &deployment.health_path, deployment.health_timeout_seconds).await
+        deployment_health(cfg, deployment.host_port, &deployment.health_path, deployment.health_timeout_seconds, canceled).await
     } else { false };
 
     if !healthy {
         let _ = Command::new(&cfg.docker).args(["stop", &container]).output().await;
         let _ = Command::new(&cfg.docker).args(["rm", "-f", &container]).output().await;
-        if previous_stopped {
+        if had_previous {
             if let Some(previous) = previous_container {
                 let restored = Command::new(&cfg.docker).args(["start", previous]).output().await;
                 if restored.as_ref().is_ok_and(|o| o.status.success()) {
-                    let restored_health = deployment_health(cfg, deployment.host_port, &deployment.health_path, 30).await;
+                    let restored_health = deployment_health(cfg, deployment.host_port, &deployment.health_path, 30, &AtomicBool::new(false)).await;
                     if restored_health {
                         let _ = flush_log(http, cfg, job, "system", "New release failed health checks; previous release was restored").await;
                     } else {
@@ -346,6 +351,43 @@ async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
         let _ = flush_log(http, cfg, job, "system", &format!("Application URL: {url}")).await;
     }
     Ok(())
+}
+
+async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
+    let canceled = Arc::new(AtomicBool::new(false));
+    let renew_http = http.clone();
+    let api = cfg.api.clone();
+    let docker = cfg.docker.clone();
+    let job_id = job.id.clone();
+    let lease = job.lease_token.clone();
+    let container = job.deployment.as_ref().map(|d| d.container_name.clone()).unwrap_or_default();
+    let cancel_flag = canceled.clone();
+    let renewer = tokio::spawn(async move {
+        loop {
+            time::sleep(Duration::from_secs(8)).await;
+            let renewed = renew_http.post(format!("{api}/api/workers/jobs/{job_id}/lease"))
+                .header("x-kestrel-lease", &lease).send().await;
+            if !renewed.as_ref().is_ok_and(|r| r.status().is_success()) {
+                cancel_flag.store(true, Ordering::Relaxed);
+                let _ = Command::new(&docker).args(["stop", &container]).output().await;
+                break;
+            }
+            let status = renew_http.get(format!("{api}/api/workers/jobs/{job_id}/status"))
+                .header("x-kestrel-lease", &lease).send().await;
+            if let Ok(response) = status {
+                if let Ok(body) = response.json::<serde_json::Value>().await {
+                    if body["status"].as_str() == Some("canceled") {
+                        cancel_flag.store(true, Ordering::Relaxed);
+                        let _ = Command::new(&docker).args(["stop", &container]).output().await;
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let result = run_deployment_inner(http, cfg, job, &canceled).await;
+    renewer.abort();
+    result
 }
 
 async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
