@@ -50,6 +50,8 @@ jobs:
           components: rustfmt, clippy
       - name: Run Rust tests
         run: cargo test --manifest-path runtime/rust/Cargo.toml
+      - name: Run Rust lints
+        run: cargo clippy --manifest-path runtime/rust/Cargo.toml -- -D warnings
 
   docker:
     name: Build and smoke-test worker containers
@@ -75,3 +77,4 @@ jobs:
         run: |
           printf 'KESTREL_WORKER_HOST_WORKDIR=/tmp/kestrel-worker-work\\n' > .env.worker
           docker compose --env-file .env.worker -f docker-compose.worker.yml config --quiet
+          docker compose --env-file .env.worker -f docker-compose.worker-rust.yml config --quiet
