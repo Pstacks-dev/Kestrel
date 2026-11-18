@@ -193,3 +193,45 @@ impl ComputeProvider for IncusProvider {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> IncusConfig {
+        IncusConfig {
+            https_endpoint: "https://incus.internal:8443".into(),
+            project: "kestrel".into(),
+            client_certificate_path: "/etc/kestrel/client.crt".into(),
+            client_key_path: "/etc/kestrel/client.key".into(),
+            server_ca_path: "/etc/kestrel/ca.crt".into(),
+        }
+    }
+
+    #[test]
+    fn incus_requires_https_and_absolute_credentials() {
+        let mut value = config();
+        assert!(value.validate().is_ok());
+        value.https_endpoint = "http://incus.internal:8443".into();
+        assert!(value.validate().is_err());
+        value = config();
+        value.client_key_path = "relative.key".into();
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn api_url_preserves_operation_wait_query_and_scopes_project() {
+        let provider = IncusProvider { config: config() };
+        assert_eq!(
+            provider.api_url("/1.0/operations/op-123/wait?timeout=30"),
+            "https://incus.internal:8443/1.0/operations/op-123/wait?timeout=30&project=kestrel"
+        );
+    }
+
+    #[test]
+    fn project_name_rejects_query_injection() {
+        let mut value = config();
+        value.project = "tenant&project=default".into();
+        assert!(value.validate().is_err());
+    }
+}
