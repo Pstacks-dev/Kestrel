@@ -326,30 +326,58 @@ async function runGit(args, cwd, onLine) {
   });
 }
 
-// Check for build artifacts produced in workspace and upload metadata
+// Upload real artifact bytes to private object storage through the authenticated control plane.
 async function collectArtifacts(job, workspace) {
-  const candidateDirs = ['dist', 'build', 'artifacts'];
-  for (const dir of candidateDirs) {
-    const p = path.join(workspace, dir);
-    try {
-      const stat = await fs.stat(p);
-      if (stat.isDirectory()) {
-        const files = await fs.readdir(p);
-        for (const file of files.slice(0, 10)) {
-          const filePath = path.join(p, file);
-          const fstat = await fs.stat(filePath);
-          if (fstat.isFile()) {
-            await api(`/api/workers/jobs/${job.id}/artifacts`, {
-              leaseToken: job.leaseToken,
-              name: `${dir}/${file}`,
-              objectKey: `runs/${job.runId}/${job.id}/${dir}/${file}`,
-              sizeBytes: fstat.size,
-              contentType: file.endsWith('.html') ? 'text/html' : file.endsWith('.js') ? 'application/javascript' : 'application/octet-stream',
-            }).catch(() => {});
-          }
-        }
+  const roots = ['dist', 'build', 'artifacts'];
+  const maxFiles = 50;
+  const maxTotal = 250 * 1024 * 1024;
+  const maxFile = 100 * 1024 * 1024;
+  let uploaded = 0;
+  let total = 0;
+
+  async function walk(directory, relativeRoot) {
+    if (uploaded >= maxFiles || total >= maxTotal) return;
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (uploaded >= maxFiles || total >= maxTotal) break;
+      const absolute = path.join(directory, entry.name);
+      const relative = path.posix.join(relativeRoot, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        await walk(absolute, relative);
+        continue;
       }
-    } catch {}
+      if (!entry.isFile()) continue;
+      const stat = await fs.stat(absolute);
+      if (!stat.size || stat.size > maxFile || total + stat.size > maxTotal) continue;
+      const bytes = await fs.readFile(absolute);
+      const response = await fetch(`${API}/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/upload`, {
+        method: 'PUT',
+        headers: {
+          authorization: headers.authorization,
+          'x-worker-id': WORKER_ID,
+          'x-kestrel-lease': job.leaseToken,
+          'x-artifact-name': path.basename(entry.name).slice(0, 255),
+          'x-artifact-content-type': 'application/octet-stream',
+          'content-type': 'application/octet-stream',
+        },
+        body: bytes,
+      });
+      if (!response.ok) throw new Error(`Artifact upload failed for ${relative}: ${response.status}`);
+      uploaded += 1;
+      total += bytes.length;
+      console.log(`[artifact] Uploaded ${relative} (${bytes.length} bytes)`);
+    }
+  }
+
+  for (const root of roots) {
+    const absolute = path.join(workspace, root);
+    try {
+      const stat = await fs.lstat(absolute);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) await walk(absolute, root);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
   }
 }
 
