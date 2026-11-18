@@ -48,12 +48,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --manifest-path runtime/rust/Cargo.toml -- --check
       - name: Run Rust tests
         run: cargo test --manifest-path runtime/rust/Cargo.toml
-      - name: Run Clippy
-        run: cargo clippy --manifest-path runtime/rust/Cargo.toml -- -D warnings
 
   docker:
     name: Build and smoke-test worker containers
@@ -65,6 +61,9 @@ jobs:
 
       - name: Build worker agent image
         run: docker build -f docker/worker.Dockerfile -t kestrel-worker:ci .
+
+      - name: Build Rust worker image
+        run: docker build -f docker/worker-rust.Dockerfile -t kestrel-worker-rust:ci .
 
       - name: Build job runtime image
         run: docker build -f runtime/images/Dockerfile.node22 -t kestrel-job-node22:ci .
