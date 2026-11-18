@@ -78,3 +78,19 @@ jobs:
           printf 'KESTREL_WORKER_HOST_WORKDIR=/tmp/kestrel-worker-work\\n' > .env.worker
           docker compose --env-file .env.worker -f docker-compose.worker.yml config --quiet
           docker compose --env-file .env.worker -f docker-compose.worker-rust.yml config --quiet
+
+  compute-providers:
+    name: Test Kestrel Compute provider contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Run provider contract tests
+        run: cargo test --manifest-path runtime/compute/Cargo.toml
+      - name: Run provider contract lints
+        run: cargo clippy --manifest-path runtime/compute/Cargo.toml --all-targets -- -D warnings
