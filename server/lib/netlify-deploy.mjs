@@ -3,11 +3,14 @@ import crypto from 'node:crypto';
 export async function deployNetlifyArtifacts({ siteId, token, branch, commitSha, runId, environment = 'production', query, supabaseAdmin, bucket }) {
   if (!supabaseAdmin) throw new Error('Private artifact storage is not configured for Netlify deployments.');
   const result = await query(
-    "select name,object_key,content_type from public.artifacts where run_id=$1 and uploaded_at is not null and (name like 'dist/%' or name like 'build/%') order by name",
+    "select name,object_key,content_type,size_bytes from public.artifacts where run_id=$1 and uploaded_at is not null and (name like 'dist/%' or name like 'build/%') order by name",
     [runId]
   );
   if (!result.rowCount) throw new Error('This run has no uploaded dist/ or build/ files. Netlify needs compiled site output.');
 
+  if (result.rowCount > 100) throw new Error('Netlify releases are limited to 100 uploaded files.');
+  const declaredBytes = result.rows.reduce((total, artifact) => total + Number(artifact.size_bytes || 0), 0);
+  if (declaredBytes > 300 * 1024 * 1024) throw new Error('Netlify release exceeds the 300 MiB deployment transfer limit.');
   const files = {};
   const bytesByPath = new Map();
   for (const artifact of result.rows) {
@@ -29,7 +32,8 @@ export async function deployNetlifyArtifacts({ siteId, token, branch, commitSha,
       branch,
       title: 'Kestrel release ' + String(commitSha).slice(0, 8),
       draft: environment === 'preview'
-    })
+    }),
+    signal: AbortSignal.timeout(30000)
   });
   const text = await response.text();
   let body = {};
@@ -46,7 +50,8 @@ export async function deployNetlifyArtifacts({ siteId, token, branch, commitSha,
     const upload = await fetch('https://api.netlify.com/api/v1/deploys/' + encodeURIComponent(body.id) + '/files/' + encodedPath, {
       method: 'PUT',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': file.contentType },
-      body: file.bytes
+      body: file.bytes,
+      signal: AbortSignal.timeout(30000)
     });
     if (!upload.ok) throw new Error('Netlify rejected ' + filePath + ' (HTTP ' + upload.status + ').');
   }
