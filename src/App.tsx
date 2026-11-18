@@ -582,7 +582,8 @@ function AppShell({ page }: { page: Page }) {
 
       // Update selected project default
       if (snapData.projects?.length && !selectedProject) {
-        setSelectedProject(snapData.projects[0].id);
+        const gitProject = snapData.projects.find((project: any) => project.sourceType !== 'upload');
+        if (gitProject) setSelectedProject(gitProject.id);
       }
     } catch (e: any) {
       setHealth(e.message || 'Connection failed');
@@ -1238,7 +1239,7 @@ function AppShell({ page }: { page: Page }) {
             <div className="panel mt-6">
               <div className="panel-head">
                 <div>
-                  <h3>Connected Projects</h3>
+                  <h3>Projects</h3>
                   <p>Click "Settings & Secrets" to manage encrypted environment variables and webhooks.</p>
                 </div>
               </div>
