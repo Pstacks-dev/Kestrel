@@ -658,6 +658,10 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
             status = "failed";
         }
     }
+    if cancellation_requested(http, cfg, &job).await.unwrap_or(false) {
+        exit_code = 130;
+        status = "canceled";
+    }
     for line in output_text.lines() {
         let stream = if line.starts_with("[stderr]") { "stderr" } else { "stdout" };
         let _ = flush_log(http, cfg, &job, stream, &line.chars().take(8000).collect::<String>()).await;
