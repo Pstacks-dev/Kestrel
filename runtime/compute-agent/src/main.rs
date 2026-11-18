@@ -102,7 +102,7 @@ async fn post(http: &Client, cfg: &Config, path: &str, body: Value) -> Result<Va
 
 async fn register(http: &Client, cfg: &Config) -> Result<()> {
     post(http, cfg, "/api/compute/agent/register", json!({
-        "hostname":cfg.hostname,"architecture":cfg.architecture
+        "hostname":cfg.hostname,"architecture":cfg.architecture,"provider":cfg.provider
     })).await?;
     info!(node_id = %cfg.node_id, provider = %cfg.provider, "compute host registered");
     Ok(())
