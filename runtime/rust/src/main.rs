@@ -58,7 +58,7 @@ fn config() -> Result<Config> {
         workdir: PathBuf::from(get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work")),
         host_workdir: PathBuf::from(get("KESTREL_WORKER_HOST_WORKDIR", &get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work"))),
         image: get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim"),
-        network: get("KESTREL_JOB_NETWORK", "none"), docker: get("KESTREL_DOCKER_BIN", "docker"),
+        network: get("KESTREL_JOB_NETWORK", "bridge"), docker: get("KESTREL_DOCKER_BIN", "docker"),
     })
 }
 
@@ -240,7 +240,7 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
             "--user", "1000:1000", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m",
             "--mount",
         ]).arg(format!("type=bind,src={},dst=/workspace", docker_workspace.display()))
-          .args(["--workdir", "/workspace", "--env", "CI=true", "--env", "KESTREL=true"]);
+          .args(["--workdir", "/workspace", "--env", "CI=true", "--env", "KESTREL=true", "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "npm_config_cache=/tmp/.npm"]);
         let secret_file = std::env::temp_dir().join(format!("kestrel-secrets-{}-{}.env", job.id, uuid::Uuid::new_v4()));
         if let Some(secrets) = &job.secrets {
             let mut contents = String::new();
