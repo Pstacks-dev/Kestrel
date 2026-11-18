@@ -7,7 +7,7 @@ function fail(res, status, error) {
   return res.status(status).json({ error });
 }
 
-function validPublicUrl(value) {
+export function validPublicUrl(value) {
   if (!value) return null;
   try {
     const url = new URL(value);
@@ -16,13 +16,13 @@ function validPublicUrl(value) {
   } catch { return null; }
 }
 
-function validHealthPath(value) {
+export function validHealthPath(value) {
   return typeof value === 'string' && value.startsWith('/') &&
     value.length <= 256 && !value.includes('..') &&
     /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$/.test(value);
 }
 
-function validImage(value) {
+export function validImage(value) {
   return typeof value === 'string' && IMAGE_RE.test(value) && !value.includes('..') && !value.includes('\\');
 }
 
