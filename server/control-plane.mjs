@@ -1317,8 +1317,8 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
       );
       if (completedStatus === 'succeeded') {
         await c.query(
-          'update public.deployment_environments set current_release_id = $2, updated_at = now() where id = (select environment_id from public.deployment_releases where id = $2)',
-          [req.params.jobId, releaseId]
+          'update public.deployment_environments set current_release_id = $1, updated_at = now() where id = (select environment_id from public.deployment_releases where id = $1)',
+          [releaseId]
         );
       }
     }
