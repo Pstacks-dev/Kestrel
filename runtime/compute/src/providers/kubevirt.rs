@@ -179,8 +179,7 @@ impl ComputeProvider for KubeVirtProvider {
     }
 
     async fn health(&self) -> Result<(), ComputeError> {
-        let url = format!("{}/apis/kubevirt.io/v1/namespaces/{}", self.config.api_server.trim_end_matches('/'), self.config.namespace);
-        self.request(Method::GET, url, None).await.map(|_| ())
+        self.request(Method::GET, self.resource_url("vm", None, None), None).await.map(|_| ())
     }
 
     async fn create_instance(&self, spec: &InstanceSpec) -> Result<Instance, ComputeError> {
