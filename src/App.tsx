@@ -573,6 +573,7 @@ function AppShell({ page }: { page: Page }) {
   // Kestrel Compute
   const [computeInstances, setComputeInstances] = useState<any[]>([]);
   const [computeQuota, setComputeQuota] = useState<any>(null);
+  const [computeSnapshots, setComputeSnapshots] = useState<Record<string, any[]>>({});
   const [computeProvider, setComputeProvider] = useState('incus');
   const [computeName, setComputeName] = useState('vm-01');
   const [computeImage, setComputeImage] = useState('ubuntu:24.04');
@@ -935,8 +936,17 @@ function AppShell({ page }: { page: Page }) {
       const quotaBody = await quotaResponse.json();
       if (!instancesResponse.ok) throw new Error(instancesBody.error || 'Could not load VMs');
       if (!quotaResponse.ok) throw new Error(quotaBody.error || 'Could not load compute quota');
-      setComputeInstances(instancesBody.instances || []);
+      const instances = instancesBody.instances || [];
+      setComputeInstances(instances);
       setComputeQuota(quotaBody.quota || null);
+      const snapshots = await Promise.all(instances.map(async (vm: any) => {
+        const response = await fetch(`${api}/compute/instances/${vm.id}/snapshots`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const body = await response.json();
+        return [vm.id, response.ok ? body.snapshots || [] : []] as const;
+      }));
+      setComputeSnapshots(Object.fromEntries(snapshots));
     } catch (error: any) {
       setComputeMessage(error.message || 'Could not load compute resources');
     }
@@ -964,6 +974,56 @@ function AppShell({ page }: { page: Page }) {
       setComputeMessage(error.message || 'VM creation failed');
     } finally {
       setComputeBusy(false);
+    }
+  }
+
+  async function createComputeSnapshot(instanceId: string) {
+    const name = window.prompt('Snapshot name (lowercase letters, numbers and hyphens)');
+    if (!name) return;
+    try {
+      const response = await fetch(`${api}/compute/instances/${instanceId}/snapshots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ name }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not create snapshot');
+      setComputeMessage(`Snapshot ${name} queued.`);
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || 'Snapshot creation failed');
+    }
+  }
+
+  async function restoreComputeSnapshot(snapshotId: string) {
+    if (!window.confirm('Restore this snapshot? Current VM data will be replaced.')) return;
+    try {
+      const response = await fetch(`${api}/compute/snapshots/${snapshotId}/restore`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not restore snapshot');
+      setComputeMessage('Snapshot restore queued.');
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || 'Snapshot restore failed');
+    }
+  }
+
+  async function deleteComputeSnapshot(snapshotId: string) {
+    if (!window.confirm('Delete this snapshot permanently?')) return;
+    try {
+      const response = await fetch(`${api}/compute/snapshots/${snapshotId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not delete snapshot');
+      setComputeMessage('Snapshot deletion queued.');
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || 'Snapshot deletion failed');
     }
   }
 
@@ -1862,6 +1922,20 @@ function AppShell({ page }: { page: Page }) {
                   {vm.status === 'stopped' && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'start')}>Start</Button>}
                   {vm.status === 'running' && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'stop')}>Stop</Button>}
                   {!['provisioning','starting','stopping','deleting','deleted'].includes(vm.status) && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'delete')}><Trash2 size={13} /> Delete</Button>}
+                  {vm.provider !== 'firecracker' && ['running','stopped'].includes(vm.status) && (
+                    <Button kind="light" onClick={() => createComputeSnapshot(vm.id)}>Snapshot <Plus size={13} /></Button>
+                  )}
+                  <div className="deployment-history deployment-wide">
+                    <b>Snapshots</b>
+                    {(computeSnapshots[vm.id] || []).length ? (computeSnapshots[vm.id] || []).map((snapshot: any) => (
+                      <div className="table-row" key={snapshot.id}>
+                        <Boxes size={15} />
+                        <div className="flex-1"><b>{snapshot.name}</b><small>{snapshot.status} · {new Date(snapshot.createdAt).toLocaleString()}</small></div>
+                        {snapshot.status === 'ready' && <Button kind="light" onClick={() => restoreComputeSnapshot(snapshot.id)}>Restore</Button>}
+                        {snapshot.status === 'ready' && <Button kind="light" onClick={() => deleteComputeSnapshot(snapshot.id)}><Trash2 size={13} /></Button>}
+                      </div>
+                    )) : <p className="deployment-muted">No snapshots created.</p>}
+                  </div>
                 </div>
               )) : (
                 <div className="deployment-empty"><b>No virtual machines yet.</b><p>Create a VM above when a Kestrel provider host is online and has capacity.</p></div>
