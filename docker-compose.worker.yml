@@ -1,0 +1,23 @@
+services:
+  kestrel-worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    image: kestrel-worker:local
+    container_name: kestrel-worker
+    restart: unless-stopped
+    env_file:
+      - .env.worker
+    environment:
+      KESTREL_WORKER_EXECUTOR: docker
+      KESTREL_WORKER_WORKDIR: /var/lib/kestrel/work
+      KESTREL_DOCKER_BIN: docker
+    volumes:
+      # Required so the worker can create isolated job containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - kestrel-worker-work:/var/lib/kestrel/work
+    init: true
+    stop_grace_period: 30s
+
+volumes:
+  kestrel-worker-work:
