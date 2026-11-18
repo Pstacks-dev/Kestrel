@@ -455,11 +455,14 @@ app.post('/api/projects', sensitiveLimiter, userAuth, orgAccess, async (req, res
     return res.status(403).json({ error: 'Developer access required' });
   }
   const { name, repo, defaultBranch = 'main' } = req.body || {};
-  let repoUrl;
-  try {
-    repoUrl = new URL(repo);
-  } catch {
-    return res.status(400).json({ error: 'Invalid repository URL format' });
+  const repoValue = typeof repo === 'string' ? repo.trim() : '';
+  let repoUrl = null;
+  if (repoValue) {
+    try {
+      repoUrl = new URL(repoValue);
+    } catch {
+      return res.status(400).json({ error: 'Invalid repository URL format' });
+    }
   }
 
   const allowedHosts = (
@@ -473,29 +476,36 @@ app.post('/api/projects', sensitiveLimiter, userAuth, orgAccess, async (req, res
     !name ||
     typeof name !== 'string' ||
     name.trim().length < 2 ||
-    !repoUrl ||
-    repoUrl.protocol !== 'https:' ||
-    repoUrl.username ||
-    repoUrl.password ||
-    !allowedHosts.includes(repoUrl.hostname.toLowerCase())
+    name.trim().length > 120 ||
+    (repoValue && (
+      !repoUrl ||
+      repoUrl.protocol !== 'https:' ||
+      repoUrl.username ||
+      repoUrl.password ||
+      !allowedHosts.includes(repoUrl.hostname.toLowerCase())
+    ))
   ) {
     return res.status(400).json({
-      error: `Use a valid name and credential-free HTTPS repository on an approved Git host: ${allowedHosts.join(', ')}`,
+      error: repoValue
+        ? `Use a valid credential-free HTTPS repository on an approved Git host: ${allowedHosts.join(', ')}`
+        : 'Project name must be between 2 and 120 characters',
     });
   }
 
   try {
     const r = await transaction(async (c) => {
       const proj = await c.query(
-        'insert into public.projects(organization_id, name, repository_url, default_branch, created_by) values($1, $2, $3, $4, $5) returning *',
-        [req.organizationId, name.trim(), repo.trim(), defaultBranch.trim() || 'main', req.user.id]
+        'insert into public.projects(organization_id, name, repository_url, default_branch, created_by, source_type) values($1, $2, $3, $4, $5, $6) returning *',
+        [req.organizationId, name.trim(), repoValue || null, String(defaultBranch || 'main').trim() || 'main', req.user.id, repoValue ? 'git' : 'upload']
       );
-      // Generate default webhook secret
-      const webhookSecret = crypto.randomBytes(24).toString('hex');
-      await c.query(
-        'insert into public.github_webhooks(project_id, webhook_secret) values($1, $2)',
-        [proj.rows[0].id, webhookSecret]
-      );
+      // Git-backed projects receive a signed webhook. Uploaded projects do not need a Git remote.
+      if (repoValue) {
+        const webhookSecret = crypto.randomBytes(24).toString('hex');
+        await c.query(
+          'insert into public.github_webhooks(project_id, webhook_secret) values($1, $2)',
+          [proj.rows[0].id, webhookSecret]
+        );
+      }
       await c.query(
         'insert into public.audit_events(organization_id, actor_id, action, target_type, target_id) values($1, $2, $3, $4, $5)',
         [req.organizationId, req.user.id, 'project.created', 'project', proj.rows[0].id]
