@@ -56,6 +56,7 @@ fn config() -> Result<Config> {
         hostname: get("HOSTNAME", "kestrel-worker"), region: get("KESTREL_REGION", "unknown"),
         concurrency: get("KESTREL_CONCURRENCY", "1").parse().unwrap_or(1).clamp(1, 32),
         workdir: PathBuf::from(get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work")),
+        host_workdir: PathBuf::from(get("KESTREL_WORKER_HOST_WORKDIR", &get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work"))),
         image: get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim"),
         network: get("KESTREL_JOB_NETWORK", "none"), docker: get("KESTREL_DOCKER_BIN", "docker"),
     })
@@ -96,6 +97,14 @@ async fn heartbeat(http: &Client, cfg: &Config) -> Result<()> {
 async fn claim(http: &Client, cfg: &Config) -> Result<Option<Job>> {
     let response = post(http, cfg, "/api/workers/claim", &Heartbeat { worker_id: &cfg.worker_id, draining: false }).await?;
     Ok(response.json::<ClaimResponse>().await?.job)
+}
+
+fn docker_host_workspace_path(worker_root: &Path, host_root: &Path, workspace: &Path) -> Result<PathBuf> {
+    let worker_root = worker_root.canonicalize().unwrap_or_else(|_| worker_root.to_path_buf());
+    let workspace = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+    let relative = workspace.strip_prefix(&worker_root)
+        .map_err(|_| anyhow!("job workspace is outside the configured worker root"))?;
+    Ok(host_root.join(relative))
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf> {
@@ -175,6 +184,7 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
     } else {
         let container = format!("kestrel-job-{}", job.id.replace(|c: char| !c.is_ascii_alphanumeric(), ""));
         let mut command = Command::new(&cfg.docker);
+        let docker_workspace = docker_host_workspace_path(&cfg.workdir, &cfg.host_workdir, &workspace)?;
         command.args([
             "run", "--rm", "--init", "--name", &container,
             "--network", &cfg.network, "--read-only", "--cap-drop=ALL",
@@ -184,7 +194,7 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
             "--cpus", &format!("{:.2}", (job.cpu_millicores.unwrap_or(1000).clamp(250, 8000) as f64) / 1000.0),
             "--user", "1000:1000", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m",
             "--mount",
-        ]).arg(format!("type=bind,src={},dst=/workspace", workspace.display()))
+        ]).arg(format!("type=bind,src={},dst=/workspace", docker_workspace.display()))
           .args(["--workdir", "/workspace", "--env", "CI=true", "--env", "KESTREL=true"]);
         if let Some(secrets) = &job.secrets {
             for (key, value) in secrets {
@@ -259,7 +269,24 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_relative_path;
+    use super::{docker_host_workspace_path, safe_relative_path};
+
+    #[test]
+    fn maps_container_workspace_to_host_docker_path() {
+        let worker = std::path::Path::new("/var/lib/kestrel/work");
+        let host = std::path::Path::new("/srv/kestrel/work");
+        let workspace = worker.join("job-123");
+        assert_eq!(docker_host_workspace_path(worker, host, &workspace).unwrap(), host.join("job-123"));
+    }
+
+    #[test]
+    fn rejects_workspace_outside_worker_root() {
+        assert!(docker_host_workspace_path(
+            std::path::Path::new("/var/lib/kestrel/work"),
+            std::path::Path::new("/srv/kestrel/work"),
+            std::path::Path::new("/tmp/other")
+        ).is_err());
+    }
 
     #[test]
     fn accepts_nested_relative_source_paths() {
