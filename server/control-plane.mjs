@@ -374,7 +374,7 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
   try {
     const [p, r, w, a] = await Promise.all([
       query(
-        `select id, name, repository_url as repo, default_branch as "defaultBranch", created_at as "createdAt"
+        `select id, name, repository_url as repo, source_type as "sourceType", default_branch as "defaultBranch", created_at as "createdAt"
          from public.projects
          where organization_id = $1
          order by created_at desc`,
