@@ -127,7 +127,8 @@ impl IncusProvider {
             .filter_map(|address| address.get("address").and_then(Value::as_str))
             .filter(|address| !address.starts_with("127.") && !address.starts_with("169.254."))
             .map(str::to_owned).collect();
-        Ok(Instance { id: Uuid::new_v4(), provider_id, name: name.to_owned(), state, ipv4 })
+        let stable_id = Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("kestrel:incus:{provider_id}").as_bytes());
+        Ok(Instance { id: stable_id, provider_id, name: name.to_owned(), state, ipv4 })
     }
 
     async fn operation_from(&self, response: Value) -> Result<String, ComputeError> {
@@ -142,7 +143,7 @@ impl IncusProvider {
 impl ComputeProvider for IncusProvider {
     fn kind(&self) -> ProviderKind { ProviderKind::Incus }
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { virtual_machines: true, snapshots: true, live_migration: true, console: true, cluster_scheduling: true }
+        ProviderCapabilities { virtual_machines: true, snapshots: false, live_migration: false, console: false, cluster_scheduling: false }
     }
     async fn health(&self) -> Result<(), ComputeError> {
         let response = self.request(Method::GET, "", None).await?;
