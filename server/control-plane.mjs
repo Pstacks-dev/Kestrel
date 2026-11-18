@@ -1356,6 +1356,37 @@ app.get('/api/admin/overview', userAuth, platformAdmin, async (_req, res) => {
   });
 });
 
+app.get('/api/admin/health', userAuth, platformAdmin, async (_req, res) => {
+  try {
+    const [workers, queue, database] = await Promise.all([
+      query(`select
+        count(*) filter (where state in ('online','busy') and last_seen_at >= now() - interval '45 seconds')::int as online,
+        count(*) filter (where last_seen_at < now() - interval '45 seconds' or last_seen_at is null)::int as stale,
+        count(*) filter (where state = 'draining')::int as draining,
+        count(*) filter (where state = 'offline')::int as offline
+        from public.workers`),
+      query(`select
+        count(*) filter (where status = 'queued')::int as queued,
+        count(*) filter (where status = 'running')::int as running,
+        count(*) filter (where status = 'failed')::int as failed
+        from public.jobs`),
+      query('select now() as checked_at'),
+    ]);
+    const w = workers.rows[0], q = queue.rows[0];
+    res.json({
+      checkedAt: database.rows[0].checked_at,
+      database: 'connected',
+      artifactStorage: process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'missing_configuration',
+      workers: w,
+      queue: q,
+      scheduler: Number(w.online) > 0 ? 'worker_capacity_available' : Number(q.queued) > 0 ? 'queued_without_online_workers' : 'no_online_workers',
+    });
+  } catch (error) {
+    console.error('Admin health check failed:', { code: error.code, message: error.message });
+    res.status(503).json({ error: 'Could not read platform health' });
+  }
+});
+
 app.get('/api/admin/audit', userAuth, platformAdmin, async (_req, res) => {
   const r = await query('select * from public.audit_events order by created_at desc limit 200');
   res.json(r.rows);
