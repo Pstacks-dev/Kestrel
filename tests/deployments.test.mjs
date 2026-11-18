@@ -33,6 +33,7 @@ test('allows nested artifact paths but rejects traversal and absolute paths', ()
   assert.equal(validArtifactName('../secret'), false);
   assert.equal(validArtifactName('dist/../../secret'), false);
   assert.equal(validArtifactName('/etc/passwd'), false);
+  assert.equal(validArtifactName('C:/Windows/win.ini'), false);
   assert.equal(validArtifactName('dist\\secret'), false);
   assert.equal(validArtifactName('dist//app.js'), false);
 });
