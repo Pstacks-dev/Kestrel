@@ -291,8 +291,9 @@ impl ComputeProvider for FirecrackerProvider {
                 None => None,
             }
         };
-        if let Some(status) = process_state {
-            return Ok(self.instance(id, if status.success() { InstanceState::Stopped } else { InstanceState::Failed }));
+        if process_state.is_some() {
+            // Firecracker cannot restart a VMM process after it has exited; require deletion/recreation.
+            return Ok(self.instance(id, InstanceState::Failed));
         }
         let state = self.api_request(id, "GET", "/vm", None).await
             .and_then(|v| match v.get("state").and_then(Value::as_str) {
