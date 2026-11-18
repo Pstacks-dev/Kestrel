@@ -422,6 +422,7 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
         if (!snapshot.rowCount) return { error: 'Snapshot not found or unavailable', status: 404 };
         const item = snapshot.rows[0];
         if (item.provider === 'firecracker') return { error: 'Snapshots are not supported by the Firecracker pool', status: 400 };
+        if (item.instance_status !== 'stopped') return { error: 'Stop the VM before restoring a snapshot', status: 409 };
         const pending = await c.query(
           "select id from public.compute_operations where instance_id = $1 and status in ('queued','claimed') limit 1",
           [item.instance_id]
