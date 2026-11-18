@@ -149,7 +149,7 @@ impl ComputeProvider for FirecrackerProvider {
             .arg("--uid").arg(self.config.uid.to_string())
             .arg("--gid").arg(self.config.gid.to_string())
             .arg("--chroot-base-dir").arg(&self.config.api_socket_dir)
-            .arg("--api-sock").arg("/run/firecracker.socket")
+            .arg("--").arg("--api-sock").arg("/run/firecracker.socket")
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn().map_err(|e| ComputeError::Provider(format!("Unable to start Firecracker jailer: {e}")))?;
