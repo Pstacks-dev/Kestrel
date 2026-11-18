@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, path::{Component, Path, PathBuf}, process::Stdio, time::Duration};
-use tokio::{fs, process::Command, time};
+use tokio::{fs, io::{AsyncBufReadExt, BufReader}, process::Command, task::JoinSet, time};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -218,42 +218,84 @@ async fn execute(http: &Client, cfg: &Config, job: Job) -> Result<()> {
             "--mount",
         ]).arg(format!("type=bind,src={},dst=/workspace", docker_workspace.display()))
           .args(["--workdir", "/workspace", "--env", "CI=true", "--env", "KESTREL=true"]);
+        let secret_file = std::env::temp_dir().join(format!("kestrel-secrets-{}.env", job.id));
         if let Some(secrets) = &job.secrets {
+            let mut contents = String::new();
             for (key, value) in secrets {
-                if key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                    command.args(["--env", &format!("{key}={value}")]);
+                if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    continue;
                 }
+                anyhow::ensure!(!value.contains('\\n') && !value.contains('\\r') && !value.contains('\\0'), "secret contains unsupported newline or NUL");
+                contents.push_str(key);
+                contents.push('=');
+                contents.push_str(value);
+                contents.push('\\n');
+            }
+            if !contents.is_empty() {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut options = std::fs::OpenOptions::new();
+                options.create(true).truncate(true).write(true).mode(0o600);
+                let mut file = options.open(&secret_file)?;
+                use std::io::Write;
+                file.write_all(contents.as_bytes())?;
+                command.arg("--env-file").arg(&secret_file);
             }
         }
         command.arg(&cfg.image).args(["sh", "-lc", &job.command])
             .stdout(Stdio::piped()).stderr(Stdio::piped());
         let timeout = Duration::from_secs(job.timeout_seconds.unwrap_or(1800).clamp(1, 7200));
-        let output_future = command.output();
-        tokio::pin!(output_future);
+        let mut child = command.spawn().context("starting isolated Docker job")?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow!("Docker stdout pipe unavailable"))?;
+        let stderr = child.stderr.take().ok_or_else(|| anyhow!("Docker stderr pipe unavailable"))?;
+        let (log_tx, mut log_rx) = tokio::sync::mpsc::channel::<(&'static str, String)>(256);
+        let stdout_tx = log_tx.clone();
+        let stdout_reader = tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if stdout_tx.send(("stdout", line)).await.is_err() { break; }
+            }
+        });
+        let stderr_reader = tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if log_tx.send(("stderr", line)).await.is_err() { break; }
+            }
+        });
         let deadline = time::sleep(timeout);
         tokio::pin!(deadline);
         let mut lease_pulse = time::interval(Duration::from_secs(10));
         lease_pulse.tick().await;
         let mut timed_out = false;
-        let output = loop {
+        let process_status = loop {
             tokio::select! {
-                result = &mut output_future => break result.context("starting isolated Docker job")?,
+                result = child.wait() => break result.context("waiting for Docker job")?,
+                Some((stream, line)) = log_rx.recv() => {
+                    if let Err(error) = flush_log(http, cfg, &job, stream, &line.chars().take(8000).collect::<String>()).await {
+                        warn!(job_id = %job.id, %error, "streaming job log failed");
+                    }
+                }
                 _ = lease_pulse.tick() => {
-                    // Empty log batches extend the 45-second job lease while a quiet command runs.
                     if let Err(error) = flush_log(http, cfg, &job, "stdout", "").await {
                         warn!(job_id = %job.id, %error, "job lease refresh failed");
                     }
                 }
                 _ = &mut deadline => {
                     timed_out = true;
-                    let _ = Command::new(&cfg.docker).args(["kill", &container]).output().await;
-                    break output_future.await.context("collecting timed-out Docker job")?;
+                    let _ = child.kill().await;
+                    break child.wait().await.context("waiting for timed-out Docker job")?;
                 }
             }
         };
-        exit_code = if timed_out { 124 } else { output.status.code().unwrap_or(1) };
-        output_text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        if timed_out { output_text.push_str("\\nJob timed out"); }
+        while let Some((stream, line)) = log_rx.recv().await {
+            let _ = flush_log(http, cfg, &job, stream, &line.chars().take(8000).collect::<String>()).await;
+        }
+        let _ = stdout_reader.await;
+        let _ = stderr_reader.await;
+        let _ = fs::remove_file(&secret_file).await;
+        exit_code = if timed_out { 124 } else { process_status.code().unwrap_or(1) };
+        if timed_out {
+            let _ = flush_log(http, cfg, &job, "system", "Job timed out and was terminated").await;
+        }
         status = if exit_code == 0 { "succeeded" } else { "failed" };
     }
 
@@ -281,16 +323,34 @@ async fn main() -> Result<()> {
     let cfg = config()?;
     fs::create_dir_all(&cfg.workdir).await?;
     let http = client(&cfg)?;
+    let mut active = JoinSet::new();
     loop {
         if let Err(error) = register(&http, &cfg).await { warn!(%error, "worker registration failed"); }
         if let Err(error) = heartbeat(&http, &cfg).await { warn!(%error, "worker heartbeat failed"); }
-        match claim(&http, &cfg).await {
-            Ok(Some(job)) => {
-                info!(job_id = %job.id, project_id = %job.project_id, "claimed job");
-                if let Err(error) = execute(&http, &cfg, job).await { error!(%error, "job execution failed"); }
+
+        while active.len() < cfg.concurrency as usize {
+            match claim(&http, &cfg).await {
+                Ok(Some(job)) => {
+                    info!(job_id = %job.id, project_id = %job.project_id, "claimed job");
+                    let task_http = http.clone();
+                    let task_cfg = cfg.clone();
+                    active.spawn(async move { execute(&task_http, &task_cfg, job).await });
+                }
+                Ok(None) => break,
+                Err(error) => { warn!(%error, "job claim failed"); break; }
             }
-            Ok(None) => time::sleep(Duration::from_secs(3)).await,
-            Err(error) => { warn!(%error, "job claim failed"); time::sleep(Duration::from_secs(5)).await; }
+        }
+
+        if active.is_empty() {
+            time::sleep(Duration::from_secs(3)).await;
+        } else {
+            tokio::select! {
+                result = active.join_next() => {
+                    if let Some(Err(error)) = result { error!(%error, "worker job task panicked"); }
+                    else if let Some(Ok(Err(error))) = result { error!(%error, "worker job execution failed"); }
+                }
+                _ = time::sleep(Duration::from_secs(3)) => {}
+            }
         }
     }
 }
