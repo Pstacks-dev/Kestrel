@@ -43,8 +43,8 @@ pub struct KubeVirtProvider {
 }
 
 impl KubeVirtProvider {
-    /// Build a client using a namespace-scoped service-account token and the cluster CA.
-    /// The token is never returned from this provider or included in error messages.
+    /// Build a CA-pinned client; the namespace-scoped service-account token is
+    /// re-read from its projected file for each request so Kubernetes rotation works.
     pub fn new(config: KubeVirtConfig) -> Result<Self, ComputeError> {
         config.validate()?;
         let ca_pem = fs::read(&config.ca_certificate_path)
