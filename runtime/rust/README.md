@@ -43,10 +43,22 @@ Deployment environments can select only workers registered with `runtime=rust`. 
 For customer build jobs, use Docker `bridge` networking only after installing the host firewall. On a dedicated Linux worker, copy the repository to `/opt/kestrel`, then run:
 
 ```sh
-sudo install -m 0755 /opt/kestrel/deploy/harden-worker-egress.sh /opt/kestrel/deploy/harden-worker-egress.sh
+sudo chmod 0755 /opt/kestrel/deploy/harden-worker-egress.sh
 sudo install -m 0644 /opt/kestrel/deploy/kestrel-worker-egress.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now kestrel-worker-egress.service
 ```
 
 The firewall places rules in Docker's `DOCKER-USER` chain to block container access to host-local addresses, private networks, loopback, link-local and cloud metadata ranges while allowing established replies and public internet egress. Verify the rules after every Docker/OS upgrade and persist them through the systemd unit. This is an additional network boundary, not a substitute for dedicated worker hosts and stronger sandboxing such as gVisor, Kata Containers or Firecracker.
+
+
+## Database migrations for the current execution/deployment features
+
+Apply migrations in numeric order before deploying the matching control-plane code:
+
+- `008_artifact_lifecycle.sql`
+- `009_recovery_state_consistency.sql`
+- `010_deployment_engine.sql`
+- `011_deployment_lease_recovery.sql`
+
+The artifact lifecycle defaults to no automatic expiry. Set `KESTREL_ARTIFACT_RETENTION_DAYS` to a value from 1 to 3650 to expire newly uploaded artifacts; the protected daily cron removes expired objects from the private Supabase bucket. Set a strong `CRON_SECRET` in the control plane for both lease recovery and artifact cleanup.
