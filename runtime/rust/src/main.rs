@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, env, path::{Component, Path, PathBuf}, process::Stdio, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 use tokio::{fs, io::{AsyncBufReadExt, BufReader}, process::Command, task::JoinSet, time};
 use tracing::{error, info, warn};
@@ -42,6 +43,20 @@ struct WorkerInfo<'a> { worker_id: &'a str, hostname: &'a str, arch: &'a str, re
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Heartbeat<'a> { worker_id: &'a str, draining: bool }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactUploadRequest<'a> {
+    lease_token: &'a str, name: &'a str, size_bytes: u64, sha256: &'a str, content_type: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactUploadResponse { session_id: String, upload_url: String }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactFinalizeRequest<'a> { lease_token: &'a str, session_id: &'a str }
 
 #[derive(Serialize)]
 struct LogEntry<'a> { stream: &'a str, message: &'a str }
@@ -214,7 +229,7 @@ async fn discover_artifacts(workspace: &Path, directory: &Path, output: &mut Vec
     Ok(())
 }
 
-async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Path) -> Result<()> {
+async fn upload_artifacts_inner(http: &Client, cfg: &Config, job: &Job, workspace: &Path) -> Result<()> {
     let mut discovered = Vec::new();
     let declared = job.artifact_paths.as_deref().unwrap_or(&[]);
     let paths: Vec<String> = if declared.is_empty() {
@@ -224,11 +239,11 @@ async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Pa
         discovered
     } else { declared.to_vec() };
     let mut total_bytes = 0u64;
+    let storage_client = Client::new();
     for raw in &paths {
         let relative = safe_relative_path(raw)?;
         let source = workspace.join(&relative);
         if !source.is_file() { warn!(path = %raw, "declared artifact does not exist; skipping"); continue; }
-        // Never follow a build-created symlink outside the job workspace when collecting artifacts.
         let root = workspace.canonicalize()?;
         let canonical_source = source.canonicalize()?;
         anyhow::ensure!(canonical_source.starts_with(&root), "artifact path escapes job workspace: {raw}");
@@ -238,16 +253,46 @@ async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Pa
         anyhow::ensure!(total_bytes <= 250 * 1024 * 1024, "artifact collection exceeds 250 MiB");
         let bytes = fs::read(&canonical_source).await?;
         let name = relative.to_string_lossy().to_string();
-        let response = http.put(format!("{}/api/workers/jobs/{}/artifacts/upload", cfg.api, job.id))
-            .header("x-kestrel-lease", &job.lease_token)
-            .header("x-artifact-name", &name)
-            .header("x-artifact-content-type", "application/octet-stream")
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let upload_response = post(
+            http, cfg, &format!("/api/workers/jobs/{}/artifacts/upload-url", job.id),
+            &ArtifactUploadRequest {
+                lease_token: &job.lease_token, name: &name, size_bytes: bytes.len() as u64,
+                sha256: &digest, content_type: "application/octet-stream",
+            }
+        ).await?;
+        let session = upload_response.json::<ArtifactUploadResponse>().await?;
+        let uploaded = storage_client.put(&session.upload_url)
             .header("content-type", "application/octet-stream")
-            .body(bytes).send().await?;
-        anyhow::ensure!(response.status().is_success(), "artifact upload failed for {raw}: {}", response.status());
-        info!(path = %raw, "artifact uploaded");
+            .header("x-upsert", "false")
+            .body(bytes)
+            .send().await?;
+        anyhow::ensure!(uploaded.status().is_success(), "direct artifact upload failed for {raw}: {}", uploaded.status());
+        post(
+            http, cfg, &format!("/api/workers/jobs/{}/artifacts/finalize", job.id),
+            &ArtifactFinalizeRequest { lease_token: &job.lease_token, session_id: &session.session_id },
+        ).await?;
+        info!(path = %raw, "artifact uploaded and finalized");
     }
     Ok(())
+}
+
+async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Path) -> Result<()> {
+    let renew_http = http.clone();
+    let api = cfg.api.clone();
+    let job_id = job.id.clone();
+    let lease = job.lease_token.clone();
+    let renewer = tokio::spawn(async move {
+        loop {
+            time::sleep(Duration::from_secs(8)).await;
+            let response = renew_http.post(format!("{api}/api/workers/jobs/{job_id}/lease"))
+                .json(&serde_json::json!({ "leaseToken": lease })).send().await;
+            if !response.as_ref().is_ok_and(|r| r.status().is_success()) { break; }
+        }
+    });
+    let result = upload_artifacts_inner(http, cfg, job, workspace).await;
+    renewer.abort();
+    result
 }
 
 fn valid_deployment_image(image: &str) -> bool {
