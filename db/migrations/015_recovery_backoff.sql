@@ -78,7 +78,7 @@ begin
 
   return query select v_recovered_jobs, v_offline_workers;
 end;
-$;
+$$;
 
 revoke all on function public.recover_stale_leases() from public, anon, authenticated;
 grant execute on function public.recover_stale_leases() to service_role;
