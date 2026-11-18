@@ -1,4 +1,4 @@
-use crate::{ComputeError, ComputeProvider, Instance, InstanceSpec, InstanceState, ProviderCapabilities, ProviderKind};
+use crate::{ComputeError, ComputeProvider, Instance, InstanceSnapshot, InstanceSpec, InstanceState, ProviderCapabilities, ProviderKind};
 use async_trait::async_trait;
 use reqwest::{Client, Method, Response};
 use serde_json::{json, Value};
@@ -143,7 +143,7 @@ impl IncusProvider {
 impl ComputeProvider for IncusProvider {
     fn kind(&self) -> ProviderKind { ProviderKind::Incus }
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { virtual_machines: true, snapshots: false, live_migration: false, console: false, cluster_scheduling: false }
+        ProviderCapabilities { virtual_machines: true, snapshots: true, live_migration: false, console: false, cluster_scheduling: false }
     }
     async fn health(&self) -> Result<(), ComputeError> {
         let response = self.request(Method::GET, "", None).await?;
@@ -191,6 +191,45 @@ impl ComputeProvider for IncusProvider {
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError> {
         validate_instance_name(id)?;
         let response = self.request(Method::DELETE, &format!("instances/{id}"), None).await?;
+        self.operation_from(response).await?;
+        Ok(())
+    }
+
+    async fn create_snapshot(&self, instance_id: &str, name: &str) -> Result<InstanceSnapshot, ComputeError> {
+        validate_instance_name(instance_id)?;
+        validate_instance_name(name)?;
+        let response = self.request(Method::POST, &format!("instances/{instance_id}/snapshots"),
+            Some(json!({"name":name,"stateful":false}))).await?;
+        self.operation_from(response).await?;
+        Ok(InstanceSnapshot { provider_id:name.to_owned(), name:name.to_owned() })
+    }
+
+    async fn list_snapshots(&self, instance_id: &str) -> Result<Vec<InstanceSnapshot>, ComputeError> {
+        validate_instance_name(instance_id)?;
+        let response = self.request(Method::GET, &format!("instances/{instance_id}/snapshots"), None).await?;
+        let entries = response.get("metadata").and_then(Value::as_array)
+            .ok_or_else(|| ComputeError::Provider("Incus snapshot list response is malformed".into()))?;
+        Ok(entries.iter().filter_map(Value::as_str).filter_map(|url| {
+            let name = url.trim_end_matches('/').rsplit('/').next()?;
+            if validate_instance_name(name).is_ok() {
+                Some(InstanceSnapshot { provider_id:name.to_owned(), name:name.to_owned() })
+            } else { None }
+        }).collect())
+    }
+
+    async fn restore_snapshot(&self, instance_id: &str, snapshot_id: &str) -> Result<(), ComputeError> {
+        validate_instance_name(instance_id)?;
+        validate_instance_name(snapshot_id)?;
+        let response = self.request(Method::PUT, &format!("instances/{instance_id}"),
+            Some(json!({"restore":snapshot_id}))).await?;
+        self.operation_from(response).await?;
+        Ok(())
+    }
+
+    async fn delete_snapshot(&self, instance_id: &str, snapshot_id: &str) -> Result<(), ComputeError> {
+        validate_instance_name(instance_id)?;
+        validate_instance_name(snapshot_id)?;
+        let response = self.request(Method::DELETE, &format!("instances/{instance_id}/snapshots/{snapshot_id}"), None).await?;
         self.operation_from(response).await?;
         Ok(())
     }
