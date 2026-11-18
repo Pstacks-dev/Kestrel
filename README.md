@@ -57,7 +57,12 @@ Kestrel is a production-hardened, distributed CI/CD platform built with:
 6. **Live Log Viewer & Real-time Feedback**:
    - Database-backed streaming log ingest and query endpoint (`GET /api/jobs/:jobId/logs`).
    - Interactive log viewer with stdout/stderr filtering, substring search, auto-scroll, copy-to-clipboard, and live polling.
-7. **Build Artifacts**:
+7. **Native Project Files**:
+   - Create projects from Git repositories or upload-only source projects.
+   - Upload individual files or complete folders into a private Supabase Storage bucket through authenticated Kestrel API routes.
+   - Workspace membership and developer roles are checked server-side; paths are normalized and traversal attempts rejected; per-file uploads are limited to 20 MiB.
+   - Uploaded-source projects can be browsed and downloaded. Pipeline execution from uploaded source is not enabled until the worker source handoff is implemented.
+8. **Build Artifacts**:
    - Automatic scanning of `dist/`, `build/`, and `artifacts/` directories on job completion.
    - Artifact registration with SHA-256 checksums and MIME type classification.
 8. **Automated Migrations & Preflights**:
