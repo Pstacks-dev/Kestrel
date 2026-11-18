@@ -155,6 +155,7 @@ impl ComputeProvider for FirecrackerProvider {
             .arg("--chroot-base-dir").arg(&self.config.api_socket_dir)
             .arg("--").arg("--api-sock").arg("/run/firecracker.socket")
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .kill_on_drop(true)
             .spawn().map_err(|e| ComputeError::Provider(format!("Unable to start Firecracker jailer: {e}")))?;
         if let Err(error) = self.wait_for_socket(&spec.name, &mut child).await {
             let _ = child.kill().await;
