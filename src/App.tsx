@@ -49,6 +49,7 @@ type Page =
   | 'overview'
   | 'pipelines'
   | 'runs'
+  | 'deployments'
   | 'projects'
   | 'artifacts'
   | 'settings';
@@ -57,6 +58,7 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'overview', label: 'Overview', icon: Activity, group: 'WORKSPACE' },
   { id: 'pipelines', label: 'Pipelines', icon: Workflow, group: 'WORKSPACE' },
   { id: 'runs', label: 'Run history', icon: Clock3, group: 'WORKSPACE' },
+  { id: 'deployments', label: 'Deployments', icon: Server, group: 'WORKSPACE' },
   { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
   { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
@@ -555,6 +557,16 @@ function AppShell({ page }: { page: Page }) {
   const [newSecretName, setNewSecretName] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
   const [webhookConfig, setWebhookConfig] = useState<{ webhookSecret: string; events: string[] } | null>(null);
+  const [deploymentEnvironments, setDeploymentEnvironments] = useState<any[]>([]);
+  const [deploymentReleases, setDeploymentReleases] = useState<Record<string, any[]>>({});
+  const [deploymentName, setDeploymentName] = useState('Production');
+  const [deploymentEnvironmentKey, setDeploymentEnvironmentKey] = useState('production');
+  const [deploymentWorkerId, setDeploymentWorkerId] = useState('');
+  const [deploymentHostPort, setDeploymentHostPort] = useState('8080');
+  const [deploymentContainerPort, setDeploymentContainerPort] = useState('3000');
+  const [deploymentHealthPath, setDeploymentHealthPath] = useState('/');
+  const [deploymentPublicUrl, setDeploymentPublicUrl] = useState('');
+  const [deploymentImage, setDeploymentImage] = useState('');
 
   const active = nav.find((n) => n.id === page) || nav[0];
 
@@ -815,6 +827,90 @@ function AppShell({ page }: { page: Page }) {
       connect();
     } catch {}
   }
+
+  async function loadDeployments(projectId = selectedProject) {
+    if (!projectId || !accessToken) return;
+    try {
+      const response = await fetch(`${api}/projects/${projectId}/deployments`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load deployments');
+      const environments = data.environments || [];
+      setDeploymentEnvironments(environments);
+      const histories = await Promise.all(environments.map(async (environment: any) => {
+        const r = await fetch(`${api}/deployments/${environment.id}/releases`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const body = await r.json();
+        return [environment.id, r.ok ? body.releases || [] : []] as const;
+      }));
+      setDeploymentReleases(Object.fromEntries(histories));
+    } catch (error: any) {
+      setActionMessage(error.message || 'Could not load deployments');
+    }
+  }
+
+  async function createDeploymentEnvironment(e: any) {
+    e.preventDefault();
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/projects/${selectedProject}/deployments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          name: deploymentName, environmentKey: deploymentEnvironmentKey,
+          workerId: deploymentWorkerId, hostPort: Number(deploymentHostPort),
+          containerPort: Number(deploymentContainerPort), healthPath: deploymentHealthPath,
+          publicUrl: deploymentPublicUrl || null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not create deployment environment');
+      setActionMessage('Deployment environment created.');
+      await loadDeployments(selectedProject);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Deployment environment creation failed');
+    }
+  }
+
+  async function deployImage(environmentId: string) {
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/deployments/${environmentId}/releases`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ image: deploymentImage.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not queue deployment');
+      setActionMessage(`Release #${data.release.releaseNumber} queued. It will run on the assigned Rust worker.`);
+      await loadDeployments(selectedProject);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Deployment request failed');
+    }
+  }
+
+  async function rollbackDeployment(environmentId: string) {
+    if (!window.confirm('Queue a rollback to the previous healthy release?')) return;
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/deployments/${environmentId}/rollback`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not queue rollback');
+      setActionMessage(`Rollback release #${data.release.releaseNumber} queued.`);
+      await loadDeployments(selectedProject);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Rollback request failed');
+    }
+  }
+
+  useEffect(() => {
+    if (page === 'deployments' && selectedProject && accessToken) loadDeployments(selectedProject);
+  }, [page, selectedProject, accessToken]);
 
   async function downloadArtifact(artifactId: string) {
     setActionMessage('');
