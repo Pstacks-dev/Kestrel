@@ -1931,7 +1931,7 @@ function AppShell({ page }: { page: Page }) {
                       <div className="table-row" key={snapshot.id}>
                         <Boxes size={15} />
                         <div className="flex-1"><b>{snapshot.name}</b><small>{snapshot.status} · {new Date(snapshot.createdAt).toLocaleString()}</small></div>
-                        {snapshot.status === 'ready' && <Button kind="light" onClick={() => restoreComputeSnapshot(snapshot.id)}>Restore</Button>}
+                        {snapshot.status === 'ready' && vm.status === 'stopped' && <Button kind="light" onClick={() => restoreComputeSnapshot(snapshot.id)}>Restore</Button>}
                         {snapshot.status === 'ready' && <Button kind="light" onClick={() => deleteComputeSnapshot(snapshot.id)}><Trash2 size={13} /></Button>}
                       </div>
                     )) : <p className="deployment-muted">No snapshots created.</p>}
