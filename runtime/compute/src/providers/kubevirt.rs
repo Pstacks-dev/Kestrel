@@ -247,6 +247,6 @@ mod tests {
         assert_eq!(manifest.pointer("/spec/template/spec/domain/cpu/cores").and_then(Value::as_u64), Some(2));
         assert_eq!(manifest.pointer("/spec/template/spec/domain/resources/requests/memory").and_then(Value::as_str), Some("2048Mi"));
         assert_eq!(manifest.pointer("/spec/template/spec/volumes/1/emptyDisk/capacity").and_then(Value::as_str), Some("30Gi"));
-        assert_eq!(manifest.pointer("/spec/template/spec/volumes/2/cloudInitNoCloud/userData").and_then(Value::as_str).unwrap().contains("ssh-ed25519 AAAATEST"), true);
+        assert!(manifest.pointer("/spec/template/spec/volumes/2/cloudInitNoCloud/userData").and_then(Value::as_str).unwrap().contains("ssh-ed25519 AAAATEST"));
     }
 }
