@@ -217,10 +217,10 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
           if (!vm.rowCount) continue;
           if (expired.action.startsWith('snapshot_')) {
             await c.query(
-              `update public.compute_snapshots set status = 'failed',
+              `update public.compute_snapshots set status = case when $2 = 'snapshot_create' then 'failed' else 'ready' end,
                  error_message = 'Compute host lease expired after maximum attempts', updated_at = now()
                where id = $1`,
-              [expired.snapshot_id]
+              [expired.snapshot_id, expired.action]
             );
           } else if (expired.action === 'create') {
             await c.query(
@@ -301,7 +301,7 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
           if (!snapshot.rowCount) return null;
           const snapshotStatus = success
             ? current.action === 'snapshot_create' ? 'ready' : current.action === 'snapshot_delete' ? 'deleted' : 'ready'
-            : current.action === 'snapshot_restore' ? 'ready' : 'failed';
+            : current.action === 'snapshot_create' ? 'failed' : 'ready';
           await c.query(
             `update public.compute_snapshots set provider_snapshot_id = coalesce($2, provider_snapshot_id),
                status = $3, error_message = $4,
@@ -456,6 +456,11 @@ export function registerComputeRoutes(app, { userAuth, platformAdmin, query, tra
         if (!snapshot.rowCount) return { error: 'Snapshot not found or unavailable', status: 404 };
         const item = snapshot.rows[0];
         if (item.provider === 'firecracker') return { error: 'Snapshots are not supported by the Firecracker pool', status: 400 };
+        const pending = await c.query(
+          "select id from public.compute_operations where instance_id = $1 and status in ('queued','claimed') limit 1",
+          [item.instance_id]
+        );
+        if (pending.rowCount) return { error: 'A VM operation is already in progress', status: 409 };
         await c.query("update public.compute_snapshots set status = 'deleting', updated_at = now() where id = $1", [item.id]);
         const operation = await c.query(
           `insert into public.compute_operations(instance_id, organization_id, node_id, action, payload, snapshot_id)
