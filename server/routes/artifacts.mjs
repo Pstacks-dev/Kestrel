@@ -1,4 +1,3 @@
-import express from 'express';
 import crypto from 'node:crypto';
 
 const BUCKET = 'kestrel-artifacts';
@@ -44,11 +43,18 @@ async function removeStoredObject(objectKey) {
 }
 
 export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
-  app.put('/api/workers/jobs/:jobId/artifacts/upload', workerAuth, express.raw({ type: 'application/octet-stream', limit: MAX_ARTIFACT_BYTES }), async (req, res) => {
-    let uploadedObjectKey = null;
+  app.post('/api/workers/jobs/:jobId/artifacts/upload-url', workerAuth, async (req, res) => {
     try {
-      const lease = String(req.get('x-kestrel-lease') || '');
-      const name = String(req.get('x-artifact-name') || '').slice(0, 512);
+      const lease = String(req.get('x-kestrel-lease') || req.body?.leaseToken || '');
+      const name = String(req.body?.name || '');
+      const sizeBytes = Number(req.body?.sizeBytes);
+      const sha256 = String(req.body?.sha256 || '').toLowerCase();
+      const contentType = String(req.body?.contentType || 'application/octet-stream').slice(0, 120);
+      if (!validArtifactName(name)) return res.status(400).json({ error: 'Artifact name must be a safe relative file path' });
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > MAX_ARTIFACT_BYTES) {
+        return res.status(413).json({ error: 'Artifact must be between 1 byte and 100 MiB' });
+      }
+      if (!/^[a-f0-9]{64}$/.test(sha256)) return res.status(400).json({ error: 'A SHA-256 digest is required' });
       const run = await query(
         `select j.run_id, p.organization_id
          from public.jobs j join public.pipeline_runs r on r.id = j.run_id
@@ -58,29 +64,67 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
         [req.params.jobId, lease, req.worker.id]
       );
       if (!run.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
-      if (!validArtifactName(name)) {
-        return res.status(400).json({ error: 'Artifact name must be a safe relative file path' });
-      }
-      if (!Buffer.isBuffer(req.body) || !req.body.length || req.body.length > MAX_ARTIFACT_BYTES) {
-        return res.status(413).json({ error: 'Artifact must be between 1 byte and 100 MiB' });
-      }
-      const digest = crypto.createHash('sha256').update(req.body).digest('hex');
-      const objectKey = `${run.rows[0].organization_id}/${run.rows[0].run_id}/${crypto.randomUUID()}-${name}`;
-      uploadedObjectKey = objectKey;
-      await storageRequest(`/object/${BUCKET}/${objectKey.split('/').map(encodeURIComponent).join('/')}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'x-upsert': 'false' }, body: req.body,
+      const objectKey = run.rows[0].organization_id + '/' + run.rows[0].run_id + '/' + crypto.randomUUID() + '-' + name;
+      const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
+      const signed = await storageRequest('/object/upload/sign/' + BUCKET + '/' + encodedKey, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upsert: false }),
       });
-      const result = await query(
+      const signedPath = signed?.url || signed?.signedURL || signed?.signedUrl;
+      const { url } = storageConfig();
+      let uploadUrl;
+      if (typeof signedPath === 'string' && signedPath.startsWith('http')) uploadUrl = signedPath;
+      else if (typeof signedPath === 'string') uploadUrl = url + (signedPath.startsWith('/storage/v1') ? signedPath : '/storage/v1' + (signedPath.startsWith('/') ? '' : '/') + signedPath);
+      else if (signed?.token) uploadUrl = url + '/storage/v1/object/upload/sign/' + BUCKET + '/' + encodedKey + '?token=' + encodeURIComponent(signed.token);
+      if (!uploadUrl) throw new Error('Storage did not return a signed upload URL');
+      const session = await query(
+        `insert into public.artifact_upload_sessions(job_id, worker_id, object_key, name, size_bytes, sha256, content_type)
+         values($1, $2, $3, $4, $5, $6, $7)
+         returning id, expires_at`,
+        [req.params.jobId, req.worker.id, objectKey, name, sizeBytes, sha256, contentType]
+      );
+      res.status(201).json({ sessionId: session.rows[0].id, uploadUrl, expiresAt: session.rows[0].expires_at });
+    } catch (error) {
+      console.error('Artifact upload URL creation failed:', error.message);
+      res.status(error.status || 500).json({ error: 'Could not create artifact upload URL' });
+    }
+  });
+
+  app.post('/api/workers/jobs/:jobId/artifacts/finalize', workerAuth, async (req, res) => {
+    try {
+      const lease = String(req.get('x-kestrel-lease') || req.body?.leaseToken || '');
+      const session = await query(
+        `select s.*, j.run_id, p.organization_id
+         from public.artifact_upload_sessions s
+         join public.jobs j on j.id = s.job_id
+         join public.pipeline_runs r on r.id = j.run_id
+         join public.projects p on p.id = r.project_id
+         where s.id = $1 and s.job_id = $2 and s.worker_id = $3
+           and j.lease_token = $4 and j.worker_id = $3 and j.status = 'running'
+           and j.lease_expires_at > now() and s.expires_at > now()`,
+        [req.body?.sessionId, req.params.jobId, req.worker.id, lease]
+      );
+      if (!session.rowCount) return res.status(409).json({ error: 'Artifact upload session or job lease is invalid or expired' });
+      const row = session.rows[0];
+      const encodedKey = row.object_key.split('/').map(encodeURIComponent).join('/');
+      const info = await storageRequest('/object/info/' + BUCKET + '/' + encodedKey);
+      const actualSize = Number(info?.metadata?.size ?? info?.metadata?.contentLength ?? info?.size);
+      if (!Number.isSafeInteger(actualSize) || actualSize !== Number(row.size_bytes)) {
+        return res.status(409).json({ error: 'Uploaded artifact size does not match its upload session' });
+      }
+      const retention = retentionDays();
+      const artifact = await query(
         `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type, expires_at)
          values($1, $2, $3, $4, $5, $6, case when $7::int is null then null else now() + make_interval(days => $7::int) end)
          returning id, name, size_bytes, sha256, created_at, expires_at`,
-        [run.rows[0].run_id, name, objectKey, req.body.length, digest, req.get('x-artifact-content-type') || 'application/octet-stream', retentionDays()]
+        [row.run_id, row.name, row.object_key, row.size_bytes, row.sha256, row.content_type, retention]
       );
-      res.status(201).json({ artifact: result.rows[0] });
+      await query('delete from public.artifact_upload_sessions where id = $1', [row.id]);
+      res.status(201).json({ artifact: artifact.rows[0] });
     } catch (error) {
-      if (uploadedObjectKey) await removeStoredObject(uploadedObjectKey).catch(() => {});
-      console.error('Artifact upload failed:', error.message);
-      res.status(error.status || 500).json({ error: error.message || 'Artifact upload failed' });
+      console.error('Artifact finalization failed:', error.message);
+      res.status(error.status || 500).json({ error: 'Could not finalize uploaded artifact' });
     }
   });
 
