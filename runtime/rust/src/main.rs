@@ -141,7 +141,7 @@ async fn stage_uploaded_source(http: &Client, cfg: &Config, job: &Job, workspace
     Ok(())
 }
 
-async fn stage_git_source(cfg: &Config, job: &Job, workspace: &Path) -> Result<()> {
+async fn stage_git_source(_cfg: &Config, job: &Job, workspace: &Path) -> Result<()> {
     let url = job.repository_url.as_deref().ok_or_else(|| anyhow!("Git project has no repository URL"))?;
     let mut clone = Command::new("git");
     clone.args(["clone", "--depth", "1", "--", url]).arg(workspace).stdout(Stdio::null()).stderr(Stdio::piped());
