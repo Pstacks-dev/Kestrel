@@ -1,0 +1,12 @@
+[package]
+name = "kestrel-compute"
+version = "0.1.0"
+edition = "2021"
+description = "Provider-neutral VM orchestration contracts for Kestrel Compute"
+license = "MIT"
+
+[dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
