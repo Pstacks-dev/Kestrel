@@ -11,7 +11,8 @@ export default function Admin(){
   const [needsLogin,setNeedsLogin]=useState(false);
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
-  const [data,setData]=useState<Overview|null>(null);\n  const [health,setHealth]=useState<any>(null);
+  const [data,setData]=useState<Overview|null>(null);
+  const [health,setHealth]=useState<any>(null);
   const [orgs,setOrgs]=useState<Org[]>([]);
   const [organizationId,setOrganizationId]=useState('');
   const [workerName,setWorkerName]=useState('builder-node');
@@ -29,7 +30,10 @@ export default function Admin(){
       const r=await fetch('/api/admin/overview',{headers:{Authorization:`Bearer ${session.access_token}`}});
       if(r.status===404||r.status===403){setAllowed(false);setNeedsLogin(false);setError('This account is not provisioned as a platform administrator.');return}
       if(!r.ok)throw new Error('Unable to load admin data');
-      setData(await r.json());\n      const h=await fetch('/api/admin/health',{headers:{Authorization:`Bearer ${session.access_token}`}});\n      if(h.ok)setHealth(await h.json());\n      const o=await fetch('/api/admin/organizations',{headers:{Authorization:`Bearer ${session.access_token}`}});
+      setData(await r.json());
+      const h=await fetch('/api/admin/health',{headers:{Authorization:`Bearer ${session.access_token}`}});
+      if(h.ok)setHealth(await h.json());
+      const o=await fetch('/api/admin/organizations',{headers:{Authorization:`Bearer ${session.access_token}`}});
       if(o.ok){const list=await o.json();setOrgs(list);if(list.length&&!organizationId)setOrganizationId(list[0].id)}
       setNeedsLogin(false);setAllowed(true);
     }catch(e:any){setError(e.message||'Request failed')}
