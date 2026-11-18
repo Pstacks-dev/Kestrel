@@ -1190,7 +1190,7 @@ app.post('/api/workers/jobs/:jobId/logs', workerAuth, async (req, res) => {
     const cleanMessage = redactSecrets(String(e.message || '')).slice(0, 8000);
     await query(
       'insert into public.job_logs(job_id, stream, message) values($1, $2, $3)',
-      [req.params.jobId, e.stream === 'stderr' ? 'stderr' : 'stdout', cleanMessage]
+      [req.params.jobId, e.stream === 'stderr' ? 'stderr' : e.stream === 'system' ? 'system' : 'stdout', cleanMessage]
     );
   }
 
@@ -1242,7 +1242,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
          lease_token = null,
          lease_expires_at = null,
          worker_id = case when $3 = 'failed' and attempt <= max_retries then null else worker_id end
-     where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled')
+     where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled') and lease_expires_at > now()
      returning run_id, status`,
     [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id]
   );
