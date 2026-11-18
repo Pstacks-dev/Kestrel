@@ -337,7 +337,7 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
         "--publish".into(), format!("{}:{}", deployment.host_port, deployment.container_port),
         "--network".into(), "bridge".into(),
         "--cap-drop=ALL".into(), "--security-opt=no-new-privileges".into(),
-        "--pids-limit".into(), "256".into(), "--memory".into(), "2048m".into(),
+        "--pids-limit".into(), "256".into(), "--memory".into(), "2048m".into(), "--cpus".into(), "1.0".into(),
         "--read-only".into(), "--tmpfs".into(), "/tmp:rw,nosuid,nodev,noexec,size=256m".into(),
     ];
     if secret_file_created {
@@ -402,7 +402,7 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
         return Err(anyhow!("deployment health check failed; previous release restoration was attempted"));
     }
 
-    if secret_file_created { fs::remove_file(&secret_file).await?; }
+    if secret_file_created { let _ = fs::remove_file(&secret_file).await; }
     let _ = flush_log(http, cfg, job, "system", "Deployment is healthy and the new release is active").await;
     if let Some(url) = &deployment.public_url {
         let _ = flush_log(http, cfg, job, "system", &format!("Application URL: {url}")).await;
