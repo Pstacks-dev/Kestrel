@@ -82,13 +82,10 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
       let uploadUrl = typeof signedPath === 'string'
         ? (signedPath.startsWith('http') ? signedPath : url + (signedPath.startsWith('/storage/v1') ? signedPath : '/storage/v1' + (signedPath.startsWith('/') ? '' : '/') + signedPath))
         : url + '/storage/v1/object/upload/sign/' + BUCKET + '/' + encodedKey;
-      if (signed?.token) {
-        const parsed = new URL(uploadUrl);
-        if (!parsed.searchParams.has('token')) parsed.searchParams.set('token', signed.token);
-        uploadUrl = parsed.toString();
-      } else if (!signedPath) {
-        throw new Error('Storage did not return a signed upload URL');
-      }
+      const parsedUploadUrl = new URL(uploadUrl);
+      if (signed?.token && !parsedUploadUrl.searchParams.has('token')) parsedUploadUrl.searchParams.set('token', signed.token);
+      if (!parsedUploadUrl.searchParams.has('token')) throw new Error('Storage did not return a signed upload token');
+      uploadUrl = parsedUploadUrl.toString();
       res.status(201).json({ sessionId: session.rows[0].id, uploadUrl, expiresAt: session.rows[0].expires_at });
     } catch (error) {
       console.error('Artifact upload URL creation failed:', error.message);
@@ -195,7 +192,7 @@ export function registerArtifactRoutes(app, { userAuth, workerAuth, query }) {
     } catch (error) { res.status(error.status || 500).json({ error: 'Could not delete artifact' }); }
   });
 
-  app.post('/api/cron/artifacts/cleanup', async (req, res) => {
+  app.get('/api/cron/artifacts/cleanup', async (req, res) => {
     const cronSecret = process.env.CRON_SECRET;
     if (!cronSecret) return res.status(503).json({ error: 'Artifact cleanup cron is not configured' });
     if (req.headers.authorization !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized' });
