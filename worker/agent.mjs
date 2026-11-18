@@ -357,7 +357,7 @@ async function collectArtifacts(job, workspace) {
           authorization: headers.authorization,
           'x-worker-id': WORKER_ID,
           'x-kestrel-lease': job.leaseToken,
-          'x-artifact-name': path.basename(entry.name).slice(0, 255),
+          'x-artifact-name': relative.slice(0, 512),
           'x-artifact-content-type': 'application/octet-stream',
           'content-type': 'application/octet-stream',
         },
