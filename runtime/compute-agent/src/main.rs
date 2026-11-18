@@ -167,7 +167,14 @@ async fn execute(provider: &dyn ComputeProvider, operation: &Operation) -> Resul
                 .ok_or_else(|| anyhow!("snapshot operation is missing providerId"))?;
             let name = operation.payload.get("name").and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("snapshot operation is missing its name"))?;
-            let snapshot = provider.create_snapshot(vm_id, name).await.map_err(|e| anyhow!(e.to_string()))?;
+            let snapshot = match provider.create_snapshot(vm_id, name).await {
+                Ok(snapshot) => snapshot,
+                Err(create_error) => match provider.list_snapshots(vm_id).await {
+                    Ok(snapshots) => snapshots.into_iter().find(|snapshot| snapshot.name == name)
+                        .ok_or_else(|| anyhow!(create_error.to_string()))?,
+                    Err(_) => return Err(anyhow!(create_error.to_string())),
+                },
+            };
             Ok(Instance {
                 id: uuid::Uuid::nil(), provider_id: snapshot.provider_id,
                 name: snapshot.name, state: InstanceState::Stopped, ipv4: Vec::new()
