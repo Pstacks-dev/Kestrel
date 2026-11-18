@@ -187,7 +187,7 @@ impl ComputeProvider for FirecrackerProvider {
         if let Some(status) = process_state {
             return Ok(self.instance(id, if status.success() { InstanceState::Stopped } else { InstanceState::Failed }));
         }
-        let state = self.api_request(id, "GET", "/", None).await
+        let state = self.api_request(id, "GET", "/vm", None).await
             .and_then(|v| match v.get("state").and_then(Value::as_str) {
                 Some("Running") => Ok(InstanceState::Running),
                 Some("Paused") => Ok(InstanceState::Stopped),
@@ -198,12 +198,12 @@ impl ComputeProvider for FirecrackerProvider {
 
     async fn start_instance(&self, id: &str) -> Result<(), ComputeError> {
         validate_id(id)?;
-        self.api_request(id, "PUT", "/actions", Some(json!({"action_type":"InstanceStart"}))).await.map(|_| ())
+        self.api_request(id, "PATCH", "/vm", Some(json!({"state":"Resumed"}))).await.map(|_| ())
     }
 
     async fn stop_instance(&self, id: &str) -> Result<(), ComputeError> {
         validate_id(id)?;
-        self.api_request(id, "PUT", "/actions", Some(json!({"action_type":"SendCtrlAltDel"}))).await.map(|_| ())
+        self.api_request(id, "PATCH", "/vm", Some(json!({"state":"Paused"}))).await.map(|_| ())
     }
 
     async fn delete_instance(&self, id: &str) -> Result<(), ComputeError> {
