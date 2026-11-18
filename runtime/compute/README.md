@@ -34,17 +34,9 @@ Kubernetes as a dependency.
 
 ## Current implementation status
 
-The first implementation adds a shared Rust provider contract, VM resource
-validation and provider-specific configuration validation for Incus,
-Firecracker and KubeVirt. It does not yet create real VMs. Provider API
-transports, persistent VM records, scheduling, image/network provisioning,
-console/SSH access, snapshots and quota enforcement remain to be implemented
-and tested on a real KVM host.
+The shared Rust provider contract and VM resource validation are in place. Incus now has an mTLS HTTP client, project-scoped API requests, asynchronous operation waiting, VM create/lookup/start/stop/delete calls, and configuration/URL-scope unit tests. This code has not yet passed a fresh CI run or been exercised against a real Incus daemon, so actual VM provisioning remains unverified. Firecracker and KubeVirt currently have configuration/contracts only; their API transports and lifecycle operations remain to be implemented. Persistent Kestrel VM records, scheduling, image/network provisioning, console/SSH access, snapshots and quota enforcement also remain outstanding.
 
-Provider operations deliberately return an explicit not-implemented error
-until their security-sensitive transports are connected. This prevents the
-API or dashboard from claiming that a VM was created when no hypervisor
-operation occurred.
+Firecracker and KubeVirt operations deliberately return an explicit not-implemented error until their security-sensitive transports are connected. Incus calls are implemented but must be validated against a real daemon before being exposed as production-ready. This prevents the API or dashboard from claiming that an unverified provider operation succeeded.
 
 ## Build and test
 
