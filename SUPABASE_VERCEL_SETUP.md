@@ -1,6 +1,6 @@
 # Kestrel: connect Supabase and deploy to Vercel
 
-This repository uses Supabase Auth for identity and Supabase PostgreSQL for durable application state. The Vite client only receives the project URL and publishable/legacy anon key. The database connection string is server-only.
+This repository uses Kestrel-managed email OTP and JWT sessions for account registration and sign-in, with Supabase PostgreSQL for durable application state. Supabase Auth email delivery is not used for new Kestrel signups. The database connection string is server-only.
 
 ## 1. Supabase project values
 
@@ -32,15 +32,22 @@ Set these values in `.env`:
 NODE_ENV=development
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_LEGACY_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_LEGACY_SERVICE_ROLE_KEY
 SUPABASE_DB_URL=postgresql://postgres.YOUR_PROJECT_REF:URL_ENCODED_PASSWORD@YOUR_POOLER_HOST:6543/postgres
 DB_POOL_MAX=5
 DB_SSL_REJECT_UNAUTHORIZED=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USER=your-sender@gmail.com
+SMTP_PASS=your-google-app-password
+SMTP_FROM_EMAIL=your-sender@gmail.com
+SMTP_FROM_NAME=Kestrel
 VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_LEGACY_ANON_KEY
 VITE_API_BASE_URL=/api
 ```
 
-`SUPABASE_DB_URL` is used by the server and migration script only. Never prefix it with `VITE_`.
+`SUPABASE_DB_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the SMTP credentials are server-only. Never prefix them with `VITE_` or expose them to the browser.
 
 Install and apply the schema:
 
@@ -64,7 +71,7 @@ npm run start:api
 npm run dev
 ```
 
-Open `http://localhost:3000`. Register through Kestrel's signup page. Supabase Auth must have Email provider enabled. If email confirmation is enabled, confirm the registration email before signing in.
+Open `http://localhost:3000`. Register through Kestrel's signup page. Kestrel creates a six-digit code, sends it through the configured SMTP account, and verifies it on the control plane. Apply migration `004_kestrel_email_otp.sql` before testing signup. Configure the SMTP variables in `.env` as described in `EMAIL_OTP_SETUP.md`.
 
 ## 3. Provision the first platform administrator
 
@@ -125,3 +132,19 @@ If `/api/health` returns 503, inspect Vercel → Project → Logs. Check the tra
 Vercel hosts the landing page, browser application and short-lived HTTP API. It is not the build runtime. A separate persistent Linux worker host is required for polling, Docker execution, heartbeats and lease recovery. Do not expose the Docker socket to the public internet. Run build containers as non-root, with resource limits, no host mounts except a dedicated disposable workspace, and a deliberate network egress policy.
 
 This setup guide does not claim the platform is production-certified. GitHub App installation/webhook processing, encrypted secret injection, artifact upload/download flows, deployment orchestration, stronger isolation for hostile multi-tenant code, and end-to-end security/load testing still require implementation and verification before public production use.
+
+## 8. Email confirmation and SMTP
+
+Kestrel uses Supabase Auth for account identity, password verification, email confirmation and access-token issuance. The signup page calls `signUp()`; when email confirmation is enabled and Supabase does not return a session, the page asks the user for the six-digit signup code and verifies it with `verifyOtp({ type: 'signup' })`. Users can request a replacement code from the same screen.
+
+Configure the SMTP sender in Supabase Dashboard → Authentication → SMTP Settings. For Gmail, use a Google App Password and configure:
+
+- SMTP host: `smtp.gmail.com`
+- Port: `465` (implicit TLS)
+- Username: the sending Gmail address
+- Password: a dedicated Google App Password
+- Sender address: the verified sending address
+
+Keep the SMTP password in Supabase's SMTP configuration, not in browser variables or source control. If an App Password has been exposed, revoke it and create a replacement.
+
+Keep email confirmation enabled in production. Do not disable it to work around signup flow errors. The application uses Supabase-issued access tokens to authenticate API requests; do not substitute locally generated tokens or expose the service-role key to the browser.

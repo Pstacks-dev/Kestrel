@@ -1,4 +1,5 @@
 import Admin from './Admin';
+import ReleaseCenter from './ReleaseCenter';
 import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -23,6 +24,7 @@ import {
   Plus,
   Radio,
   RotateCcw,
+  Search,
   Server,
   ShieldCheck,
   Square,
@@ -50,6 +52,7 @@ type Page =
   | 'workers'
   | 'projects'
   | 'artifacts'
+  | 'deployments'
   | 'settings';
 
 const nav: { id: Page; label: string; icon: any; group: string }[] = [
@@ -59,6 +62,7 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'workers', label: 'Workers', icon: Server, group: 'INFRASTRUCTURE' },
   { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
   { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
+  { id: 'deployments', label: 'Deployments', icon: Radio, group: 'INFRASTRUCTURE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
 ];
 
@@ -401,6 +405,8 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
 
   async function submit(e: any) {
     e.preventDefault();
@@ -409,21 +415,72 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
     setMessage('');
     try {
       const sb = requireSupabase();
+      const normalizedEmail = email.trim().toLowerCase();
+
       if (mode === 'signup') {
-        const { data, error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
-        if (error) throw error;
+        const { data, error: authError } = await sb.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: { data: { full_name: name.trim() } },
+        });
+        if (authError) throw authError;
         if (!data.session) {
-          setMessage('Check your email to confirm your account, then sign in.');
+          setAwaitingVerification(true);
+          setMessage('A verification code has been sent to your email address. Enter it below to activate your account.');
           return;
         }
+        localStorage.setItem('kestrel_access_token', data.session.access_token);
         go('overview');
       } else {
-        const { error } = await sb.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        const { data, error: authError } = await sb.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+        if (authError) throw authError;
+        if (!data.session) throw new Error('Supabase did not return a valid sign-in session.');
+        localStorage.setItem('kestrel_access_token', data.session.access_token);
         go('overview');
       }
     } catch (e: any) {
-      setError(e.message || 'Authentication failed');
+      setError(e.message || 'Authentication failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyEmail(e: any) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const sb = requireSupabase();
+      const { data, error: verifyError } = await sb.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: verificationCode.trim(),
+        type: 'signup',
+      });
+      if (verifyError) throw verifyError;
+      if (!data.session) throw new Error('Email verification succeeded, but no session was returned. Sign in to continue.');
+      localStorage.setItem('kestrel_access_token', data.session.access_token);
+      go('overview');
+    } catch (e: any) {
+      setError(e.message || 'Could not verify your email address.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendVerification() {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const sb = requireSupabase();
+      const { error: resendError } = await sb.auth.resend({ type: 'signup', email: email.trim().toLowerCase() });
+      if (resendError) throw resendError;
+      setMessage('A new verification code has been sent.');
+    } catch (e: any) {
+      setError(e.message || 'Could not resend the verification code.');
     } finally {
       setBusy(false);
     }
@@ -435,11 +492,7 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
         <Brand light />
         <div className="auth-aside-copy">
           <div className="eyebrow">DISTRIBUTED CI/CD, UNDER YOUR CONTROL</div>
-          <h1>
-            Build systems
-            <br />
-            that <span>move work<br />forward.</span>
-          </h1>
+          <h1>Build systems<br />that <span>move work<br />forward.</span></h1>
           <p>Coordinate pipelines across independent workers. Keep every build visible, every execution traceable.</p>
         </div>
         <div className="auth-aside-bottom">
@@ -447,80 +500,52 @@ function Auth({ mode }: { mode: 'login' | 'signup' }) {
             <span>CONTROL PLANE</span>
             <ArrowDownRight />
             <span>WORKER NODES</span>
-            <div className="art-nodes">
-              <i />
-              <i />
-              <i />
-            </div>
+            <div className="art-nodes"><i /><i /><i /></div>
           </div>
           <small>KESTREL · DELIVERY INFRASTRUCTURE</small>
         </div>
       </aside>
       <main className="auth-main">
-        <button className="back-home" onClick={() => go('home')}>
-          ← Back to home
-        </button>
+        <button className="back-home" onClick={() => go('home')}>← Back to home</button>
         <div className="auth-form-wrap">
           <div className="auth-kicker">{mode === 'login' ? 'WELCOME BACK' : 'GET STARTED'}</div>
           <h2>{mode === 'login' ? 'Sign in to Kestrel' : 'Create your workspace'}</h2>
           <p>{mode === 'login' ? 'Continue to your delivery workspace.' : 'Start orchestrating builds across your infrastructure.'}</p>
-          <form onSubmit={submit}>
+          {awaitingVerification ? (
+            <form onSubmit={verifyEmail}>
+              <label>Verification code<input value={verificationCode} onChange={(e) => setVerificationCode(e.target.value.replace(/\\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required placeholder="6-digit code" /></label>
+              {error && <div className="notice text-red-600">{error}</div>}
+              {message && <div className="notice text-green-600">{message}</div>}
+              <button disabled={busy || verificationCode.length !== 6} className="btn btn-dark auth-submit">{busy ? 'Verifying…' : 'Verify email'} <ArrowRight size={16} /></button>
+              <button type="button" className="back-home" disabled={busy} onClick={resendVerification}>Resend code</button>
+            </form>
+          ) : <form onSubmit={submit}>
             {mode === 'signup' && (
-              <label>
-                Full name
-                <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" />
-              </label>
+              <label>Full name<input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Your name" autoComplete="name" /></label>
             )}
-            <label>
-              Work email
-              <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" />
-            </label>
+            <label>Work email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="you@company.com" autoComplete="email" /></label>
             <label>
               Password
               <div className="password-input">
-                <input
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  type={show ? 'text' : 'password'}
-                  required
-                  minLength={8}
-                  placeholder="At least 8 characters"
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                />
-                <button type="button" onClick={() => setShow(!show)}>
-                  {show ? 'Hide' : 'Show'}
-                </button>
+                <input value={password} onChange={(e) => setPassword(e.target.value)} type={show ? 'text' : 'password'} required minLength={8} placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+                <button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
               </div>
             </label>
             {mode === 'signup' && (
-              <label className="checkline">
-                <input type="checkbox" required /> I agree to the terms and privacy policy.
-              </label>
+              <label className="checkline"><input type="checkbox" required /> I agree to the terms and privacy policy.</label>
             )}
             {error && <div className="notice text-red-600">{error}</div>}
             {message && <div className="notice text-green-600">{message}</div>}
             <button disabled={busy} className="btn btn-dark auth-submit">
               {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
             </button>
-          </form>
+          </form>}
           <div className="auth-switch">
-            {mode === 'login' ? (
-              <>
-                New to Kestrel? <button onClick={() => go('signup')}>Create an account</button>
-              </>
-            ) : (
-              <>
-                Already have an account? <button onClick={() => go('login')}>Sign in</button>
-              </>
-            )}
+            {mode === 'login' ? <>New to Kestrel? <button onClick={() => go('signup')}>Create an account</button></> : <>Already have an account? <button onClick={() => go('login')}>Sign in</button></>}
           </div>
-          <div className="auth-security">
-            <LockKeyhole size={14} /> Authentication powered by Supabase Auth
-          </div>
+          <div className="auth-security"><LockKeyhole size={14} /> Passwords and sessions are managed by Supabase Auth.</div>
         </div>
-        <div className="auth-copyright">
-          © 2026 Kestrel Systems <span>·</span> <button onClick={() => go('docs')}>Help centre</button>
-        </div>
+        <div className="auth-copyright">© 2026 Kestrel Systems <span>·</span> <button onClick={() => go('docs')}>Help centre</button></div>
       </main>
     </div>
   );
@@ -557,52 +582,73 @@ function AppShell({ page }: { page: Page }) {
   const [webhookConfig, setWebhookConfig] = useState<{ webhookSecret: string; events: string[] } | null>(null);
 
   const active = nav.find((n) => n.id === page) || nav[0];
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const commandItems = [
+    ...nav.map((item) => ({ label: item.label, detail: item.group, page: item.id, icon: item.icon })),
+    { label: 'Documentation', detail: 'Learn Kestrel', page: 'docs' as Page, icon: CircleHelp },
+    { label: 'Pricing', detail: 'Plans and capacity', page: 'pricing' as Page, icon: Zap },
+  ].filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(commandQuery.toLowerCase()));
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+        setCommandQuery('');
+      }
+      if (event.key === 'Escape') setCommandOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   async function connect() {
     setLoading(true);
     try {
       const sb = requireSupabase();
-      const {
-        data: { session },
-      } = await sb.auth.getSession();
-      if (!session) {
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token || localStorage.getItem('kestrel_access_token');
+      if (!token) {
         go('login');
-        throw new Error('Please sign in first');
+        throw new Error('Please sign in first.');
       }
-      setAccessToken(session.access_token);
+      setAccessToken(token);
 
       let ws = await fetch(`${api}/workspaces`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (!ws.ok) throw new Error('Could not load workspaces');
+      if (ws.status === 401) {
+        localStorage.removeItem('kestrel_access_token');
+        go('login');
+        throw new Error('Your session expired. Please sign in again.');
+      }
+      if (!ws.ok) {
+        const failure = await ws.json().catch(() => ({}));
+        throw new Error(failure.error || `Workspace service returned HTTP ${ws.status}. Check the API health endpoint or contact your workspace administrator.`);
+      }
       let list = await ws.json();
 
       if (!list.length) {
         const created = await fetch(`${api}/workspaces`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ name: 'Personal Workspace' }),
         });
         if (!created.ok) throw new Error('Could not create your workspace');
-        const item = await created.json();
-        list = [item];
+        list = [await created.json()];
       }
 
       const org = list[0].id;
       setOrganizationId(org);
-
       const s = await fetch(`${api}/snapshot?organizationId=${org}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (!s.ok) throw new Error('Could not load workspace data');
       const snapData = await s.json();
       setSnapshot(snapData);
       setHealth('Connected');
-
-      // Update selected project default
-      if (snapData.projects?.length && !selectedProject) {
-        setSelectedProject(snapData.projects[0].id);
-      }
+      if (snapData.projects?.length && !selectedProject) setSelectedProject(snapData.projects[0].id);
     } catch (e: any) {
       setHealth(e.message || 'Connection failed');
     } finally {
@@ -816,6 +862,19 @@ function AppShell({ page }: { page: Page }) {
     } catch {}
   }
 
+  async function downloadArtifact(artifactId: string) {
+    try {
+      const response = await fetch(`${api}/artifacts/${artifactId}/download`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Artifact download failed');
+      window.location.assign(data.url);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Artifact download failed');
+    }
+  }
+
   const counts = useMemo(
     () => ({
       projects: snapshot?.projects?.length ?? 0,
@@ -899,6 +958,11 @@ function AppShell({ page }: { page: Page }) {
             Workspace <span>/</span> <b>{active.label}</b>
           </div>
           <div className="top-actions">
+            <button className="command-trigger" onClick={() => { setCommandOpen(true); setCommandQuery(''); }} aria-label="Open command search">
+              <Search size={14} />
+              <span>Search anything</span>
+              <kbd>⌘ K</kbd>
+            </button>
             <span className={`connection ${health === 'Connected' ? 'connected' : ''}`}>
               <i /> {health}
             </span>
@@ -908,6 +972,29 @@ function AppShell({ page }: { page: Page }) {
             <div className="profile-avatar small">P</div>
           </div>
         </header>
+
+        {commandOpen && (
+          <div className="command-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCommandOpen(false); }}>
+            <section className="command-dialog" role="dialog" aria-modal="true" aria-label="Search Kestrel">
+              <div className="command-search">
+                <Search size={17} />
+                <input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder="Search pages and actions..." />
+                <kbd>ESC</kbd>
+              </div>
+              <div className="command-section-label">NAVIGATION</div>
+              <div className="command-results">
+                {commandItems.length ? commandItems.map((item) => (
+                  <button key={item.page} onClick={() => { setCommandOpen(false); go(item.page); }}>
+                    <span className="command-item-icon"><item.icon size={16} /></span>
+                    <span><b>{item.label}</b><small>{item.detail}</small></span>
+                    <span className="command-enter">↵</span>
+                  </button>
+                )) : <p className="command-empty">No matching pages. Try another search.</p>}
+              </div>
+              <footer><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Open page</span><span><kbd>ESC</kbd> Close</span></footer>
+            </section>
+          </div>
+        )}
 
         {/* OVERVIEW */}
         {page === 'overview' && !inspectedRun && (
@@ -1511,13 +1598,15 @@ function AppShell({ page }: { page: Page }) {
                     <div className="flex-1">
                       <b>{a.name || a.id}</b>
                       <small>
-                        Key: {a.objectKey} · Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content:{' '}
-                        {a.contentType || 'application/octet-stream'}
+                        Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content: {a.contentType || 'application/octet-stream'} · SHA-256: {String(a.sha256 || '').slice(0, 12)}…
                       </small>
                     </div>
                     <span className="text-xs text-neutral-400 font-mono">
                       {new Date(a.createdAt).toLocaleDateString()}
                     </span>
+                    <Button kind="light" onClick={() => downloadArtifact(a.id)}>
+                      Download <ArrowDownRight size={14} />
+                    </Button>
                   </div>
                 ))
               ) : (
@@ -1529,6 +1618,19 @@ function AppShell({ page }: { page: Page }) {
               )}
             </div>
           </div>
+        )}
+
+        {page === 'deployments' && !inspectedRun && (
+          <ReleaseCenter
+            api={api}
+            accessToken={accessToken}
+            selectedProject={selectedProject}
+            setSelectedProject={setSelectedProject}
+            projects={snapshot?.projects || []}
+            runs={snapshot?.runs || []}
+            setMessage={setActionMessage}
+            message={actionMessage}
+          />
         )}
 
         {/* SETTINGS */}

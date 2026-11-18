@@ -1,11 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
 import { validatePipelineJobs } from './lib/pipeline.mjs';
+import { registerReleaseRoutes } from './lib/release-routes.mjs';
 import {
   encryptSecret,
   decryptSecret,
@@ -32,8 +33,21 @@ if (supabaseUrl && supabaseAnonKey) {
   });
 }
 
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let supabaseAdmin = null;
+if (supabaseUrl && supabaseServiceRoleKey) {
+  supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 app.disable('x-powered-by');
-app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
+// Vercel terminates TLS at its edge and forwards the client address. Trust exactly
+// the platform proxy in serverless deployments; standalone hosts opt in explicitly.
+app.set('trust proxy', process.env.VERCEL ? 1 : process.env.TRUST_PROXY === 'true' ? 1 : false);
+
+// Use Express's resolved client IP; ipKeyGenerator preserves IPv6 subnet handling.
+const rateLimitKey = (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || '127.0.0.1');
 
 app.use(
   helmet({
@@ -63,18 +77,29 @@ app.use(
 // General rate limiter
 const generalLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 3000,
+  limit: 600,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 app.use(generalLimiter);
 
 // Stricter limiter for sensitive auth and admin actions
 const sensitiveLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 120,
+  limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+});
+
+// Password and account-creation endpoints need a much tighter per-IP ceiling.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
 });
 
 const now = () => new Date().toISOString();
@@ -175,111 +200,49 @@ async function orgAccess(req, res, next) {
   }
 }
 
-// ==========================================
-// Built-in Authentication (Standalone Mode)
-// ==========================================
-app.post('/api/auth/signup', sensitiveLimiter, async (req, res) => {
-  const { email, password, fullName } = req.body || {};
-  if (!email || !email.includes('@') || !password || password.length < 8) {
-    return res.status(400).json({ error: 'Valid email and password (minimum 8 chars) required' });
-  }
+// Authentication uses Supabase Auth directly from the client. No Kestrel OTP endpoints are used.
+
+app.post('/api/auth/login', authLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
 
   try {
-    const { salt, hash } = hashPassword(password);
-    const existing = await query('select id from auth.users where lower(email) = lower($1)', [email]);
-    if (existing.rowCount) {
-      return res.status(409).json({ error: 'An account with this email already exists' });
+    // New Kestrel accounts use Supabase Auth for password hashing and signed sessions.
+    if (supabase) {
+      const signedIn = await supabase.auth.signInWithPassword({ email, password });
+      if (!signedIn.error && signedIn.data?.session) {
+        return res.json({
+          user: signedIn.data.user,
+          session: {
+            access_token: signedIn.data.session.access_token,
+            token_type: signedIn.data.session.token_type || 'bearer',
+            expires_in: signedIn.data.session.expires_in,
+            refresh_token: signedIn.data.session.refresh_token,
+          },
+        });
+      }
     }
 
-    // First registered user is automatically promoted to platform_admin
-    const countRes = await query('select count(*)::int n from auth.users');
-    const isFirstUser = countRes.rows[0].n === 0;
-    const appMeta = isFirstUser ? { platform_role: 'platform_admin' } : {};
-    const userMeta = { full_name: fullName || email.split('@')[0] };
-
-    const newUser = await transaction(async (c) => {
-      const u = await c.query(
-        `insert into auth.users(email, encrypted_password, raw_app_meta_data, raw_user_meta_data)
-         values(lower($1), $2, $3, $4)
-         returning id, email, raw_app_meta_data, raw_user_meta_data`,
-        [email, `${salt}:${hash}`, JSON.stringify(appMeta), JSON.stringify(userMeta)]
-      );
-      const user = u.rows[0];
-      await c.query(
-        'insert into public.profiles(id, full_name) values($1, $2) on conflict (id) do nothing',
-        [user.id, userMeta.full_name]
-      );
-      return user;
-    });
-
-    const token = signJwt({
-      sub: newUser.id,
-      email: newUser.email,
-      app_metadata: appMeta,
-      user_metadata: userMeta,
-    });
-
-    res.status(201).json({
-      user: {
-        id: newUser.id,
-        email: newUser.email,
-        app_metadata: appMeta,
-        user_metadata: userMeta,
-      },
-      session: {
-        access_token: token,
-        token_type: 'bearer',
-      },
-    });
-  } catch (e) {
-    console.error('Signup error:', e);
-    res.status(500).json({ error: 'Could not create account' });
-  }
-});
-
-app.post('/api/auth/login', sensitiveLimiter, async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password required' });
-  }
-
-  try {
+    // Backward compatibility for accounts created by the previous Kestrel PBKDF2 flow.
     const r = await query('select * from auth.users where lower(email) = lower($1)', [email]);
-    if (!r.rowCount) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
+    if (!r.rowCount) return res.status(401).json({ error: 'Invalid email or password.' });
     const user = r.rows[0];
     const [salt, storedHash] = (user.encrypted_password || '').split(':');
     if (!salt || !storedHash || !verifyPassword(password, salt, storedHash)) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
     const appMeta = user.raw_app_meta_data || {};
     const userMeta = user.raw_user_meta_data || {};
-
-    const token = signJwt({
-      sub: user.id,
-      email: user.email,
-      app_metadata: appMeta,
-      user_metadata: userMeta,
-    });
-
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        app_metadata: appMeta,
-        user_metadata: userMeta,
-      },
-      session: {
-        access_token: token,
-        token_type: 'bearer',
-      },
+    const token = signJwt({ sub: user.id, email: user.email, app_metadata: appMeta, user_metadata: userMeta });
+    return res.json({
+      user: { id: user.id, email: user.email, app_metadata: appMeta, user_metadata: userMeta },
+      session: { access_token: token, token_type: 'bearer' },
     });
   } catch (e) {
     console.error('Login error:', e);
-    res.status(500).json({ error: 'Authentication failed' });
+    return res.status(500).json({ error: 'Authentication failed.' });
   }
 });
 
@@ -297,6 +260,7 @@ app.get('/api/health', async (_req, res) => {
       time: now(),
     });
   } catch (e) {
+    console.error('[health] database probe failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(503).json({
       ok: false,
       database: 'unavailable',
@@ -346,6 +310,7 @@ app.post('/api/workspaces', sensitiveLimiter, userAuth, async (req, res) => {
     });
     res.status(201).json(result);
   } catch (e) {
+    console.error('[workspaces:create] failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(500).json({ error: 'Could not create workspace' });
   }
 });
@@ -362,6 +327,7 @@ app.get('/api/workspaces', userAuth, async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
+    console.error('[workspaces:list] failed', { code: e?.code || 'unknown', message: e?.message || 'unknown error' });
     res.status(500).json({ error: 'Could not fetch workspaces' });
   }
 });
@@ -420,11 +386,11 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
       query(
         `select a.id, a.name, a.run_id as "runId", a.object_key as "objectKey",
                 a.size_bytes as "sizeBytes", a.sha256, a.content_type as "contentType",
-                a.created_at as "createdAt"
+                a.created_at as "createdAt", a.uploaded_at as "uploadedAt"
          from public.artifacts a
          join public.pipeline_runs r on r.id = a.run_id
          join public.projects p on p.id = r.project_id
-         where p.organization_id = $1
+         where p.organization_id = $1 and a.uploaded_at is not null
          order by a.created_at desc
          limit 100`,
         [req.organizationId]
@@ -602,7 +568,9 @@ app.get('/api/projects/:projectId/webhook-config', userAuth, async (req, res) =>
        where p.id = $1 and m.user_id = $2`,
       [projectId, req.user.id]
     );
-    if (!authCheck.rowCount) return res.status(403).json({ error: 'Project access denied' });
+    if (!authCheck.rowCount || !['owner', 'admin', 'developer'].includes(authCheck.rows[0].role)) {
+      return res.status(403).json({ error: 'Developer access required to view webhook signing credentials' });
+    }
 
     let r = await query(
       'select id, webhook_secret as "webhookSecret", events, active, last_triggered_at as "lastTriggeredAt" from public.github_webhooks where project_id = $1',
@@ -622,21 +590,12 @@ app.get('/api/projects/:projectId/webhook-config', userAuth, async (req, res) =>
   }
 });
 
-// GitHub Webhook Receiver
+// GitHub Webhook Receiver. Every event, including ping, must be authenticated.
 app.post('/api/webhooks/github', async (req, res) => {
   const signature = req.headers['x-hub-signature-256'];
-  const event = req.headers['x-github-event'];
-  const body = req.body;
-
-  if (event === 'ping') {
-    return res.json({ ok: true, message: 'Pong! Webhook configured successfully.' });
-  }
-
-  if (event !== 'push' && event !== 'pull_request') {
-    return res.status(200).json({ message: `Ignored event: ${event}` });
-  }
-
-  // Identify repository from payload
+  const event = String(req.headers['x-github-event'] || '');
+  const deliveryId = String(req.headers['x-github-delivery'] || '');
+  const body = req.body || {};
   const repoFullName = body?.repository?.full_name?.toLowerCase();
   const repoHtmlUrl = body?.repository?.html_url?.toLowerCase();
   const repoCloneUrl = body?.repository?.clone_url?.toLowerCase();
@@ -646,12 +605,12 @@ app.post('/api/webhooks/github', async (req, res) => {
   }
 
   try {
-    // Find matching project
-    const projQuery = await query(
-      `select p.*, w.webhook_secret, w.active
+    const matched = await query(
+      `select p.*, w.webhook_secret, w.active, w.events
        from public.projects p
-       left join public.github_webhooks w on w.project_id = p.id
-       where lower(p.repository_url) in ($1, $2, $3, $4, $5)`,
+       join public.github_webhooks w on w.project_id = p.id
+       where lower(p.repository_url) in ($1, $2, $3, $4, $5)
+       limit 2`,
       [
         repoHtmlUrl || '',
         repoCloneUrl || '',
@@ -661,42 +620,74 @@ app.post('/api/webhooks/github', async (req, res) => {
       ]
     );
 
-    if (!projQuery.rowCount) {
-      return res.status(404).json({ error: 'No matching project found for this repository' });
+    if (matched.rowCount !== 1) {
+      return res.status(matched.rowCount > 1 ? 409 : 404).json({
+        error: matched.rowCount > 1 ? 'Repository URL matches multiple projects; make it unique' : 'No configured webhook found for this repository',
+      });
     }
 
-    const project = projQuery.rows[0];
-    if (project.webhook_secret) {
-      const isValid = verifyGitHubSignature(req.rawBody || JSON.stringify(body), signature, project.webhook_secret);
-      if (!isValid) {
-        return res.status(401).json({ error: 'Invalid webhook signature' });
-      }
+    const project = matched.rows[0];
+    if (!project.active || !project.webhook_secret) {
+      return res.status(403).json({ error: 'Webhook is disabled or has no signing secret' });
+    }
+    if (!req.rawBody || !verifyGitHubSignature(req.rawBody, signature, project.webhook_secret)) {
+      return res.status(401).json({ error: 'Invalid webhook signature' });
+    }
+
+    if (event === 'ping') {
+      return res.json({ ok: true, message: 'Authenticated webhook ping received.' });
+    }
+    if (event !== 'push' && event !== 'pull_request') {
+      return res.status(200).json({ message: `Ignored authenticated event: ${event || 'unknown'}` });
+    }
+    if (!deliveryId || deliveryId.length > 128) {
+      return res.status(400).json({ error: 'X-GitHub-Delivery header is required' });
+    }
+    if (event === 'pull_request' && !['opened', 'synchronize', 'reopened', 'ready_for_review'].includes(body.action)) {
+      return res.status(200).json({ message: `Ignored pull request action: ${body.action || 'unknown'}` });
+    }
+    if (event === 'push' && body.deleted) {
+      return res.status(200).json({ message: 'Deleted branch push ignored' });
     }
 
     let branch = project.default_branch;
     let commitSha = null;
     let commitMessage = 'Triggered by GitHub Webhook';
-
     if (event === 'push') {
       branch = (body.ref || '').replace(/^refs\/heads\//, '') || project.default_branch;
       commitSha = body.after || body.head_commit?.id || null;
       commitMessage = body.head_commit?.message || `Push to ${branch}`;
-    } else if (event === 'pull_request') {
+    } else {
       branch = body.pull_request?.head?.ref || project.default_branch;
       commitSha = body.pull_request?.head?.sha || null;
       commitMessage = `PR #${body.pull_request?.number}: ${body.pull_request?.title || 'Pull request'}`;
     }
+    if (!commitSha || !/^[a-f0-9]{40}$/i.test(commitSha)) {
+      return res.status(400).json({ error: 'Webhook did not contain a valid 40-character commit SHA' });
+    }
 
-    // Default CI jobs pipeline
     const defaultJobs = [
       { id: 'install', name: 'Install dependencies', stage: 'build', command: 'npm ci' },
       { id: 'test', name: 'Run tests', stage: 'test', command: 'npm test', needs: ['install'] },
       { id: 'build', name: 'Build application', stage: 'package', command: 'npm run build', needs: ['test'] },
     ];
     const safe = validatePipelineJobs(defaultJobs);
-
     const run = await transaction(async (c) => {
-      const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1', [project.id]);
+      const delivery = await c.query(
+        `insert into public.github_webhook_deliveries(project_id, delivery_id, event_name)
+         values($1, $2, $3)
+         on conflict (project_id, delivery_id) do nothing
+         returning delivery_id`,
+        [project.id, deliveryId, event]
+      );
+      if (!delivery.rowCount) return { duplicate: true };
+
+      // Serialize run-number allocation per project. Locking an aggregate SELECT is invalid in PostgreSQL.
+      await c.query('select id from public.projects where id = $1 for update', [project.id]);
+      const n = await c.query(
+        'select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1',
+        [project.id]
+      );
       const rr = await c.query(
         'insert into public.pipeline_runs(project_id, run_number, branch, commit_sha, commit_message) values($1, $2, $3, $4, $5) returning *',
         [project.id, n.rows[0].n, branch, commitSha, commitMessage.slice(0, 300)]
@@ -708,16 +699,22 @@ app.post('/api/webhooks/github', async (req, res) => {
           [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries]
         );
       }
+      await c.query(
+        'update public.github_webhook_deliveries set run_id = $3, processed_at = now() where project_id = $1 and delivery_id = $2',
+        [project.id, deliveryId, rr.rows[0].id]
+      );
       await c.query('update public.github_webhooks set last_triggered_at = now() where project_id = $1', [project.id]);
       await c.query(
         'insert into public.audit_events(organization_id, action, target_type, target_id, metadata) values($1, $2, $3, $4, $5)',
-        [project.organization_id, 'pipeline.run.webhook_triggered', 'pipeline_run', rr.rows[0].id, JSON.stringify({ event, branch, commitSha })]
+        [project.organization_id, 'pipeline.run.webhook_triggered', 'pipeline_run', rr.rows[0].id, JSON.stringify({ event, branch, commitSha, deliveryId })]
       );
       return rr.rows[0];
     });
 
+    if (run.duplicate) return res.status(202).json({ ok: true, duplicate: true });
     res.status(201).json({ ok: true, runId: run.id, runNumber: run.run_number });
   } catch (e) {
+    console.error('GitHub webhook processing failed:', e);
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
@@ -1163,33 +1160,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
   res.json({ ok: true, status: finalStatus });
 });
 
-// Artifacts Upload Registration
-app.post('/api/workers/jobs/:jobId/artifacts', workerAuth, async (req, res) => {
-  const { leaseToken, name, objectKey, sizeBytes = 0, sha256 = null, contentType = 'application/octet-stream' } = req.body || {};
-  if (!name || !objectKey) {
-    return res.status(400).json({ error: 'Artifact name and objectKey are required' });
-  }
-
-  const valid = await query(
-    "select run_id from public.jobs where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running'",
-    [req.params.jobId, leaseToken, req.worker.id]
-  );
-  if (!valid.rowCount) {
-    return res.status(409).json({ error: 'Lease is invalid or expired' });
-  }
-
-  try {
-    const r = await query(
-      `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type)
-       values($1, $2, $3, $4, $5, $6)
-       returning *`,
-      [valid.rows[0].run_id, name.slice(0, 255), objectKey.slice(0, 1024), Math.max(0, Number(sizeBytes)), sha256, contentType]
-    );
-    res.status(201).json(r.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: 'Could not register artifact' });
-  }
-});
+// Artifact and deployment endpoints are mounted from server/lib/release-routes.mjs.
 
 // ==========================================
 // Admin & Platform Management
@@ -1277,7 +1248,7 @@ app.get('/api/admin/audit', userAuth, platformAdmin, async (_req, res) => {
 app.get('/api/cron/recovery', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || cronSecret.length < 32 || authHeader !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: 'Unauthorized cron request' });
   }
   try {
@@ -1286,6 +1257,18 @@ app.get('/api/cron/recovery', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Lease recovery failed' });
   }
+});
+
+// Artifact and deployment lifecycle routes use the same verified user/worker auth.
+registerReleaseRoutes(app, {
+  userAuth,
+  workerAuth,
+  sensitiveLimiter,
+  query,
+  transaction,
+  encryptSecret,
+  decryptSecret,
+  supabaseAdmin,
 });
 
 // Safe Error Handling Middleware

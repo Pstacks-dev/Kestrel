@@ -47,7 +47,7 @@ test('API Endpoints and Security Middleware', async (t) => {
     assert.match(data.error, /Worker credentials required/i);
   });
 
-  await t.test('POST /api/webhooks/github handles ping event without auth requirement', async () => {
+  await t.test('POST /api/webhooks/github does not allow unauthenticated ping bypass', async () => {
     const res = await fetch(`${baseUrl}/api/webhooks/github`, {
       method: 'POST',
       headers: {
@@ -56,10 +56,9 @@ test('API Endpoints and Security Middleware', async (t) => {
       },
       body: JSON.stringify({ zen: 'Keep it logically awesome.' }),
     });
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 400);
     const data = await res.json();
-    assert.equal(data.ok, true);
-    assert.match(data.message, /Pong/i);
+    assert.match(data.error, /Missing repository information/i);
   });
 
   await t.test('POST /api/webhooks/github rejects payload missing repository info', async () => {
