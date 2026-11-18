@@ -5,11 +5,15 @@ import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { redactSecrets } from '../server/lib/security.mjs';
+import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
 const WORKER_ID = process.env.KESTREL_WORKER_ID || `${os.hostname()}-${crypto.randomUUID().slice(0, 5)}`;
 const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KESTREL_WORKDIR || '.kestrel-worker');
+// When the agent runs in a Compose container with the host Docker socket mounted,
+// the Docker daemon needs the host-side path for bind mounts, not the agent's path.
+const HOST_ROOT = path.resolve(process.env.KESTREL_WORKER_HOST_WORKDIR || ROOT);
 const REPO_URL = process.env.KESTREL_REPOSITORY_URL;
 const CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.KESTREL_CONCURRENCY || 1)));
 const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
@@ -154,7 +158,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       '--tmpfs',
       '/tmp:rw,nosuid,nodev,noexec,size=512m',
       '--mount',
-      `type=bind,src=${cwd},dst=/workspace`,
+      `type=bind,src=${getDockerHostWorkspacePath(ROOT, HOST_ROOT, cwd)},dst=/workspace`,
       '--workdir',
       '/workspace',
       '--mount',
