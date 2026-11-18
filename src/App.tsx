@@ -1659,7 +1659,7 @@ export default function App() {
   }, []);
 
   const page = (path.replace(/^\//, '') || 'home') as Page;
-  if (page === 'admin') return <Admin />;
+  if (page === 'admin/login' || page === 'admin') return <Admin />;
   if (page === 'home') return <Landing />;
   if (page === 'login' || page === 'signup') return <Auth mode={page} />;
   if (page === 'docs' || page === 'pricing') return <InfoPage page={page} />;
