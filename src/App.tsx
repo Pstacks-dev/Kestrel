@@ -15,6 +15,7 @@ import {
   Command,
   Cpu,
   GitBranch,
+  FolderPlus,
   Github,
   KeyRound,
   Layers3,
