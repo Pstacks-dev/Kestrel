@@ -351,7 +351,6 @@ mod tests {
         let provider = KubeVirtProvider {
             config: config(),
             client: Client::new(),
-            bearer_token: "test-token".into(),
         };
         let spec = InstanceSpec { name:"test-vm".into(), image:"quay.io/containerdisks/ubuntu:24.04".into(),
             vcpus:2, memory_mib:2048, disk_gib:30, region:None, ssh_public_key:Some("ssh-ed25519 AAAATEST test".into()) };
