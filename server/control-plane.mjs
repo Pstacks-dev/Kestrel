@@ -1086,6 +1086,24 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
            )`,
         [w.organization_id]
       );
+      await c.query(
+        `update public.pipeline_runs r
+         set status = case
+           when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed')
+                and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'failed'
+           when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'canceled')
+                and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'canceled'
+           when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'succeeded'
+           else 'running'
+         end,
+         finished_at = case
+           when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then now()
+           else null end
+         where r.organization_id = $1
+           and r.status in ('queued','running')
+           and exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('failed','skipped','canceled'))`,
+        [w.organization_id]
+      );
 
       // Find candidate job where all dependencies succeeded
       const candidate = await c.query(
