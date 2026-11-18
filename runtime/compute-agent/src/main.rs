@@ -153,7 +153,13 @@ async fn execute(provider: &dyn ComputeProvider, operation: &Operation) -> Resul
     match operation.action.as_str() {
         "create" => {
             let spec: InstanceSpec = serde_json::from_value(operation.payload.get("spec").cloned().ok_or_else(|| anyhow!("create operation is missing its VM spec"))?)?;
-            provider.create_instance(&spec).await.map_err(|e| anyhow!(e.to_string()))
+            match provider.create_instance(&spec).await {
+                Ok(instance) => Ok(instance),
+                Err(create_error) => match provider.get_instance(&spec.name).await {
+                    Ok(existing) => Ok(existing),
+                    Err(_) => Err(anyhow!(create_error.to_string())),
+                },
+            }
         }
         "start" | "stop" | "delete" => {
             let provider_id = operation.payload.get("providerId").and_then(Value::as_str)
