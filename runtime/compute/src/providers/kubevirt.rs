@@ -144,7 +144,7 @@ impl KubeVirtProvider {
             ("starting", _) | ("provisioning", _) | ("pending", _) => InstanceState::Starting,
             ("stopping", _) => InstanceState::Stopping,
             ("failed", _) | ("crashed", _) => InstanceState::Failed,
-            ("stopped", _) | ("off", _) | ("halted", _) | ("") => InstanceState::Stopped,
+            ("stopped", _) | ("off", _) | ("halted", _) | (_, "") => InstanceState::Stopped,
             _ => InstanceState::Unknown,
         };
         let ipv4 = vmi.and_then(|v| v.pointer("/status/interfaces")).and_then(Value::as_array)
