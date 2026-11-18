@@ -286,7 +286,7 @@ async fn upload_artifacts(http: &Client, cfg: &Config, job: &Job, workspace: &Pa
         loop {
             time::sleep(Duration::from_secs(8)).await;
             let response = renew_http.post(format!("{api}/api/workers/jobs/{job_id}/lease"))
-                .json(&serde_json::json!({ "leaseToken": lease })).send().await;
+                .json(&serde_json::json!({ "leaseToken": &lease })).send().await;
             if !response.as_ref().is_ok_and(|r| r.status().is_success()) { break; }
         }
     });
