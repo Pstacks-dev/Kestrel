@@ -71,7 +71,7 @@ create table if not exists public.compute_operations (
   instance_id uuid not null references public.compute_instances(id) on delete cascade,
   organization_id uuid not null references public.organizations(id) on delete cascade,
   node_id text not null references public.compute_nodes(id) on delete restrict,
-  action text not null check (action in ('create', 'start', 'stop', 'delete')),
+  action text not null check (action in ('create', 'start', 'stop', 'delete', 'snapshot_create', 'snapshot_restore', 'snapshot_delete')),
   status text not null default 'queued' check (status in ('queued', 'claimed', 'succeeded', 'failed')),
   payload jsonb not null default '{}'::jsonb,
   attempts integer not null default 0 check (attempts >= 0),
@@ -85,6 +85,25 @@ create table if not exists public.compute_operations (
   finished_at timestamptz
 );
 
+create table if not exists public.compute_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  instance_id uuid not null references public.compute_instances(id) on delete cascade,
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  provider_snapshot_id text,
+  name text not null check (length(name) between 1 and 63),
+  status text not null default 'creating'
+    check (status in ('creating', 'ready', 'restoring', 'deleting', 'failed', 'deleted')),
+  error_message text,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz,
+  unique(instance_id, name)
+);
+
+alter table public.compute_operations
+  add column if not exists snapshot_id uuid references public.compute_snapshots(id) on delete cascade;
+
 create index if not exists idx_compute_nodes_schedule
   on public.compute_nodes(provider, state, region, allocated_vcpu, allocated_memory_mib);
 create index if not exists idx_compute_instances_org
@@ -93,10 +112,13 @@ create index if not exists idx_compute_operations_queue
   on public.compute_operations(node_id, available_at, created_at) where status = 'queued';
 create index if not exists idx_compute_operations_lease
   on public.compute_operations(lease_expires_at) where status = 'claimed';
+create index if not exists idx_compute_snapshots_instance
+  on public.compute_snapshots(instance_id, created_at desc) where deleted_at is null;
 
 alter table public.compute_instances enable row level security;
 alter table public.compute_operations enable row level security;
 alter table public.compute_quotas enable row level security;
+alter table public.compute_snapshots enable row level security;
 alter table public.compute_nodes enable row level security;
 alter table public.compute_node_credentials enable row level security;
 
@@ -112,9 +134,13 @@ drop policy if exists "members read compute quotas" on public.compute_quotas;
 create policy "members read compute quotas" on public.compute_quotas
   for select using (public.is_org_member(organization_id));
 
+drop policy if exists "members read compute snapshots" on public.compute_snapshots;
+create policy "members read compute snapshots" on public.compute_snapshots
+  for select using (public.is_org_member(organization_id));
+
 -- Compute node inventory and credentials are server/agent-only; no browser policies.
 revoke all on public.compute_nodes, public.compute_node_credentials from anon, authenticated;
-revoke all on public.compute_instances, public.compute_operations, public.compute_quotas from anon, authenticated;
-grant select on public.compute_instances, public.compute_operations, public.compute_quotas to authenticated;
+revoke all on public.compute_instances, public.compute_operations, public.compute_quotas, public.compute_snapshots from anon, authenticated;
+grant select on public.compute_instances, public.compute_operations, public.compute_quotas, public.compute_snapshots to authenticated;
 grant all on public.compute_nodes, public.compute_node_credentials, public.compute_instances,
-  public.compute_operations, public.compute_quotas to service_role;
+  public.compute_operations, public.compute_quotas, public.compute_snapshots to service_role;
