@@ -28,7 +28,7 @@ struct Job {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkerInfo<'a> { worker_id: &'a str, hostname: &'a str, arch: &'a str, region: &'a str, max_concurrency: u32 }
+struct WorkerInfo<'a> { worker_id: &'a str, hostname: &'a str, arch: &'a str, region: &'a str, max_concurrency: u32, runtime: &'a str }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,7 +83,7 @@ async fn register(http: &Client, cfg: &Config) -> Result<()> {
     let arch = format!("linux/{}", env::consts::ARCH);
     post(http, cfg, "/api/workers/register", &WorkerInfo {
         worker_id: &cfg.worker_id, hostname: &cfg.hostname,
-        arch: &arch, region: &cfg.region, max_concurrency: cfg.concurrency,
+        arch: &arch, region: &cfg.region, max_concurrency: cfg.concurrency, runtime: "rust",
     }).await?;
     info!(worker_id = %cfg.worker_id, "registered with Kestrel control plane");
     Ok(())
