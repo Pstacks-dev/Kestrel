@@ -1198,14 +1198,15 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
 
   const r = await query(
     `update public.jobs
-     set status = $3,
+     set status = case when $3 = 'failed' and attempt <= max_retries then 'queued' else $3 end,
          exit_code = $4,
          duration_ms = $5,
-         finished_at = now(),
+         finished_at = case when $3 = 'failed' and attempt <= max_retries then null else now() end,
          lease_token = null,
-         lease_expires_at = null
+         lease_expires_at = null,
+         worker_id = case when $3 = 'failed' and attempt <= max_retries then null else worker_id end
      where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled')
-     returning run_id`,
+     returning run_id, status`,
     [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id]
   );
 
@@ -1216,11 +1217,35 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
   const runId = r.rows[0].run_id;
 
   await transaction(async (c) => {
-    // Check overall run status
+    const completedStatus = r.rows[0].status;
+    if (completedStatus === 'queued') {
+      await c.query(
+        "insert into public.job_logs(job_id, stream, message) values($1, 'system', $2)",
+        [req.params.jobId, 'Job failed; retry scheduled because attempts remain']
+      );
+    } else {
+      // Skip all downstream jobs that can no longer run, including transitive dependants.
+      for (let pass = 0; pass < 100; pass += 1) {
+        const skipped = await c.query(
+          `update public.jobs j
+           set status = 'skipped', finished_at = now(), exit_code = 125
+           where j.run_id = $1 and j.status = 'queued'
+             and exists (
+               select 1 from public.jobs d
+               where d.run_id = j.run_id and d.external_id = any(j.needs)
+                 and d.status in ('failed', 'canceled', 'skipped')
+             )`,
+          [runId]
+        );
+        if (!skipped.rowCount) break;
+      }
+    }
+
     await c.query(
       `update public.pipeline_runs r
        set status = case
-         when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed') then 'failed'
+         when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed')
+              and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'failed'
          when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'canceled')
               and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'canceled'
          when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'succeeded'
@@ -1234,7 +1259,6 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
       [runId]
     );
 
-    // Update worker state to online if no remaining running jobs
     const remaining = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [req.worker.id]);
     await c.query(
       "update public.workers set state = case when state in ('draining', 'offline') then state when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
@@ -1242,7 +1266,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
     );
   });
 
-  res.json({ ok: true, status: finalStatus });
+  res.json({ ok: true, status: r.rows[0].status });
 });
 
 // Artifact bytes are uploaded through registerArtifactRoutes; metadata-only registration is intentionally disabled.
