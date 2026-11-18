@@ -45,6 +45,11 @@ async function queueRelease({ query, transaction, environmentId, userId, image, 
     if (!envResult.rowCount) throw Object.assign(new Error('Deployment environment not found or access denied'), { status: 404 });
     const env = envResult.rows[0];
     if (env.runtime !== 'rust') throw Object.assign(new Error('This environment must be assigned to a Rust execution worker'), { status: 409 });
+    const pending = await c.query(
+      "select id from public.deployment_releases where environment_id = $1 and status in ('queued', 'deploying') limit 1",
+      [environmentId]
+    );
+    if (pending.rowCount) throw Object.assign(new Error('A deployment is already queued or running for this environment'), { status: 409 });
 
     await c.query('select id from public.projects where id = $1 for update', [env.project_id]);
     const runNumber = await c.query(
@@ -195,6 +200,29 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
       res.json({ releases: result.rows });
     } catch (error) {
       res.status(500).json({ error: 'Could not load release history' });
+    }
+  });
+
+  app.get('/api/deployments/:environmentId/health', userAuth, async (req, res) => {
+    try {
+      const result = await query(
+        `select e.id, e.public_url as "publicUrl", e.host_port as "hostPort",
+                r.status as "releaseStatus", r.health_checked_at as "lastCheckedAt",
+                r.error_message as "errorMessage", r.release_number as "releaseNumber",
+                w.state as "workerState", w.last_seen_at as "workerLastSeenAt"
+         from public.deployment_environments e
+         join public.projects p on p.id = e.project_id
+         join public.organization_members m on m.organization_id = p.organization_id
+         join public.workers w on w.id = e.worker_id
+         left join public.deployment_releases r on r.id = e.current_release_id
+         where e.id = $1 and m.user_id = $2`,
+        [req.params.environmentId, req.user.id]
+      );
+      if (!result.rowCount) return fail(res, 404, 'Deployment environment not found');
+      const health = result.rows[0];
+      res.json({ ...health, healthy: health.releaseStatus === 'healthy' });
+    } catch (error) {
+      res.status(500).json({ error: 'Could not read deployment health' });
     }
   });
 
