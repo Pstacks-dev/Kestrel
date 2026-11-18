@@ -30,7 +30,7 @@ struct Job {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeploymentConfig {
-    environment_id: String, release_id: String, host_port: u16, container_port: u16,
+    environment_id: String, release_id: String, image: String, container_name: String, host_port: u16, container_port: u16,
     health_path: String, health_timeout_seconds: u64, public_url: Option<String>,
     secret_names: Vec<String>, previous_image: Option<String>, previous_container: Option<String>,
 }
@@ -251,7 +251,7 @@ async fn deployment_health(cfg: &Config, port: u16, path: &str, timeout_seconds:
 
 async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
     let deployment = job.deployment.as_ref().ok_or_else(|| anyhow!("deployment job has no deployment configuration"))?;
-    let image = job.command.trim();
+    let image = deployment.image.trim();
     anyhow::ensure!(valid_deployment_image(image), "deployment image reference is invalid");
     anyhow::ensure!(deployment.host_port >= 1024 && deployment.container_port > 0, "deployment port is invalid");
     anyhow::ensure!(deployment.health_path.starts_with('/') && !deployment.health_path.contains(".."), "deployment health path is invalid");
@@ -285,7 +285,8 @@ async fn run_deployment(http: &Client, cfg: &Config, job: &Job) -> Result<()> {
         secret_file_created = true;
     }
 
-    let container = format!("kestrel-release-{}", job.id.replace(|c: char| !c.is_ascii_alphanumeric(), ""));
+    let container = deployment.container_name.clone();
+    anyhow::ensure!(container.starts_with("kestrel-") && container.len() <= 100 && container.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "deployment container name is invalid");
     let previous_container = deployment.previous_container.as_deref();
     let mut previous_stopped = false;
     if let Some(previous) = previous_container {
