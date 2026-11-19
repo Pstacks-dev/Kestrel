@@ -26,8 +26,7 @@ create table if not exists public.sandbox_instances (
   last_activity_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  deleted_at timestamptz,
-  unique(organization_id, name)
+  deleted_at timestamptz
 );
 
 create index if not exists idx_sandbox_instances_org_active
@@ -35,6 +34,8 @@ create index if not exists idx_sandbox_instances_org_active
   where deleted_at is null;
 create index if not exists idx_sandbox_instances_provider_name
   on public.sandbox_instances(provider_name);
+create unique index if not exists idx_sandbox_instances_org_active_name
+  on public.sandbox_instances(organization_id, name) where deleted_at is null;
 
 alter table public.sandbox_quotas enable row level security;
 alter table public.sandbox_instances enable row level security;
