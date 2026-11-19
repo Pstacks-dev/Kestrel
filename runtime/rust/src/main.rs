@@ -324,6 +324,11 @@ async fn docker_action(cfg: &Config, http: &Client, job: &Job, args: &[String], 
     Ok(stdout.trim().to_string())
 }
 
+async fn tcp_health_probe(port: u16) -> bool {
+    tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(("127.0.0.1", port)))
+        .await.is_ok_and(|result| result.is_ok())
+}
+
 async fn deployment_health(port: u16, health_type: &str, path: &str, timeout_seconds: u64, canceled: &AtomicBool) -> bool {
     let http = if health_type == "http" { Client::builder().timeout(Duration::from_secs(3)).build().ok() } else { None };
     let url = format!("http://127.0.0.1:{port}{path}");
@@ -331,7 +336,7 @@ async fn deployment_health(port: u16, health_type: &str, path: &str, timeout_sec
     while time::Instant::now() < deadline && !canceled.load(Ordering::Relaxed) {
         let healthy = match health_type {
             "http" => match http.as_ref() { Some(client) => client.get(&url).send().await.is_ok_and(|r| r.status().is_success()), None => false },
-            "tcp" => tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(("127.0.0.1", port))).await.is_ok_and(|result| result.is_ok()),
+            "tcp" => tcp_health_probe(port).await,
             _ => false,
         };
         if healthy { return true; }
@@ -743,6 +748,21 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{docker_host_workspace_path, safe_relative_path};
+
+    #[tokio::test]
+    async fn tcp_health_probe_succeeds_when_port_is_listening() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(super::tcp_health_probe(port).await);
+    }
+
+    #[tokio::test]
+    async fn tcp_health_probe_fails_when_port_is_closed() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert!(!super::tcp_health_probe(port).await);
+    }
 
     #[test]
     fn accepts_only_supported_deployment_health_check_types() {
