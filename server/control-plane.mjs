@@ -708,9 +708,9 @@ app.post('/api/webhooks/github', async (req, res) => {
 
     // Default CI jobs pipeline
     const defaultJobs = [
-      { id: 'install', name: 'Install dependencies', stage: 'build', command: 'npm ci' },
-      { id: 'test', name: 'Run tests', stage: 'test', command: 'npm test', needs: ['install'] },
-      { id: 'build', name: 'Build application', stage: 'package', command: 'npm run build', needs: ['test'] },
+      { id: 'install', name: 'Install dependencies', stage: 'build', command: "if [ -f package.json ]; then if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci; else npm install; fi; elif [ -f requirements.txt ]; then python -m pip install -r requirements.txt; elif [ -f go.mod ]; then go mod download; elif [ -f Cargo.toml ]; then cargo fetch; else echo 'No dependency manifest found; skipping'; fi" },
+      { id: 'test', name: 'Run tests', stage: 'test', command: "if [ -f package.json ] && node -e \"process.exit(require('./package.json').scripts?.test ? 0 : 1)\"; then npm test; elif [ -f go.mod ]; then go test ./...; elif [ -f Cargo.toml ]; then cargo test; elif [ -f pytest.ini ] || [ -f tox.ini ]; then python -m pytest; else echo 'No test command detected; skipping'; fi", needs: ['install'] },
+      { id: 'build', name: 'Build application', stage: 'package', command: "if [ -f package.json ] && node -e \"process.exit(require('./package.json').scripts?.build ? 0 : 1)\"; then npm run build; elif [ -f go.mod ]; then go build ./...; elif [ -f Cargo.toml ]; then cargo build --release; elif [ -f pyproject.toml ] && python -m build --version >/dev/null 2>&1; then python -m build; else echo 'No build command detected; skipping'; fi", needs: ['test'] },
     ];
     const safe = validatePipelineJobs(defaultJobs);
 
