@@ -6,7 +6,7 @@ import app from '../server/control-plane.mjs';
 export default function handler(req, res) {
   const captured = req.query?.__kestrel_path;
   const path = Array.isArray(captured) ? captured.join('/') : String(captured || '');
-  const normalized = path.replace(/^\\/+/, '');
+  const normalized = path.replace(/^\/+/, '');
 
   if (!normalized || normalized.split('/').some((segment) => segment === '..' || segment === '.')) {
     return res.status(400).json({ error: 'Invalid API path' });
