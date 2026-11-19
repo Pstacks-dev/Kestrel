@@ -40,3 +40,13 @@ test('compute control plane exposes authenticated tenant and host-agent operatio
   assert.match(routes, /lease_expires_at = now\(\) \+ interval '90 seconds'/);
   assert.match(routes, /desired_state = 'online'/);
 });
+
+
+test('sandbox migration adds tenant sandbox inventory, quotas and row-level security', async () => {
+  const sql = await readFile(new URL('../db/migrations/018_sandbox_compute.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.sandbox_instances/i);
+  assert.match(sql, /create table if not exists public\.sandbox_quotas/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /members read sandbox instances/i);
+  assert.match(sql, /provider_name text not null unique/i);
+});
