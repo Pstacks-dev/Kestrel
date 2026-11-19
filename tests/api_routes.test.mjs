@@ -36,6 +36,17 @@ test('API Endpoints and Security Middleware', async (t) => {
     assert.match(data.error, /Authentication required/i);
   });
 
+  await t.test('workspace Rust worker provisioning rejects unauthenticated requests', async () => {
+    const res = await fetch(`${baseUrl}/api/workspaces/00000000-0000-0000-0000-000000000000/workers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Deployment worker', runtime: 'rust' }),
+    });
+    assert.equal(res.status, 401);
+    const data = await res.json();
+    assert.match(data.error, /Authentication required/i);
+  });
+
   await t.test('sandbox workspace routes reject unauthenticated requests', async () => {
     const list = await fetch(`${baseUrl}/api/workspaces/00000000-0000-0000-0000-000000000000/sandboxes`);
     assert.equal(list.status, 401);
