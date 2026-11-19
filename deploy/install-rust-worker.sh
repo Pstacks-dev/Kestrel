@@ -18,6 +18,9 @@ read -r -p "Worker hostname/name [$(hostname)]: " WORKER_HOST
 WORKER_HOST=${WORKER_HOST:-$(hostname)}
 read -r -p "Region label [unknown]: " WORKER_REGION
 WORKER_REGION=${WORKER_REGION:-unknown}
+read -r -p "Worker concurrency [1]: " WORKER_CONCURRENCY
+WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-1}
+if [[ ! "$WORKER_CONCURRENCY" =~ ^[1-8]$ ]]; then echo "Concurrency must be between 1 and 8." >&2; exit 1; fi
 read -r -s -p "One-time worker token: " WORKER_TOKEN
 echo
 
@@ -63,7 +66,7 @@ KESTREL_API_URL=$API_URL
 KESTREL_WORKER_ID=$WORKER_ID
 KESTREL_WORKER_TOKEN=$WORKER_TOKEN
 KESTREL_REGION=$WORKER_REGION
-KESTREL_CONCURRENCY=1
+KESTREL_CONCURRENCY=$WORKER_CONCURRENCY
 KESTREL_WORKER_WORKDIR=/var/lib/kestrel/work
 KESTREL_JOB_IMAGE=node:22-bookworm-slim
 KESTREL_JOB_NETWORK=bridge
