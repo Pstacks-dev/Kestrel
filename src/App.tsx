@@ -2139,7 +2139,7 @@ function AppShell({ page }: { page: Page }) {
                     <div className="deployment-history deployment-wide">
                       <form className="deployment-release-actions" onSubmit={(e) => { e.preventDefault(); executeSandboxCommand(box.id); }}>
                         <input value={sandboxCommands[box.id] || ''} onChange={(e) => setSandboxCommands((current) => ({ ...current, [box.id]: e.target.value }))} placeholder="Run a command, e.g. node --version" />
-                        <Button disabled={!!sandboxResults[box.id]?.busy || !(sandboxCommands[box.id] || '').trim()}>Run <Play size={13} /></Button>
+                        <Button type="submit" disabled={!!sandboxResults[box.id]?.busy || !(sandboxCommands[box.id] || '').trim()}>Run <Play size={13} /></Button>
                       </form>
                       {sandboxResults[box.id] && (
                         <pre className="sandbox-output"><span>Exit code: {sandboxResults[box.id].exitCode ?? (sandboxResults[box.id].busy ? 'Running…' : 'Error')}</span>{sandboxResults[box.id].output}</pre>
