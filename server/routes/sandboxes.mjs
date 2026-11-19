@@ -206,7 +206,8 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
     try {
       const current = await provider.get(record.provider_name, true);
       const sessionId = current?.session?.id || current?.sandbox?.currentSessionId || record.provider_session_id;
-      const execution = await provider.runCommand(sessionId, { command, args, cwd, timeoutMs: timeoutSeconds * 1000 });
+      const providerTimeoutSeconds = process.env.VERCEL ? Math.min(timeoutSeconds, 8) : timeoutSeconds;
+      const execution = await provider.runCommand(sessionId, { command, args, cwd, timeoutMs: providerTimeoutSeconds * 1000 });
       await query("update public.sandbox_instances set provider_session_id=$2, last_activity_at=now(), updated_at=now() where id=$1", [record.id, sessionId]);
       await query(
         `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
