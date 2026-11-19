@@ -1933,7 +1933,7 @@ function AppShell({ page }: { page: Page }) {
                         <ol>
                           <li>Install Docker Engine and make sure the host can run containers.</li>
                           <li>Download and run the installer below.</li>
-                          <li>When prompted, enter the Worker ID, API URL and one-time token above.</li>
+                          <li>When prompted, enter the Worker ID, API URL, region, concurrency value and one-time token above.</li>
                           <li>Return here; once the worker heartbeat is online, create an environment.</li>
                         </ol>
                       </div>
@@ -1986,7 +1986,7 @@ function AppShell({ page }: { page: Page }) {
               ) : (
                 <div className="deployment-empty">
                   <b>No Rust workers are connected to this workspace.</b>
-                  <p>Deployment environments require an online, registered Rust worker. Existing Node workers can continue running build pipelines.</p>
+                  <p>No online Rust deployment worker yet. Complete the setup steps above; Node workers can still run pipelines.</p>
                 </div>
               )}
             </div>
