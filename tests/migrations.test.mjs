@@ -50,3 +50,10 @@ test('sandbox migration adds tenant sandbox inventory, quotas and row-level secu
   assert.match(sql, /members read sandbox instances/i);
   assert.match(sql, /provider_name text not null unique/i);
 });
+
+
+test('deployment health check migration defaults to HTTP and permits TCP probes', async () => {
+  const sql = await readFile(new URL('../db/migrations/023_deployment_tcp_health_checks.sql', import.meta.url), 'utf8');
+  assert.match(sql, /add column if not exists health_check_type text not null default 'http'/i);
+  assert.match(sql, /check \(health_check_type in \('http', 'tcp'\)\)/i);
+});
