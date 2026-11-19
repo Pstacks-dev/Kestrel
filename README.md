@@ -256,3 +256,12 @@ npm run check
 - **Kernel sharing**: Docker containers share the host Linux kernel. The worker egress firewall blocks host-local/private/link-local destinations, and jobs run with dropped capabilities, no-new-privileges, read-only roots and resource limits. Stronger isolation (gVisor, Kata or Firecracker) is still required before accepting hostile public multi-tenant workloads.
 - **Network egress**: Job containers default to Docker bridge networking for package downloads. Install `deploy/harden-worker-egress.sh` on each dedicated worker host; use `KESTREL_JOB_NETWORK=none` for offline jobs.
 - **Serverless API timeout**: The Vercel function maximum duration is configured to 15 seconds. Heavy workflows run on dedicated workers, not inside the serverless API request.
+
+
+## 5. Managed Sandbox Compute (Vercel Sandbox)
+
+Kestrel can provision isolated, managed Linux microVM sandboxes without a Kestrel-owned physical host. This is separate from the Incus, Firecracker and KubeVirt host-provider pool. Sandbox workspaces are backed by Vercel Sandbox and are not exposed as customer-managed VM hosts.
+
+Set server-side environment variables before enabling sandbox provisioning: `VERCEL_TOKEN`, `VERCEL_TEAM_ID` (or `VERCEL_ORG_ID`), `VERCEL_PROJECT_ID`, and optionally `KESTREL_SANDBOX_REGION` / `KESTREL_SANDBOX_IMAGE`. Do not expose these credentials in `VITE_` variables or sandbox command environments. Vercel's project sandbox quotas and billing limits apply.
+
+Apply migration 018 (`db/migrations/018_sandbox_compute.sql`) before using sandbox endpoints. The workspace API supports create/list, start/stop, command execution and deletion. The default workspace quota is two concurrent sandboxes, four vCPUs total and up to 45 minutes per session. Each vCPU is provisioned with 2 GiB RAM. The provider retains its own billing, quota and runtime ceilings; Kestrel does not yet meter usage for billing customers.
