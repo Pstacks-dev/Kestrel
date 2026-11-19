@@ -51,9 +51,9 @@ sudo journalctl -u kestrel-rust-worker -f
 
 ## Deployment engine
 
-The Rust worker can also process Kestrel deployment jobs. A deployment environment is pinned to one Rust worker and one published host port. A release pulls the requested container image, stops the currently active release, starts the new container with dropped Linux capabilities, no-new-privileges, a read-only root filesystem, a PID limit and a memory limit, then polls the configured HTTP health path. If the candidate does not become healthy, the worker attempts to restart the previous release container before reporting failure.
+The Rust worker can also process Kestrel deployment jobs. A deployment environment is pinned to one Rust worker and one published host port. A release pulls the requested container image, stops the currently active release, starts the new container with dropped Linux capabilities, no-new-privileges, a read-only root filesystem, a PID limit and a memory limit, then polls the configured HTTP path or TCP port, depending on the environment health-check setting. If the candidate does not become healthy, the worker attempts to restart the previous release container before reporting failure.
 
-This is a host-port deployment primitive, not a managed TLS ingress. Put a reverse proxy/load balancer in front of the worker and configure the environment's public URL to the routed hostname. The current switch has a short interruption while the old container stops and the candidate starts; it is not zero-downtime blue/green traffic switching.
+This is a host-port deployment primitive, not a managed TLS ingress. Put a reverse proxy/load balancer in front of the worker and configure the environment's public URL to the routed hostname. The current switch has a short interruption while the old container stops and the candidate starts; it is not zero-downtime blue/green traffic switching. The Docker Compose worker uses host networking so the runtime's health probes can reach published ports on the Docker host.
 
 Deployment environments can select only workers registered with `runtime=rust`. Private registry credentials are not yet managed by the deployment UI; use images accessible to the worker's Docker daemon until registry credential support is added.
 

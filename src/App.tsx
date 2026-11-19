@@ -567,6 +567,7 @@ function AppShell({ page }: { page: Page }) {
   const [deploymentHostPort, setDeploymentHostPort] = useState('8080');
   const [deploymentContainerPort, setDeploymentContainerPort] = useState('3000');
   const [deploymentHealthPath, setDeploymentHealthPath] = useState('/');
+  const [deploymentHealthCheckType, setDeploymentHealthCheckType] = useState('http');
   const [deploymentPublicUrl, setDeploymentPublicUrl] = useState('');
   const [deploymentImage, setDeploymentImage] = useState('');
   const [rustWorkerName, setRustWorkerName] = useState('Kestrel Deployment Worker');
@@ -925,7 +926,7 @@ function AppShell({ page }: { page: Page }) {
           name: deploymentName, environmentKey: deploymentEnvironmentKey,
           workerId: deploymentWorkerId, hostPort: Number(deploymentHostPort),
           containerPort: Number(deploymentContainerPort), healthPath: deploymentHealthPath,
-          publicUrl: deploymentPublicUrl || null,
+          healthCheckType: deploymentHealthCheckType, publicUrl: deploymentPublicUrl || null,
         }),
       });
       const data = await response.json();
@@ -1975,9 +1976,14 @@ function AppShell({ page }: { page: Page }) {
                   <label>Container port
                     <input type="number" min="1" max="65535" value={deploymentContainerPort} onChange={(e) => setDeploymentContainerPort(e.target.value)} required />
                   </label>
-                  <label>Health-check path
-                    <input value={deploymentHealthPath} onChange={(e) => setDeploymentHealthPath(e.target.value)} required placeholder="/" />
+                  <label>Health-check type
+                    <select value={deploymentHealthCheckType} onChange={(e) => setDeploymentHealthCheckType(e.target.value)}>
+                      <option value="http">HTTP · checks a successful response</option><option value="tcp">TCP · checks the port is accepting connections</option>
+                    </select>
                   </label>
+                  {deploymentHealthCheckType === 'http' && <label>Health-check path
+                    <input value={deploymentHealthPath} onChange={(e) => setDeploymentHealthPath(e.target.value)} required placeholder="/health" />
+                  </label>}
                   <label className="deployment-wide">Public URL (optional)
                     <input value={deploymentPublicUrl} onChange={(e) => setDeploymentPublicUrl(e.target.value)} placeholder="https://app.example.com" />
                   </label>
@@ -2005,7 +2011,7 @@ function AppShell({ page }: { page: Page }) {
                   </span>
                 </div>
                 <div className="deployment-meta">
-                  <span>Health path: <b>{environment.healthPath}</b></span>
+                  <span>Health check: <b>{environment.healthCheckType === 'tcp' ? 'TCP port probe' : 'HTTP ' + environment.healthPath}</b></span>
                   <span>Current image: <b>{environment.currentImage || 'None'}</b></span>
                   <span>Last health check: <b>{environment.lastHealthCheck ? new Date(environment.lastHealthCheck).toLocaleString() : 'Not checked'}</b></span>
                   {environment.publicUrl && <a href={environment.publicUrl} target="_blank" rel="noreferrer">Open application <ArrowUpRight size={13} /></a>}

@@ -5,6 +5,8 @@ services:
       dockerfile: docker/worker-rust.Dockerfile
     image: kestrel-worker-rust:local
     container_name: kestrel-worker-rust
+    # The runtime probes published ports on the Docker host after deployments.
+    network_mode: host
     restart: unless-stopped
     env_file:
       - .env.worker
