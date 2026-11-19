@@ -38,7 +38,7 @@ Workspace members with developer access can provision a one-time worker credenti
 curl -fsSL https://raw.githubusercontent.com/peterakinwale326-code/Kestrel/main/deploy/install-rust-worker.sh | sudo bash
 ```
 
-The installer prompts for the worker ID, Kestrel API URL, region label and one-time token, installs Docker and Rust, builds the runtime, writes a root-owned credential file, and configures a systemd service. It does not place the token in the shell command or echo it while typing.
+The installer prompts for the worker ID, Kestrel API URL, region label, concurrency and one-time token, installs Docker and Rust, builds the runtime, writes a root-owned credential file, and configures a systemd service. Enter the same concurrency value selected when provisioning the credential. It does not place the token in the shell command or echo it while typing.
 
 After install, verify the worker from the dashboard or with:
 
