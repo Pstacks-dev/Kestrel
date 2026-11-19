@@ -51,6 +51,7 @@ type Page =
   | 'runs'
   | 'deployments'
   | 'compute'
+  | 'sandboxes'
   | 'projects'
   | 'artifacts'
   | 'settings';
@@ -62,6 +63,7 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'deployments', label: 'Deployments', icon: Server, group: 'WORKSPACE' },
   { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
   { id: 'compute', label: 'Compute', icon: Cpu, group: 'INFRASTRUCTURE' },
+  { id: 'sandboxes', label: 'Sandboxes', icon: TerminalSquare, group: 'INFRASTRUCTURE' },
   { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
 ];
@@ -585,6 +587,18 @@ function AppShell({ page }: { page: Page }) {
   const [computeMessage, setComputeMessage] = useState('');
   const [computeBusy, setComputeBusy] = useState(false);
 
+  // Managed sandbox compute (Vercel Sandbox)
+  const [sandboxInstances, setSandboxInstances] = useState<any[]>([]);
+  const [sandboxQuota, setSandboxQuota] = useState<any>(null);
+  const [sandboxName, setSandboxName] = useState('devbox');
+  const [sandboxVcpus, setSandboxVcpus] = useState('1');
+  const [sandboxRegion, setSandboxRegion] = useState('iad1');
+  const [sandboxTimeout, setSandboxTimeout] = useState('900');
+  const [sandboxBusy, setSandboxBusy] = useState(false);
+  const [sandboxMessage, setSandboxMessage] = useState('');
+  const [sandboxCommands, setSandboxCommands] = useState<Record<string, string>>({});
+  const [sandboxResults, setSandboxResults] = useState<Record<string, any>>({});
+
   const active = nav.find((n) => n.id === page) || nav[0];
 
   async function connect() {
@@ -1027,6 +1041,93 @@ function AppShell({ page }: { page: Page }) {
     }
   }
 
+  async function loadSandboxes() {
+    if (!organizationId || !accessToken) return;
+    try {
+      const response = await fetch(`${api}/workspaces/${organizationId}/sandboxes`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load sandboxes');
+      setSandboxInstances(data.sandboxes || []);
+      setSandboxQuota(data.quota || null);
+    } catch (error: any) {
+      setSandboxMessage(error.message || 'Sandbox list failed');
+    }
+  }
+
+  async function createSandbox(e: any) {
+    e.preventDefault();
+    setSandboxBusy(true);
+    setSandboxMessage('');
+    try {
+      const response = await fetch(`${api}/workspaces/${organizationId}/sandboxes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ name: sandboxName, vcpus: Number(sandboxVcpus), region: sandboxRegion, timeoutSeconds: Number(sandboxTimeout) }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not create sandbox');
+      setSandboxMessage(`Sandbox ${sandboxName} provisioned.`);
+      await loadSandboxes();
+    } catch (error: any) {
+      setSandboxMessage(error.message || 'Sandbox provisioning failed');
+    } finally {
+      setSandboxBusy(false);
+    }
+  }
+
+  async function sandboxAction(id: string, action: 'start' | 'stop') {
+    try {
+      const response = await fetch(`${api}/sandboxes/${id}/actions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Could not ${action} sandbox`);
+      setSandboxMessage(`Sandbox ${action} request completed.`);
+      await loadSandboxes();
+    } catch (error: any) {
+      setSandboxMessage(error.message || `Sandbox ${action} failed`);
+    }
+  }
+
+  async function deleteSandbox(id: string) {
+    if (!window.confirm('Delete this sandbox and its saved state?')) return;
+    try {
+      const response = await fetch(`${api}/sandboxes/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not delete sandbox');
+      setSandboxMessage('Sandbox deleted.');
+      await loadSandboxes();
+    } catch (error: any) {
+      setSandboxMessage(error.message || 'Sandbox deletion failed');
+    }
+  }
+
+  async function executeSandboxCommand(id: string) {
+    const commandLine = (sandboxCommands[id] || '').trim();
+    if (!commandLine) return;
+    setSandboxResults((current) => ({ ...current, [id]: { busy: true, output: '' } }));
+    try {
+      const response = await fetch(`${api}/sandboxes/${id}/commands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ command: 'sh', args: ['-lc', commandLine], cwd: '/vercel/sandbox', timeoutSeconds: 30 }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Command failed');
+      setSandboxResults((current) => ({ ...current, [id]: { busy: false, exitCode: data.exitCode, output: (data.stdout || '') + (data.stderr || '') } }));
+      await loadSandboxes();
+    } catch (error: any) {
+      setSandboxResults((current) => ({ ...current, [id]: { busy: false, exitCode: null, output: error.message || 'Execution failed' } }));
+    }
+  }
+
   async function copySshCommand(ip: string) {
     try {
       await navigator.clipboard.writeText(`ssh kestrel@${ip}`);
@@ -1058,6 +1159,13 @@ function AppShell({ page }: { page: Page }) {
     if (page !== 'compute' || !organizationId || !accessToken) return;
     loadCompute();
     const timer = setInterval(loadCompute, 4000);
+    return () => clearInterval(timer);
+  }, [page, organizationId, accessToken, api]);
+
+  useEffect(() => {
+    if (page !== 'sandboxes' || !organizationId || !accessToken) return;
+    loadSandboxes();
+    const timer = setInterval(loadSandboxes, 5000);
     return () => clearInterval(timer);
   }, [page, organizationId, accessToken, api]);
 
@@ -1939,6 +2047,108 @@ function AppShell({ page }: { page: Page }) {
                 </div>
               )) : (
                 <div className="deployment-empty"><b>No virtual machines yet.</b><p>Create a VM above when a Kestrel provider host is online and has capacity.</p></div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {/* SANDBOXES */}
+        {page === 'sandboxes' && !inspectedRun && (
+          <div className="page-content">
+            <PageHeading
+              eyebrow="INFRASTRUCTURE / ISOLATED COMPUTE"
+              title="Sandbox workspaces"
+              desc="Create disposable, isolated Linux microVM environments for development and testing. This pool is managed by Kestrel and does not require a host server."
+            />
+            {sandboxQuota && (
+              <div className="metric-grid">
+                {[
+                  { label: 'Sandboxes', used: sandboxQuota.usedSandboxes || 0, max: sandboxQuota.maxSandboxes, unit: '' },
+                  { label: 'vCPU', used: sandboxQuota.usedVcpu || 0, max: sandboxQuota.maxVcpu, unit: '' },
+                  { label: 'Session limit', used: '—', max: Math.round(sandboxQuota.maxRuntimeSeconds / 60), unit: ' min' },
+                ].map((item) => (
+                  <div className="metric-card" key={item.label}>
+                    <div><span>{item.label}</span><TerminalSquare size={16} /></div>
+                    <strong>{item.used}{item.unit}</strong>
+                    <small>Limit: {item.max}{item.unit}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+            <section className="panel">
+              <div className="panel-head">
+                <div><h3>Provision a sandbox</h3><p>Managed Linux microVM. Workspace data persists when stopped and resumed.</p></div>
+                <span className="pill pill-muted">MANAGED PROVIDER</span>
+              </div>
+              <form className="deployment-form-grid" onSubmit={createSandbox}>
+                <label>Workspace name
+                  <input value={sandboxName} onChange={(e) => setSandboxName(e.target.value.toLowerCase())} pattern="[a-z0-9][a-z0-9-]{0,61}[a-z0-9]" minLength={1} maxLength={63} required />
+                </label>
+                <label>CPU
+                  <select value={sandboxVcpus} onChange={(e) => setSandboxVcpus(e.target.value)}>
+                    <option value="1">1 vCPU · 2 GiB RAM</option>
+                    <option value="2">2 vCPU · 4 GiB RAM</option>
+                    <option value="4">4 vCPU · 8 GiB RAM</option>
+                  </select>
+                </label>
+                <label>Region
+                  <select value={sandboxRegion} onChange={(e) => setSandboxRegion(e.target.value)}>
+                    <option value="iad1">US East (Washington)</option>
+                    <option value="fra1">Frankfurt</option>
+                    <option value="lhr1">London</option>
+                    <option value="cpt1">Cape Town</option>
+                    <option value="sfo1">US West (San Francisco)</option>
+                    <option value="sin1">Singapore</option>
+                  </select>
+                </label>
+                <label>Session timeout
+                  <select value={sandboxTimeout} onChange={(e) => setSandboxTimeout(e.target.value)}>
+                    <option value="300">5 minutes</option>
+                    <option value="900">15 minutes</option>
+                    <option value="1800">30 minutes</option>
+                    <option value="2700">45 minutes (maximum on Hobby)</option>
+                  </select>
+                </label>
+                <div className="deployment-wide">
+                  <Button type="submit" disabled={sandboxBusy || !organizationId}>
+                    {sandboxBusy ? 'Provisioning…' : 'Create sandbox'} <Plus size={14} />
+                  </Button>
+                </div>
+              </form>
+              <p className="deployment-muted">Provider usage limits apply. Kestrel currently does not bill or meter sandbox usage.</p>
+            </section>
+            {sandboxMessage && <div className="action-message deployment-message">{sandboxMessage}</div>}
+            <section className="panel">
+              <div className="panel-head">
+                <div><h3>Your sandbox environments</h3><p>Start, stop or delete environments. Commands run inside the isolated sandbox.</p></div>
+                <button onClick={loadSandboxes}>Refresh <RotateCcw size={13} /></button>
+              </div>
+              {sandboxInstances.length ? sandboxInstances.map((box: any) => (
+                <div className="table-row" key={box.id}>
+                  <TerminalSquare size={18} />
+                  <div className="flex-1">
+                    <b>{box.name}</b>
+                    <small>{box.provider} · {box.region} · {box.vcpus} vCPU · {box.memoryMiB / 1024} GiB RAM · {Math.round(box.timeoutSeconds / 60)} min</small>
+                    <small>{box.lastActivityAt ? `Last activity ${new Date(box.lastActivityAt).toLocaleString()}` : ''}{box.errorMessage ? ` · ${box.errorMessage}` : ''}</small>
+                  </div>
+                  <span className={`pill ${box.status === 'running' ? 'pill-green' : 'pill-muted'}`}>{box.status}</span>
+                  {box.status === 'stopped' && <Button kind="light" onClick={() => sandboxAction(box.id, 'start')}>Resume</Button>}
+                  {box.status === 'running' && <Button kind="light" onClick={() => sandboxAction(box.id, 'stop')}>Stop</Button>}
+                  {!['provisioning','stopping','deleting'].includes(box.status) && <Button kind="light" onClick={() => deleteSandbox(box.id)}><Trash2 size={13} /> Delete</Button>}
+                  {box.status === 'running' && (
+                    <div className="deployment-history deployment-wide">
+                      <form className="deployment-release-actions" onSubmit={(e) => { e.preventDefault(); executeSandboxCommand(box.id); }}>
+                        <input value={sandboxCommands[box.id] || ''} onChange={(e) => setSandboxCommands((current) => ({ ...current, [box.id]: e.target.value }))} placeholder="Run a command, e.g. node --version" />
+                        <Button type="submit" disabled={!!sandboxResults[box.id]?.busy || !(sandboxCommands[box.id] || '').trim()}>Run <Play size={13} /></Button>
+                      </form>
+                      {sandboxResults[box.id] && (
+                        <pre className="sandbox-output"><span>Exit code: {sandboxResults[box.id].exitCode ?? (sandboxResults[box.id].busy ? 'Running…' : 'Error')}</span>{sandboxResults[box.id].output}</pre>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )) : (
+                <div className="deployment-empty"><b>No sandbox workspaces yet.</b><p>Provision one above. Sandbox creation requires Kestrel's provider credentials to be configured.</p></div>
               )}
             </section>
           </div>

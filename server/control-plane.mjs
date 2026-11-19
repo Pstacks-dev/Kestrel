@@ -22,6 +22,7 @@ import { registerProjectFileRoutes } from './routes/project-files.mjs';
 import { registerArtifactRoutes } from './routes/artifacts.mjs';
 import { registerDeploymentRoutes } from './routes/deployments.mjs';
 import { registerComputeRoutes } from './routes/compute.mjs';
+import { registerSandboxRoutes } from './routes/sandboxes.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1535,6 +1536,7 @@ registerProjectFileRoutes(app, { userAuth, workerAuth, query });
 registerArtifactRoutes(app, { userAuth, workerAuth, query });
 registerDeploymentRoutes(app, { userAuth, query, transaction });
 registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
+registerSandboxRoutes(app, { userAuth, platformAdmin, query, transaction });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {

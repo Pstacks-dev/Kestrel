@@ -36,6 +36,13 @@ test('API Endpoints and Security Middleware', async (t) => {
     assert.match(data.error, /Authentication required/i);
   });
 
+  await t.test('sandbox workspace routes reject unauthenticated requests', async () => {
+    const list = await fetch(`${baseUrl}/api/workspaces/00000000-0000-0000-0000-000000000000/sandboxes`);
+    assert.equal(list.status, 401);
+    const commands = await fetch(`${baseUrl}/api/sandboxes/00000000-0000-0000-0000-000000000000/commands`, { method: 'POST' });
+    assert.equal(commands.status, 401);
+  });
+
   await t.test('POST /api/workers/register rejects unauthenticated worker requests', async () => {
     const res = await fetch(`${baseUrl}/api/workers/register`, {
       method: 'POST',
