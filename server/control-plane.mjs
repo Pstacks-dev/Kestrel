@@ -788,6 +788,12 @@ app.post('/api/runs', sensitiveLimiter, userAuth, async (req, res) => {
 
     res.status(201).json(run);
   } catch (e) {
+    if (!e.status || e.status >= 500) {
+      console.error('[pipeline.queue] Failed to create pipeline run', {
+        code: e.code || 'UNKNOWN',
+        message: e.message || 'Unknown error',
+      });
+    }
     res.status(e.status || 500).json({ error: e.status ? e.message : 'Pipeline could not be queued' });
   }
 });
