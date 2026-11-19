@@ -53,7 +53,7 @@ sudo journalctl -u kestrel-rust-worker -f
 
 The Rust worker can also process Kestrel deployment jobs. A deployment environment is pinned to one Rust worker and one published host port. A release pulls the requested container image, stops the currently active release, starts the new container with dropped Linux capabilities, no-new-privileges, a read-only root filesystem, a PID limit and a memory limit, then polls the configured HTTP health path. If the candidate does not become healthy, the worker attempts to restart the previous release container before reporting failure.
 
-This is a host-port deployment primitive, not a managed TLS ingress. Put a reverse proxy/load balancer in front of the worker and configure the environment's public URL to the routed hostname. The current switch has a short interruption while the old container stops and the candidate starts; it is not zero-downtime blue/green traffic switching.
+This is a host-port deployment primitive, not a managed TLS ingress. Put a reverse proxy/load balancer in front of the worker and configure the environment's public URL to the routed hostname. The current switch has a short interruption while the old container stops and the candidate starts; it is not zero-downtime blue/green traffic switching. The Docker Compose worker uses host networking so the runtime's health probes can reach published ports on the Docker host.
 
 Deployment environments can select only workers registered with `runtime=rust`. Private registry credentials are not yet managed by the deployment UI; use images accessible to the worker's Docker daemon until registry credential support is added.
 
@@ -84,6 +84,5 @@ Apply migrations in numeric order before deploying the matching control-plane co
 - `014_job_retry_backoff.sql`
 - `015_recovery_backoff.sql`
 - `016_worker_desired_state.sql`
-- `023_deployment_tcp_health_checks.sql`
 
 Artifacts are uploaded directly to Supabase Storage through one-use signed URLs; the Vercel API does not proxy large artifact bodies. Expired upload sessions are cleaned up with the same cron. The artifact lifecycle defaults to no automatic expiry. Set `KESTREL_ARTIFACT_RETENTION_DAYS` to a value from 1 to 3650 to expire newly uploaded artifacts; the protected daily cron removes expired objects from the private Supabase bucket. Set a strong `CRON_SECRET` in the control plane for both lease recovery and artifact cleanup.
