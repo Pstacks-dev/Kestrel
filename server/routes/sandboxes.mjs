@@ -172,6 +172,11 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
         const sessionId = resumed?.session?.id || resumed?.sandbox?.currentSessionId;
         await query("update public.sandbox_instances set status='running', provider_session_id=$2, updated_at=now(), last_activity_at=now() where id=$1", [record.id, sessionId]);
       }
+      await query(
+        `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id)
+         values($1,$2,$3,'sandbox',$4)`,
+        [record.organization_id, req.user.id, `sandbox.${action}`, record.id],
+      );
       res.json({ ok: true, sandboxId: record.id, action, status: action === 'start' ? 'running' : 'stopped' });
     } catch (error) {
       fail(res, error instanceof SandboxProviderError ? error.status : 502, error.message || `Could not ${action} sandbox`);
@@ -203,6 +208,11 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
       const sessionId = current?.session?.id || current?.sandbox?.currentSessionId || record.provider_session_id;
       const execution = await provider.runCommand(sessionId, { command, args, cwd, timeoutMs: timeoutSeconds * 1000 });
       await query("update public.sandbox_instances set provider_session_id=$2, last_activity_at=now(), updated_at=now() where id=$1", [record.id, sessionId]);
+      await query(
+        `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+         values($1,$2,'sandbox.command','sandbox',$3,$4)`,
+        [record.organization_id, req.user.id, record.id, JSON.stringify({ command, exitCode: execution.exitCode, durationMs: execution.durationMs })],
+      );
       res.json({ command, args, ...execution });
     } catch (error) {
       fail(res, error instanceof SandboxProviderError ? error.status : 502, error.message || 'Sandbox command failed');
