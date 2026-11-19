@@ -569,6 +569,12 @@ function AppShell({ page }: { page: Page }) {
   const [deploymentHealthPath, setDeploymentHealthPath] = useState('/');
   const [deploymentPublicUrl, setDeploymentPublicUrl] = useState('');
   const [deploymentImage, setDeploymentImage] = useState('');
+  const [rustWorkerName, setRustWorkerName] = useState('Kestrel Deployment Worker');
+  const [rustWorkerRegion, setRustWorkerRegion] = useState('unknown');
+  const [rustWorkerConcurrency, setRustWorkerConcurrency] = useState('1');
+  const [rustWorkerProvisioning, setRustWorkerProvisioning] = useState(false);
+  const [rustWorkerCredential, setRustWorkerCredential] = useState<any>(null);
+  const [showRustSetup, setShowRustSetup] = useState(false);
 
   // Kestrel Compute
   const [computeInstances, setComputeInstances] = useState<any[]>([]);
@@ -880,6 +886,31 @@ function AppShell({ page }: { page: Page }) {
       setDeploymentReleases(Object.fromEntries(histories));
     } catch (error: any) {
       setActionMessage(error.message || 'Could not load deployments');
+    }
+  }
+
+  async function provisionRustWorker(e: any) {
+    e.preventDefault();
+    if (!organizationId) return;
+    setRustWorkerProvisioning(true);
+    setActionMessage('');
+    setRustWorkerCredential(null);
+    try {
+      const response = await fetch(`${api}/workspaces/${organizationId}/workers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ name: rustWorkerName, region: rustWorkerRegion, maxConcurrency: Number(rustWorkerConcurrency), runtime: 'rust' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not provision deployment worker');
+      setRustWorkerCredential(data);
+      setActionMessage('Worker credential created. Copy it now; it will not be shown again.');
+      setShowRustSetup(true);
+      await connect();
+    } catch (error: any) {
+      setActionMessage(error.message || 'Worker provisioning failed');
+    } finally {
+      setRustWorkerProvisioning(false);
     }
   }
 
@@ -1852,6 +1883,68 @@ function AppShell({ page }: { page: Page }) {
               </div>
             </div>
 
+            <div className="panel deployment-worker-setup">
+              <div className="panel-head">
+                <div><h3>Deployment workers</h3><p>Connect a Linux host with Docker Engine to run container releases.</p></div>
+                <span className={snapshot?.workers?.some((w: any) => w.runtime === 'rust' && w.state === 'online') ? 'pill pill-green' : 'pill pill-muted'}>
+                  {snapshot?.workers?.filter((w: any) => w.runtime === 'rust').length || 0} CONNECTED
+                </span>
+              </div>
+              {snapshot?.workers?.some((w: any) => w.runtime === 'rust') ? (
+                <div className="deployment-worker-connected">
+                  <div>
+                    <b>{snapshot.workers.filter((w: any) => w.runtime === 'rust').map((w: any) => w.hostname).join(', ')}</b>
+                    <p>Rust runtime registered. Workers can be connected from this workspace.</p>
+                  </div>
+                  <button className="btn btn-light" onClick={() => { setShowRustSetup(!showRustSetup); setRustWorkerCredential(null); }}>Connect another worker <Plus size={14} /></button>
+                </div>
+              ) : (
+                <div className="deployment-worker-empty">
+                  <div className="deployment-worker-icon"><Server size={20} /></div>
+                  <b>No deployment worker is connected yet</b>
+                  <p>Pipeline workers can run tests and builds. Container deployments need a Linux host with Docker Engine. Provision a worker credential, then install the Rust runtime on that host.</p>
+                  <button className="btn btn-dark" onClick={() => setShowRustSetup(!showRustSetup)}><Plus size={14} /> Set up deployment worker</button>
+                </div>
+              )}
+              {showRustSetup && (
+                <div className="deployment-worker-wizard">
+                  {!rustWorkerCredential ? (
+                    <form onSubmit={provisionRustWorker} className="deployment-form-grid">
+                      <label>Worker name
+                        <input value={rustWorkerName} onChange={(e) => setRustWorkerName(e.target.value)} maxLength={80} required />
+                      </label>
+                      <label>Region label
+                        <input value={rustWorkerRegion} onChange={(e) => setRustWorkerRegion(e.target.value)} placeholder="e.g. eu-west" maxLength={80} />
+                      </label>
+                      <label>Maximum concurrent deployments/jobs
+                        <select value={rustWorkerConcurrency} onChange={(e) => setRustWorkerConcurrency(e.target.value)}>
+                          <option value="1">1 (recommended for small host)</option><option value="2">2</option><option value="4">4</option>
+                        </select>
+                      </label>
+                      <div className="deployment-wide"><Button type="submit" disabled={rustWorkerProvisioning}>{rustWorkerProvisioning ? 'Provisioning…' : 'Generate one-time worker credential'} <ArrowRight size={14} /></Button></div>
+                    </form>
+                  ) : (
+                    <div className="deployment-worker-instructions">
+                      <div className="notice"><ShieldCheck size={15} /> This token is shown once. Store it securely; do not paste it into a public repository or chat.</div>
+                      <label>Worker ID <code>{rustWorkerCredential.workerId}</code><button type="button" onClick={() => navigator.clipboard?.writeText(rustWorkerCredential.workerId)}>Copy</button></label>
+                      <label>One-time token <code className="credential-token">{rustWorkerCredential.token}</code><button type="button" onClick={() => navigator.clipboard?.writeText(rustWorkerCredential.token)}>Copy token</button></label>
+                      <div className="setup-steps">
+                        <b>On a dedicated Ubuntu/Debian Linux host</b>
+                        <ol>
+                          <li>Install Docker Engine and make sure the host can run containers.</li>
+                          <li>Download and run the installer below.</li>
+                          <li>When prompted, enter the Worker ID, API URL, region, concurrency value and one-time token above.</li>
+                          <li>Return here; once the worker heartbeat is online, create an environment.</li>
+                        </ol>
+                      </div>
+                      <div className="setup-command"><code>curl -fsSL https://raw.githubusercontent.com/peterakinwale326-code/Kestrel/main/deploy/install-rust-worker.sh | sudo bash</code><button type="button" onClick={() => navigator.clipboard?.writeText('curl -fsSL https://raw.githubusercontent.com/peterakinwale326-code/Kestrel/main/deploy/install-rust-worker.sh | sudo bash')}>Copy installer command</button></div>
+                      <p className="deployment-muted">Use a dedicated host only. The worker controls Docker, which is effectively host-root access. Vercel sandboxes do not expose a Docker daemon, so they cannot host this container deployment worker.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="panel">
               <div className="panel-head">
                 <div><h3>Create environment</h3><p>Assign a published host port on a Rust execution worker.</p></div>
@@ -1893,7 +1986,7 @@ function AppShell({ page }: { page: Page }) {
               ) : (
                 <div className="deployment-empty">
                   <b>No Rust workers are connected to this workspace.</b>
-                  <p>Deployment environments require an online, registered Rust worker. Existing Node workers can continue running build pipelines.</p>
+                  <p>No online Rust deployment worker yet. Complete the setup steps above; Node workers can still run pipelines.</p>
                 </div>
               )}
             </div>

@@ -30,6 +30,25 @@ Platform administrators can move a worker to `draining` to stop new claims while
 Rust is the trusted host-side supervisor, not a substitute for an OS sandbox. Docker still shares the host kernel. Production multi-tenant workers must use dedicated hosts, digest-pinned images, strict egress controls, ephemeral credentials, and a stronger sandbox (gVisor, Kata, or Firecracker) before accepting hostile public workloads.
 
 
+## Connect a deployment worker
+
+Workspace members with developer access can provision a one-time worker credential from **Workspace → Deployments → Set up deployment worker**. Install the runtime on a dedicated Ubuntu/Debian Linux host that has Docker Engine available:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/peterakinwale326-code/Kestrel/main/deploy/install-rust-worker.sh | sudo bash
+```
+
+The installer prompts for the worker ID, Kestrel API URL, region label, concurrency and one-time token, installs Docker and Rust, builds the runtime, writes a root-owned credential file, and configures a systemd service. Enter the same concurrency value selected when provisioning the credential. It does not place the token in the shell command or echo it while typing.
+
+After install, verify the worker from the dashboard or with:
+
+```sh
+sudo systemctl status kestrel-rust-worker
+sudo journalctl -u kestrel-rust-worker -f
+```
+
+**Use a dedicated Linux host.** Vercel Sandboxes do not expose a Docker daemon/socket, so they cannot run this container deployment runtime. Membership in the Docker group is root-equivalent; treat the worker as privileged infrastructure and never run it on a shared/untrusted host.
+
 ## Deployment engine
 
 The Rust worker can also process Kestrel deployment jobs. A deployment environment is pinned to one Rust worker and one published host port. A release pulls the requested container image, stops the currently active release, starts the new container with dropped Linux capabilities, no-new-privileges, a read-only root filesystem, a PID limit and a memory limit, then polls the configured HTTP health path. If the candidate does not become healthy, the worker attempts to restart the previous release container before reporting failure.
