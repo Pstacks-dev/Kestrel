@@ -305,6 +305,10 @@ fn valid_deployment_image(image: &str) -> bool {
         image.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-:@".contains(&b))
 }
 
+fn valid_deployment_health_check_type(value: &str) -> bool {
+    matches!(value, "http" | "tcp")
+}
+
 async fn docker_action(cfg: &Config, http: &Client, job: &Job, args: &[String], action: &str) -> Result<String> {
     let output = Command::new(&cfg.docker).kill_on_drop(true).args(args).output().await
         .with_context(|| format!("starting docker {action}"))?;
@@ -341,7 +345,7 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
     let image = deployment.image.trim();
     anyhow::ensure!(valid_deployment_image(image), "deployment image reference is invalid");
     anyhow::ensure!(deployment.host_port >= 1024 && deployment.container_port > 0, "deployment port is invalid");
-    anyhow::ensure!(deployment.health_check_type == "http" || deployment.health_check_type == "tcp", "deployment health check type is invalid");
+    anyhow::ensure!(valid_deployment_health_check_type(&deployment.health_check_type), "deployment health check type is invalid");
     anyhow::ensure!(deployment.health_check_type != "http" || (deployment.health_path.starts_with('/') && !deployment.health_path.contains("..")), "deployment health path is invalid");
     anyhow::ensure!(deployment.environment_id.len() == 36 && deployment.release_id.len() == 36, "deployment identifiers are invalid");
 
@@ -739,6 +743,14 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{docker_host_workspace_path, safe_relative_path};
+
+    #[test]
+    fn accepts_only_supported_deployment_health_check_types() {
+        assert!(super::valid_deployment_health_check_type("http"));
+        assert!(super::valid_deployment_health_check_type("tcp"));
+        assert!(!super::valid_deployment_health_check_type("icmp"));
+        assert!(!super::valid_deployment_health_check_type(""));
+    }
 
     #[test]
     fn maps_container_workspace_to_host_docker_path() {
