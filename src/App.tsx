@@ -1886,7 +1886,7 @@ function AppShell({ page }: { page: Page }) {
             <div className="panel deployment-worker-setup">
               <div className="panel-head">
                 <div><h3>Deployment workers</h3><p>Connect a Linux host with Docker Engine to run container releases.</p></div>
-                <span className={`pill ${snapshot?.workers?.some((w: any) => w.runtime === 'rust' && w.state === 'online') ? 'pill-green' : 'pill-muted'`}>
+                <span className={snapshot?.workers?.some((w: any) => w.runtime === 'rust' && w.state === 'online') ? 'pill pill-green' : 'pill pill-muted'}>
                   {snapshot?.workers?.filter((w: any) => w.runtime === 'rust').length || 0} CONNECTED
                 </span>
               </div>
