@@ -38,14 +38,16 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
           [req.params.organizationId],
         ),
         query(
-          `select q.max_sandboxes as "maxSandboxes", q.max_vcpu as "maxVcpu",
-                  q.max_runtime_seconds as "maxRuntimeSeconds",
+          `select coalesce(q.max_sandboxes,2) as "maxSandboxes",
+                  coalesce(q.max_vcpu,4) as "maxVcpu",
+                  coalesce(q.max_runtime_seconds,2700) as "maxRuntimeSeconds",
                   count(s.id) filter (where s.status not in ('deleted','failed'))::int as "usedSandboxes",
                   coalesce(sum(s.vcpus) filter (where s.status not in ('deleted','failed')),0)::int as "usedVcpu"
-           from public.sandbox_quotas q
-           left join public.sandbox_instances s on s.organization_id = q.organization_id and s.deleted_at is null
-           where q.organization_id = $1
-           group by q.organization_id`,
+           from public.organizations o
+           left join public.sandbox_quotas q on q.organization_id = o.id
+           left join public.sandbox_instances s on s.organization_id = o.id and s.deleted_at is null
+           where o.id = $1
+           group by o.id,q.organization_id,q.max_sandboxes,q.max_vcpu,q.max_runtime_seconds`,
           [req.params.organizationId],
         ),
       ]);
