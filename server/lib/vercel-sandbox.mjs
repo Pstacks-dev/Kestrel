@@ -33,7 +33,7 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
     const c = credentials();
     const url = new URL(path, API_BASE);
     url.searchParams.set('teamId', c.teamId);
-    if (/^\\/v2\\/sandboxes\\/[^/]+(?:\\?.*)?$/.test(path) && !url.searchParams.has('projectId')) {
+    if (/^\/v2\/sandboxes\/[^/]+(?:\?.*)?$/.test(path) && !url.searchParams.has('projectId')) {
       url.searchParams.set('projectId', c.projectId);
     }
     const response = await fetchImpl(url, {
