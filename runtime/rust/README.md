@@ -84,5 +84,6 @@ Apply migrations in numeric order before deploying the matching control-plane co
 - `014_job_retry_backoff.sql`
 - `015_recovery_backoff.sql`
 - `016_worker_desired_state.sql`
+- `023_deployment_tcp_health_checks.sql`
 
 Artifacts are uploaded directly to Supabase Storage through one-use signed URLs; the Vercel API does not proxy large artifact bodies. Expired upload sessions are cleaned up with the same cron. The artifact lifecycle defaults to no automatic expiry. Set `KESTREL_ARTIFACT_RETENTION_DAYS` to a value from 1 to 3650 to expire newly uploaded artifacts; the protected daily cron removes expired objects from the private Supabase bucket. Set a strong `CRON_SECRET` in the control plane for both lease recovery and artifact cleanup.

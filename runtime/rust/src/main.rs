@@ -32,7 +32,7 @@ struct Job {
 #[serde(rename_all = "camelCase")]
 struct DeploymentConfig {
     environment_id: String, release_id: String, image: String, container_name: String, host_port: u16, container_port: u16,
-    health_path: String, health_timeout_seconds: u64,
+    health_path: String, health_check_type: String, health_timeout_seconds: u64,
     secret_names: Vec<String>, previous_image: Option<String>, previous_container: Option<String>,
 }
 
@@ -320,14 +320,17 @@ async fn docker_action(cfg: &Config, http: &Client, job: &Job, args: &[String], 
     Ok(stdout.trim().to_string())
 }
 
-async fn deployment_health(port: u16, path: &str, timeout_seconds: u64, canceled: &AtomicBool) -> bool {
-    let Ok(http) = Client::builder().timeout(Duration::from_secs(3)).build() else { return false; };
+async fn deployment_health(port: u16, health_type: &str, path: &str, timeout_seconds: u64, canceled: &AtomicBool) -> bool {
+    let http = if health_type == "http" { Client::builder().timeout(Duration::from_secs(3)).build().ok() } else { None };
     let url = format!("http://127.0.0.1:{port}{path}");
     let deadline = time::Instant::now() + Duration::from_secs(timeout_seconds.clamp(5, 300));
     while time::Instant::now() < deadline && !canceled.load(Ordering::Relaxed) {
-        if let Ok(response) = http.get(&url).send().await {
-            if response.status().is_success() { return true; }
-        }
+        let healthy = match health_type {
+            "http" => match http.as_ref() { Some(client) => client.get(&url).send().await.is_ok_and(|r| r.status().is_success()), None => false },
+            "tcp" => tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(("127.0.0.1", port))).await.is_ok_and(|result| result.is_ok()),
+            _ => false,
+        };
+        if healthy { return true; }
         time::sleep(Duration::from_secs(2)).await;
     }
     false
@@ -338,7 +341,8 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
     let image = deployment.image.trim();
     anyhow::ensure!(valid_deployment_image(image), "deployment image reference is invalid");
     anyhow::ensure!(deployment.host_port >= 1024 && deployment.container_port > 0, "deployment port is invalid");
-    anyhow::ensure!(deployment.health_path.starts_with('/') && !deployment.health_path.contains(".."), "deployment health path is invalid");
+    anyhow::ensure!(deployment.health_check_type == "http" || deployment.health_check_type == "tcp", "deployment health check type is invalid");
+    anyhow::ensure!(deployment.health_check_type != "http" || (deployment.health_path.starts_with('/') && !deployment.health_path.contains("..")), "deployment health path is invalid");
     anyhow::ensure!(deployment.environment_id.len() == 36 && deployment.release_id.len() == 36, "deployment identifiers are invalid");
 
     let _ = flush_log(http, cfg, job, "system", &format!("Pulling deployment image {image}")).await;
@@ -413,7 +417,7 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
     let _ = Command::new(&cfg.docker).args(["rm", "-f", &container]).output().await;
     let start_result = docker_action(cfg, http, job, &args, "run").await;
     let healthy = if start_result.is_ok() {
-        deployment_health(deployment.host_port, &deployment.health_path, deployment.health_timeout_seconds, canceled).await
+        deployment_health(deployment.host_port, &deployment.health_check_type, &deployment.health_path, deployment.health_timeout_seconds, canceled).await
     } else { false };
 
     if !healthy {
@@ -444,7 +448,7 @@ async fn run_deployment_inner(http: &Client, cfg: &Config, job: &Job, canceled: 
                     }
                 }
                 if restored_ok {
-                    let restored_health = deployment_health(deployment.host_port, &deployment.health_path, 30, &AtomicBool::new(false)).await;
+                    let restored_health = deployment_health(deployment.host_port, &deployment.health_check_type, &deployment.health_path, 30, &AtomicBool::new(false)).await;
                     if restored_health {
                         let _ = flush_log(http, cfg, job, "system", "New release failed health checks; previous release was restored").await;
                     } else {

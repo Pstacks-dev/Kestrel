@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validImage, validHealthPath, validPublicUrl, workerCanAcceptDeployments } from '../server/routes/deployments.mjs';
+import { validImage, validHealthPath, validHealthCheckType, validPublicUrl, workerCanAcceptDeployments } from '../server/routes/deployments.mjs';
 import { validArtifactName } from '../server/routes/artifacts.mjs';
 
 test('accepts valid registry image references', () => {
@@ -13,6 +13,13 @@ test('rejects unsafe image references', () => {
   assert.equal(validImage('nginx; rm -rf /'), false);
   assert.equal(validImage('../private/image'), false);
   assert.equal(validImage('https://example.com/app'), false);
+});
+
+test('supports HTTP and TCP deployment health checks', () => {
+  assert.equal(validHealthCheckType('http'), true);
+  assert.equal(validHealthCheckType('tcp'), true);
+  assert.equal(validHealthCheckType('icmp'), false);
+  assert.equal(validHealthCheckType(''), false);
 });
 
 test('validates local health-check paths', () => {

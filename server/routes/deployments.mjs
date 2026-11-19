@@ -16,6 +16,8 @@ export function validPublicUrl(value) {
   } catch { return null; }
 }
 
+export function validHealthCheckType(value) { return value === 'http' || value === 'tcp'; }
+
 export function validHealthPath(value) {
   return typeof value === 'string' && value.startsWith('/') &&
     value.length <= 256 && !value.includes('..') &&
@@ -122,7 +124,7 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
       const environments = await query(
         `select e.id, e.name, e.environment_key as "environmentKey", e.worker_id as "workerId",
                 e.host_port as "hostPort", e.container_port as "containerPort",
-                e.health_path as "healthPath", e.health_timeout_seconds as "healthTimeoutSeconds",
+                e.health_path as "healthPath", e.health_check_type as "healthCheckType", e.health_timeout_seconds as "healthTimeoutSeconds",
                 e.public_url as "publicUrl", e.current_release_id as "currentReleaseId",
                 w.hostname as "workerName", w.state as "workerState", w.runtime,
                 current_release.release_number as "currentReleaseNumber",
@@ -145,13 +147,14 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
   app.post('/api/projects/:projectId/deployments', userAuth, async (req, res) => {
     const {
       name, environmentKey, workerId, hostPort, containerPort = 3000,
-      healthPath = '/', healthTimeoutSeconds = 60, publicUrl = null, secretNames = [],
+      healthPath = '/', healthCheckType = 'http', healthTimeoutSeconds = 60, publicUrl = null, secretNames = [],
     } = req.body || {};
     if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 80) return fail(res, 400, 'Environment name must be 1-80 characters');
     if (!['development', 'staging', 'production', 'preview'].includes(environmentKey)) return fail(res, 400, 'Invalid environment type');
     if (!Number.isInteger(Number(hostPort)) || Number(hostPort) < 1024 || Number(hostPort) > 65535) return fail(res, 400, 'Host port must be between 1024 and 65535');
     if (!Number.isInteger(Number(containerPort)) || Number(containerPort) < 1 || Number(containerPort) > 65535) return fail(res, 400, 'Container port must be between 1 and 65535');
-    if (!validHealthPath(healthPath)) return fail(res, 400, 'Health path must be a safe absolute URL path');
+    if (!validHealthCheckType(healthCheckType)) return fail(res, 400, 'Health check type must be HTTP or TCP');
+    if (healthCheckType === 'http' && !validHealthPath(healthPath)) return fail(res, 400, 'Health path must be a safe absolute URL path');
     if (!Number.isInteger(Number(healthTimeoutSeconds)) || Number(healthTimeoutSeconds) < 5 || Number(healthTimeoutSeconds) > 300) return fail(res, 400, 'Health timeout must be between 5 and 300 seconds');
     const normalizedUrl = publicUrl ? validPublicUrl(publicUrl) : null;
     if (publicUrl && !normalizedUrl) return fail(res, 400, 'Public URL must be a valid HTTP or HTTPS URL without credentials');
@@ -179,13 +182,13 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
       }
       const result = await query(
         `insert into public.deployment_environments
-         (project_id, name, environment_key, worker_id, host_port, container_port, health_path,
+         (project_id, name, environment_key, worker_id, host_port, container_port, health_path, health_check_type,
           health_timeout_seconds, public_url, secret_names, created_by)
-         values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          returning id, name, environment_key as "environmentKey", worker_id as "workerId",
                    host_port as "hostPort", container_port as "containerPort", public_url as "publicUrl"`,
         [req.params.projectId, name.trim(), environmentKey, workerId, Number(hostPort), Number(containerPort),
-         healthPath, Number(healthTimeoutSeconds), normalizedUrl, secretNames, req.user.id]
+         healthPath, healthCheckType, Number(healthTimeoutSeconds), normalizedUrl, secretNames, req.user.id]
       );
       res.status(201).json({ environment: result.rows[0] });
     } catch (error) {
