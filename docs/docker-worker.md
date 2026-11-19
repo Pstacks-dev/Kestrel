@@ -35,12 +35,18 @@ The token is shown only once. Never commit it or paste it into source control.
 
 From the repository root, copy `.env.worker.example` to `.env.worker`.
 Set `KESTREL_API_URL` to the public HTTPS base URL of the Kestrel API
-(no trailing slash), then enter the worker ID and one-time token.
+(no trailing slash), then enter the worker ID and one-time token. Keep the
+host-side worker workspace path consistent with the Compose bind mount.
 
 The example uses the `bridge` job network so normal build commands can download
 dependencies. Jobs still run in separate containers with resource limits and
 reduced Linux capabilities. Use `KESTREL_JOB_NETWORK=none` for builds that
 must not access the network.
+
+The Compose file bind-mounts the same host directory into the worker agent and
+passes its host-side path through `KESTREL_WORKER_HOST_WORKDIR`. This is
+required because the Docker daemon runs on the host and cannot resolve a path
+that exists only inside the worker-agent container.
 
 For production, set `KESTREL_JOB_IMAGE` to an immutable image reference pinned
 to a sha256 digest. Do not use a floating tag for production workers.

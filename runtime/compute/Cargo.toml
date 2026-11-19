@@ -1,0 +1,15 @@
+[package]
+name = "kestrel-compute"
+version = "0.1.0"
+edition = "2021"
+description = "Provider-neutral VM orchestration contracts for Kestrel Compute"
+license = "MIT"
+
+[dependencies]
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "net", "process", "rt", "sync", "time"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }

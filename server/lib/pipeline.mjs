@@ -1,3 +1,10 @@
+function safeArtifactPath(value) {
+  if (typeof value !== 'string' || !value || value.length > 512) return false;
+  if (value.startsWith('/') || value.includes('\\') || value.includes('\0') || /^[A-Za-z]:/.test(value)) return false;
+  const parts = value.split('/');
+  return parts.every((part) => part && part !== '.' && part !== '..' && !/[\u0000-\u001f]/.test(part));
+}
+
 export function validatePipelineJobs(jobs) {
   const fail = (message) => {
     throw Object.assign(new Error(message), { status: 400 });
@@ -49,6 +56,7 @@ export function validatePipelineJobs(jobs) {
       cpu,
       timeoutSeconds,
       maxRetries,
+      artifacts: Array.isArray(j.artifacts) ? [...new Set(j.artifacts.map((p) => String(p).trim()).filter(safeArtifactPath))].slice(0, 50) : [],
     };
   });
 

@@ -1,0 +1,113 @@
+name: Kestrel CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, feat/kestrel-compute-providers]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kestrel-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and production build
+        run: npm run check
+
+      - name: Run tests
+        run: npm test
+
+  rust-runtime:
+    name: Test native Rust execution runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Run Rust tests
+        run: cargo test --manifest-path runtime/rust/Cargo.toml
+      - name: Run Rust lints
+        run: cargo clippy --manifest-path runtime/rust/Cargo.toml -- -D warnings
+
+  docker:
+    name: Build and smoke-test worker containers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build worker agent image
+        run: docker build -f docker/worker.Dockerfile -t kestrel-worker:ci .
+
+      - name: Build Rust worker image
+        run: docker build -f docker/worker-rust.Dockerfile -t kestrel-worker-rust:ci .
+
+      - name: Build job runtime image
+        run: docker build -f runtime/images/Dockerfile.node22 -t kestrel-job-node22:ci .
+
+      - name: Smoke-test job runtime shell and Node.js
+        run: docker run --rm kestrel-job-node22:ci sh -lc 'node --version && npm --version'
+
+      - name: Validate worker Compose configuration
+        run: |
+          printf 'KESTREL_WORKER_HOST_WORKDIR=/tmp/kestrel-worker-work\\n' > .env.worker
+          docker compose --env-file .env.worker -f docker-compose.worker.yml config --quiet
+          docker compose --env-file .env.worker -f docker-compose.worker-rust.yml config --quiet
+
+  compute-agent:
+    name: Build and lint trusted Compute host agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Run compute agent tests
+        run: cargo test --manifest-path runtime/compute-agent/Cargo.toml
+      - name: Run compute agent lints
+        run: cargo clippy --manifest-path runtime/compute-agent/Cargo.toml --all-targets -- -D warnings
+      - name: Validate compute bridge firewall script
+        run: bash -n deploy/harden-compute-bridge.sh
+
+  compute-providers:
+    name: Test Kestrel Compute provider contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Run provider contract tests
+        run: cargo test --manifest-path runtime/compute/Cargo.toml
+      - name: Run provider contract lints
+        run: cargo clippy --manifest-path runtime/compute/Cargo.toml --all-targets -- -D warnings

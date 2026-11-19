@@ -5,16 +5,20 @@ import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { redactSecrets } from '../server/lib/security.mjs';
+import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
 const WORKER_ID = process.env.KESTREL_WORKER_ID || `${os.hostname()}-${crypto.randomUUID().slice(0, 5)}`;
 const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KESTREL_WORKDIR || '.kestrel-worker');
+// When the agent runs in a Compose container with the host Docker socket mounted,
+// the Docker daemon needs the host-side path for bind mounts, not the agent's path.
+const HOST_ROOT = path.resolve(process.env.KESTREL_WORKER_HOST_WORKDIR || ROOT);
 const REPO_URL = process.env.KESTREL_REPOSITORY_URL;
 const CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.KESTREL_CONCURRENCY || 1)));
 const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
-const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK || 'none';
+const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK === 'none' ? 'none' : 'bridge';
 const EXECUTOR = process.env.KESTREL_WORKER_EXECUTOR || 'docker'; // 'docker' | 'local' | 'mock'
 
 if (process.env.NODE_ENV === 'production' && !/@sha256:[a-f0-9]{64}$/i.test(JOB_IMAGE) && EXECUTOR === 'docker') {
@@ -41,6 +45,45 @@ async function api(endpoint, body) {
     throw new Error(`${endpoint}: ${r.status} ${text}`);
   }
   return r.json();
+}
+
+async function apiGet(endpoint) {
+  const response = await fetch(`${API}${endpoint}`, {
+    method: 'GET',
+    headers,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${endpoint}: ${response.status} ${text}`);
+  }
+  return response.json();
+}
+
+async function downloadUploadedSource(job, workspace) {
+  const result = await apiGet(`/api/workers/projects/${encodeURIComponent(job.projectId)}/source-files`);
+  const files = Array.isArray(result.files) ? result.files : [];
+  let totalBytes = 0;
+  for (const file of files) {
+    const relative = String(file.path || '').replace(/\\\\/g, '/');
+    const segments = relative.split('/');
+    if (!relative || relative.startsWith('/') || segments.some((part) => !part || part === '.' || part === '..')) {
+      throw new Error('Server returned an unsafe uploaded-source path');
+    }
+    const destination = path.resolve(workspace, ...segments);
+    if (destination !== workspace && !destination.startsWith(workspace + path.sep)) {
+      throw new Error('Uploaded source path escaped the job workspace');
+    }
+    const response = await fetch(file.url);
+    if (!response.ok) throw new Error(`Could not download uploaded source file: ${relative}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > 20 * 1024 * 1024) throw new Error(`Uploaded source file exceeds 20 MiB: ${relative}`);
+    totalBytes += bytes.length;
+    if (totalBytes > 250 * 1024 * 1024) throw new Error('Uploaded source exceeds the 250 MiB job limit');
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.writeFile(destination, bytes, { flag: 'w' });
+    console.log(`[source] Downloaded ${relative} (${bytes.length} bytes)`);
+  }
+  if (!files.length) throw new Error('This uploaded project contains no files');
 }
 
 async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) {
@@ -154,7 +197,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       '--tmpfs',
       '/tmp:rw,nosuid,nodev,noexec,size=512m',
       '--mount',
-      `type=bind,src=${cwd},dst=/workspace`,
+      `type=bind,src=${getDockerHostWorkspacePath(ROOT, HOST_ROOT, cwd)},dst=/workspace`,
       '--workdir',
       '/workspace',
       '--mount',
@@ -174,7 +217,9 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       }
     }
 
-    args.push(JOB_IMAGE, command);
+    // The official Node image entrypoint expects an executable, not a shell command string.
+    // Explicitly invoke a login shell so compound pipeline commands (&&, pipes, env expansion) run correctly.
+    args.push(JOB_IMAGE, 'sh', '-lc', command);
 
     const child = spawn(DOCKER, args, { cwd, shell: false, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let timedOut = false;
@@ -281,30 +326,59 @@ async function runGit(args, cwd, onLine) {
   });
 }
 
-// Check for build artifacts produced in workspace and upload metadata
+// Upload real artifact bytes to private object storage through the authenticated control plane.
 async function collectArtifacts(job, workspace) {
-  const candidateDirs = ['dist', 'build', 'artifacts'];
-  for (const dir of candidateDirs) {
-    const p = path.join(workspace, dir);
-    try {
-      const stat = await fs.stat(p);
-      if (stat.isDirectory()) {
-        const files = await fs.readdir(p);
-        for (const file of files.slice(0, 10)) {
-          const filePath = path.join(p, file);
-          const fstat = await fs.stat(filePath);
-          if (fstat.isFile()) {
-            await api(`/api/workers/jobs/${job.id}/artifacts`, {
-              leaseToken: job.leaseToken,
-              name: `${dir}/${file}`,
-              objectKey: `runs/${job.runId}/${job.id}/${dir}/${file}`,
-              sizeBytes: fstat.size,
-              contentType: file.endsWith('.html') ? 'text/html' : file.endsWith('.js') ? 'application/javascript' : 'application/octet-stream',
-            }).catch(() => {});
-          }
-        }
+  const roots = ['dist', 'build', 'artifacts'];
+  const maxFiles = 50;
+  const maxTotal = 250 * 1024 * 1024;
+  const maxFile = 100 * 1024 * 1024;
+  let uploaded = 0;
+  let total = 0;
+
+  async function walk(directory, relativeRoot) {
+    if (uploaded >= maxFiles || total >= maxTotal) return;
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (uploaded >= maxFiles || total >= maxTotal) break;
+      const absolute = path.join(directory, entry.name);
+      const relative = path.posix.join(relativeRoot, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        await walk(absolute, relative);
+        continue;
       }
-    } catch {}
+      if (!entry.isFile()) continue;
+      const stat = await fs.stat(absolute);
+      if (!stat.size || stat.size > maxFile || total + stat.size > maxTotal) continue;
+      const bytes = await fs.readFile(absolute);
+      const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+      const session = await api(`/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/upload-url`, {
+        leaseToken: job.leaseToken, name: relative, sizeBytes: bytes.length,
+        sha256, contentType: 'application/octet-stream',
+      });
+      const response = await fetch(session.uploadUrl, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/octet-stream', 'x-upsert': 'false' },
+        body: bytes,
+      });
+      if (!response.ok) throw new Error(`Artifact object upload failed for ${relative}: ${response.status}`);
+      await api(`/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/finalize`, {
+        leaseToken: job.leaseToken, sessionId: session.sessionId,
+      });
+      uploaded += 1;
+      total += bytes.length;
+      console.log(`[artifact] Uploaded ${relative} (${bytes.length} bytes)`);
+    }
+  }
+
+  for (const root of roots) {
+    const absolute = path.join(workspace, root);
+    try {
+      const stat = await fs.lstat(absolute);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) await walk(absolute, root);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
   }
 }
 
@@ -358,9 +432,8 @@ async function execute(job) {
 
   const leaseHeartbeat = setInterval(async () => {
     try {
-      await api(`/api/workers/jobs/${job.id}/logs`, {
+      await api(`/api/workers/jobs/${job.id}/lease`, {
         leaseToken: job.leaseToken,
-        entries: [],
       });
     } catch (e) {
       if (e.message.includes('409') || e.message.includes('expired')) {
@@ -370,17 +443,21 @@ async function execute(job) {
   }, 10000);
 
   try {
-    const repository = /^https:\/\//.test(job.repositoryUrl || '') ? job.repositoryUrl : REPO_URL || '';
-    if (repository && EXECUTOR !== 'mock') {
+    if (job.sourceType === 'upload' && EXECUTOR !== 'mock') {
+      await downloadUploadedSource(job, workspace);
+    } else {
+      const repository = /^https:\/\//.test(job.repositoryUrl || '') ? job.repositoryUrl : REPO_URL || '';
+      if (repository && EXECUTOR !== 'mock') {
       const clone = await runGit(
         ['clone', '--depth', '1', '--branch', String(job.branch || 'main'), '--', repository, '.'],
         workspace,
         (s, m) => console.log(`[clone:${s}] ${m}`)
       );
-      if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
+        if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
+      }
     }
 
-    if (job.commitSha && EXECUTOR !== 'mock') {
+    if (job.commitSha && EXECUTOR !== 'mock' && job.sourceType !== 'upload') {
       if (!/^[a-f0-9]{7,64}$/i.test(job.commitSha)) throw new Error('Invalid commit SHA format');
       const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${m}`));
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');

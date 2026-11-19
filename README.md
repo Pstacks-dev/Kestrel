@@ -32,7 +32,7 @@ Kestrel is a production-hardened, distributed CI/CD platform built with:
 
 ---
 
-## Completed & Production-Hardened Features
+## Implemented Product Capabilities (Code-Level; Deployment Verification Required)
 
 1. **Authentication & Session Security**:
    - Supabase Auth sign-up / sign-in with server-side JWT verification on every authenticated request.
@@ -57,10 +57,21 @@ Kestrel is a production-hardened, distributed CI/CD platform built with:
 6. **Live Log Viewer & Real-time Feedback**:
    - Database-backed streaming log ingest and query endpoint (`GET /api/jobs/:jobId/logs`).
    - Interactive log viewer with stdout/stderr filtering, substring search, auto-scroll, copy-to-clipboard, and live polling.
-7. **Build Artifacts**:
+7. **Native Project Files**:
+   - Create projects from Git repositories or upload-only source projects.
+   - Upload individual files or complete folders into a private Supabase Storage bucket through authenticated Kestrel API routes.
+   - Workspace membership and developer roles are checked server-side; paths are normalized and traversal attempts rejected; per-file uploads are limited to 20 MiB.
+   - Uploaded-source projects can be browsed and downloaded. Workers receive short-lived, organization-scoped source download URLs and stage files into the isolated job workspace, with limits of 500 files and 250 MiB per run.
+8. **Build Artifacts**:
    - Automatic scanning of `dist/`, `build/`, and `artifacts/` directories on job completion.
-   - Artifact registration with SHA-256 checksums and MIME type classification.
-8. **Automated Migrations & Preflights**:
+   - Direct signed uploads to private Supabase Storage, SHA-256 metadata, authenticated downloads, deletion, and optional retention cleanup.
+9. **Kestrel Compute (provider integrations; host validation pending)**:
+   - Workspace-scoped VM inventory, create/start/stop/delete operations, durable operation leases and quota enforcement.
+   - Provider pools for Incus, Firecracker and KubeVirt, selected by region and available CPU, memory, disk and instance capacity.
+   - Trusted Rust compute host agent; provider credentials stay on the host and node tokens are stored as SHA-256 hashes.
+   - The existing workspace interface includes a Compute page for VM creation, resource quota usage and lifecycle controls.
+   - A real Linux/KVM provider node is required. No hosted node has been provisioned and live VM lifecycle has not yet been verified.
+10. **Automated Migrations & Preflights**:
    - `scripts/migrate.mjs` applies ordered, transactional SQL migrations with idempotency tracking.
    - `scripts/check-env.mjs` verifies database URLs, SSL policies, and production security rules.
 
@@ -128,14 +139,50 @@ KESTREL_WORKER_WORKDIR=/srv/kestrel-worker
 KESTREL_JOB_IMAGE=node:22-bookworm-slim
 ```
 
-4. Start the worker agent:
+4. Start the existing Node worker when using the legacy agent:
 ```bash
 npm run start:worker
 ```
 
+5. For the native Rust worker, first install the egress firewall from `deploy/harden-worker-egress.sh` as described in `runtime/rust/README.md`. Create `.env.worker` on the Linux host:
+```bash
+NODE_ENV=production
+KESTREL_API_URL=https://your-api-domain.com
+KESTREL_WORKER_ID=wrk_...
+KESTREL_WORKER_TOKEN=your-provisioned-token
+KESTREL_WORKER_WORKDIR=/var/lib/kestrel/work
+KESTREL_WORKER_HOST_WORKDIR=/srv/kestrel-worker/work
+KESTREL_CONCURRENCY=2
+KESTREL_JOB_IMAGE=ghcr.io/your-org/kestrel-job-node22@sha256:YOUR_64_HEX_DIGEST
+KESTREL_JOB_NETWORK=bridge
+KESTREL_DOCKER_BIN=docker
+```
+
+Set `KESTREL_WORKER_HOST_WORKDIR=/srv/kestrel-worker/work` in the host shell or root Compose `.env` as well, because Compose uses it to resolve the bind mount. Then build and start the Rust worker:
+```bash
+docker compose -f docker-compose.worker-rust.yml up -d --build
+docker compose -f docker-compose.worker-rust.yml logs -f
+```
+
+The worker registers itself with `runtime=rust`; deployment environments can then be assigned to it. The job image must be published and pinned to its real immutable digest before production startup.
+
 ---
 
-## 3. Vercel + Supabase Deployment
+## 3. Kestrel Compute provider hosts
+
+Compute hosts are separate from the Vercel control plane and ordinary Docker
+build workers. Apply migration 017, provision a provider node through the
+platform-admin compute API, then run the trusted Rust compute agent on the
+matching Linux/KVM host. Provider-specific environment variables and host
+requirements are documented in runtime/compute/README.md. Do not place
+provider credentials or API sockets in customer workloads.
+
+The workspace Compute page queues VM operations and displays database-backed
+status. A VM remains provisioning until a registered host agent claims the
+operation and reports the provider result. No provider VM is created by the
+Vercel serverless process itself.
+
+## 4. Vercel + Supabase Deployment
 
 Deploying the frontend and short-lived HTTP API to Vercel:
 
@@ -145,12 +192,14 @@ Deploying the frontend and short-lived HTTP API to Vercel:
    - `VITE_SUPABASE_ANON_KEY`: Supabase publishable/anon key
    - `SUPABASE_URL`: Supabase Project URL
    - `SUPABASE_ANON_KEY`: Supabase anon key
+   - `SUPABASE_SERVICE_ROLE_KEY`: server-only Supabase service-role key for private project file storage (never expose as a VITE_ variable)
    - `SUPABASE_DB_URL`: Supabase transaction pooler URL (port 6543)
    - `DB_POOL_MAX`: `1`
-   - `DB_SSL_REJECT_UNAUTHORIZED`: `true`
+   - `SUPABASE_DB_SSL_CA`: Supabase database CA certificate in PEM format (recommended; enables verified TLS)
+   - `DB_SSL_REJECT_UNAUTHORIZED`: `false` only as a temporary compatibility fallback if the pooler's certificate chain cannot be verified; TLS encryption remains enabled
    - `KESTREL_ENCRYPTION_KEY`: 32-character secret key for AES-256-GCM
    - `CRON_SECRET`: Secret token for Vercel Cron
-3. Vercel Cron automatically calls `/api/cron/recovery` every minute to clean up stale worker leases.
+3. Vercel Cron calls `/api/cron/recovery` daily for stale lease recovery and `/api/cron/artifacts/cleanup` daily for expired uploads/artifacts. Set a strong `CRON_SECRET`; both endpoints reject requests if it is missing.
 4. **Important**: Build workers must run on a separate, dedicated Linux host with Docker Engine, never inside Vercel Serverless Functions.
 
 ---
@@ -161,9 +210,15 @@ Deploying the frontend and short-lived HTTP API to Vercel:
 | :--- | :--- | :--- |
 | `SUPABASE_URL` | Server | Supabase API URL |
 | `SUPABASE_ANON_KEY` | Server | Supabase public/anon key (used for server-side user JWT validation) |
-| `SUPABASE_DB_URL` | Server | PostgreSQL connection string |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server only | Private project file storage; never expose to the browser |
+| `SUPABASE_DB_URL` | Server | Supabase transaction-pooler PostgreSQL connection string |
+| `SUPABASE_DB_SSL_CA` | Server (optional) | Supabase database CA certificate PEM; when set, certificate verification is enforced |
+| `DB_SSL_REJECT_UNAUTHORIZED` | Server (optional) | Set to `false` only as a temporary TLS certificate-verification fallback; never disable TLS itself |
 | `KESTREL_ENCRYPTION_KEY` | Server | AES-256-GCM key for encrypting project secrets at rest |
-| `CRON_SECRET` | Server (Vercel) | Optional secret protecting `/api/cron/recovery` |
+| `CRON_SECRET` | Server (Vercel) | Required secret protecting worker recovery and artifact cleanup cron routes |
+| `KESTREL_ARTIFACT_RETENTION_DAYS` | Server (optional) | 1-3650 days; unset means artifacts do not expire automatically |
+| `KESTREL_JOB_NETWORK` | Worker | `bridge` (requires the host egress firewall) or `none` |
+| `KESTREL_DOCKER_BIN` | Worker | Docker CLI path used by the Rust worker |
 | `KESTREL_GIT_ALLOWED_HOSTS`| Server | Comma-separated list of allowed Git hostnames (`github.com,gitlab.com`) |
 | `VITE_SUPABASE_URL` | Web Frontend | Supabase Project URL |
 | `VITE_SUPABASE_ANON_KEY`| Web Frontend | Supabase public key for frontend auth |
@@ -192,6 +247,12 @@ npm run check
 
 ## 6. Known Limitations & Production Notes
 
-- **Kernel Sharing**: Docker containers share the host Linux kernel. For untrusted, hostile multi-tenant public PRs, deploy workers with microVM isolation (e.g. Firecracker, Kata Containers, or gVisor).
-- **Network Egress**: Jobs default to `--network none` for security. Workloads requiring dependency downloads should configure a controlled egress proxy.
-- **Serverless API Timeout**: On Vercel Hobby plans, function maximum duration is 15 seconds. Heavy control plane workflows should be sized accordingly.
+- **Worker provisioning**: No hosted Kestrel worker is included in this repository deployment. Customer jobs execute only when a dedicated Linux Docker worker has been provisioned, registered, and is online. Without one, jobs remain queued. The Rust runtime is additive; Node workers remain available for build jobs.
+- **Worker recovery**: Migration 016 separates administrator intent from transient worker liveness. A worker marked offline after a missed heartbeat can return online after it reconnects; an administrator-disabled or draining worker remains in that state until explicitly resumed.
+- **Artifact delivery**: Direct signed upload, finalization, authenticated download/delete, SHA-256 metadata and optional expiry are implemented in code. Run the ordered migrations with `npm run migrate`, configure the server-only Supabase service-role key and a strong `CRON_SECRET`, then verify Storage connectivity in the target Supabase project.
+- **Source-to-image builds**: Deployment APIs currently accept an existing container image reference. Kestrel does not yet build arbitrary customer Dockerfiles into registry images. That step is intentionally gated on an isolated/rootless or remote builder; running untrusted Dockerfiles through the worker host Docker socket would undermine tenant isolation.
+- **Deployments and rollback**: The first container-image deployment engine supports per-project environments, Rust-worker assignment, release history, health checks, retries and rollback to the prior healthy image. It publishes a host port and has a short interruption during switching; managed TLS ingress, zero-downtime blue/green switching and private-registry credential management are not yet included. Production releases require immutable image digests.
+- **Usage controls**: Usage metering and quotas are not part of this implementation pass.
+- **Kernel sharing**: Docker containers share the host Linux kernel. The worker egress firewall blocks host-local/private/link-local destinations, and jobs run with dropped capabilities, no-new-privileges, read-only roots and resource limits. Stronger isolation (gVisor, Kata or Firecracker) is still required before accepting hostile public multi-tenant workloads.
+- **Network egress**: Job containers default to Docker bridge networking for package downloads. Install `deploy/harden-worker-egress.sh` on each dedicated worker host; use `KESTREL_JOB_NETWORK=none` for offline jobs.
+- **Serverless API timeout**: The Vercel function maximum duration is configured to 15 seconds. Heavy workflows run on dedicated workers, not inside the serverless API request.

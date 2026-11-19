@@ -1,4 +1,5 @@
 import Admin from './Admin';
+import { ProjectFiles } from './components/ProjectFiles';
 import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -48,6 +49,8 @@ type Page =
   | 'overview'
   | 'pipelines'
   | 'runs'
+  | 'deployments'
+  | 'compute'
   | 'projects'
   | 'artifacts'
   | 'settings';
@@ -56,7 +59,9 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'overview', label: 'Overview', icon: Activity, group: 'WORKSPACE' },
   { id: 'pipelines', label: 'Pipelines', icon: Workflow, group: 'WORKSPACE' },
   { id: 'runs', label: 'Run history', icon: Clock3, group: 'WORKSPACE' },
+  { id: 'deployments', label: 'Deployments', icon: Server, group: 'WORKSPACE' },
   { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
+  { id: 'compute', label: 'Compute', icon: Cpu, group: 'INFRASTRUCTURE' },
   { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
 ];
@@ -554,6 +559,31 @@ function AppShell({ page }: { page: Page }) {
   const [newSecretName, setNewSecretName] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
   const [webhookConfig, setWebhookConfig] = useState<{ webhookSecret: string; events: string[] } | null>(null);
+  const [deploymentEnvironments, setDeploymentEnvironments] = useState<any[]>([]);
+  const [deploymentReleases, setDeploymentReleases] = useState<Record<string, any[]>>({});
+  const [deploymentName, setDeploymentName] = useState('Production');
+  const [deploymentEnvironmentKey, setDeploymentEnvironmentKey] = useState('production');
+  const [deploymentWorkerId, setDeploymentWorkerId] = useState('');
+  const [deploymentHostPort, setDeploymentHostPort] = useState('8080');
+  const [deploymentContainerPort, setDeploymentContainerPort] = useState('3000');
+  const [deploymentHealthPath, setDeploymentHealthPath] = useState('/');
+  const [deploymentPublicUrl, setDeploymentPublicUrl] = useState('');
+  const [deploymentImage, setDeploymentImage] = useState('');
+
+  // Kestrel Compute
+  const [computeInstances, setComputeInstances] = useState<any[]>([]);
+  const [computeQuota, setComputeQuota] = useState<any>(null);
+  const [computeSnapshots, setComputeSnapshots] = useState<Record<string, any[]>>({});
+  const [computeProvider, setComputeProvider] = useState('incus');
+  const [computeName, setComputeName] = useState('vm-01');
+  const [computeImage, setComputeImage] = useState('ubuntu:24.04');
+  const [computeVcpus, setComputeVcpus] = useState('2');
+  const [computeMemory, setComputeMemory] = useState('2048');
+  const [computeDisk, setComputeDisk] = useState('30');
+  const [computeRegion, setComputeRegion] = useState('');
+  const [computeSshKey, setComputeSshKey] = useState('');
+  const [computeMessage, setComputeMessage] = useState('');
+  const [computeBusy, setComputeBusy] = useState(false);
 
   const active = nav.find((n) => n.id === page) || nav[0];
 
@@ -706,7 +736,7 @@ function AppShell({ page }: { page: Page }) {
         body: JSON.stringify({
           organizationId,
           name: projectName,
-          repo: projectRepo,
+          repo: projectRepo.trim() || null,
           defaultBranch: projectBranch,
         }),
       });
@@ -813,6 +843,266 @@ function AppShell({ page }: { page: Page }) {
       });
       connect();
     } catch {}
+  }
+
+  async function loadDeployments(projectId = selectedProject) {
+    if (!projectId || !accessToken) return;
+    try {
+      const response = await fetch(`${api}/projects/${projectId}/deployments`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load deployments');
+      const environments = data.environments || [];
+      setDeploymentEnvironments(environments);
+      const histories = await Promise.all(environments.map(async (environment: any) => {
+        const r = await fetch(`${api}/deployments/${environment.id}/releases`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const body = await r.json();
+        return [environment.id, r.ok ? body.releases || [] : []] as const;
+      }));
+      setDeploymentReleases(Object.fromEntries(histories));
+    } catch (error: any) {
+      setActionMessage(error.message || 'Could not load deployments');
+    }
+  }
+
+  async function createDeploymentEnvironment(e: any) {
+    e.preventDefault();
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/projects/${selectedProject}/deployments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          name: deploymentName, environmentKey: deploymentEnvironmentKey,
+          workerId: deploymentWorkerId, hostPort: Number(deploymentHostPort),
+          containerPort: Number(deploymentContainerPort), healthPath: deploymentHealthPath,
+          publicUrl: deploymentPublicUrl || null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not create deployment environment');
+      setActionMessage('Deployment environment created.');
+      await loadDeployments(selectedProject);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Deployment environment creation failed');
+    }
+  }
+
+  async function deployImage(environmentId: string) {
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/deployments/${environmentId}/releases`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ image: deploymentImage.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not queue deployment');
+      setActionMessage(`Release #${data.release.releaseNumber} queued. It will run on the assigned Rust worker.`);
+      await loadDeployments(selectedProject);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Deployment request failed');
+    }
+  }
+
+  async function rollbackDeployment(environmentId: string) {
+    if (!window.confirm('Queue a rollback to the previous healthy release?')) return;
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/deployments/${environmentId}/rollback`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not queue rollback');
+      setActionMessage(`Rollback release #${data.release.releaseNumber} queued.`);
+      await loadDeployments(selectedProject);
+    } catch (error: any) {
+      setActionMessage(error.message || 'Rollback request failed');
+    }
+  }
+
+  async function loadCompute() {
+    if (!organizationId || !accessToken) return;
+    try {
+      const [instancesResponse, quotaResponse] = await Promise.all([
+        fetch(`${api}/compute/instances?organizationId=${organizationId}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
+        fetch(`${api}/compute/quotas?organizationId=${organizationId}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
+      ]);
+      const instancesBody = await instancesResponse.json();
+      const quotaBody = await quotaResponse.json();
+      if (!instancesResponse.ok) throw new Error(instancesBody.error || 'Could not load VMs');
+      if (!quotaResponse.ok) throw new Error(quotaBody.error || 'Could not load compute quota');
+      const instances = instancesBody.instances || [];
+      setComputeInstances(instances);
+      setComputeQuota(quotaBody.quota || null);
+      const snapshots = await Promise.all(instances.map(async (vm: any) => {
+        const response = await fetch(`${api}/compute/instances/${vm.id}/snapshots`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const body = await response.json();
+        return [vm.id, response.ok ? body.snapshots || [] : []] as const;
+      }));
+      setComputeSnapshots(Object.fromEntries(snapshots));
+    } catch (error: any) {
+      setComputeMessage(error.message || 'Could not load compute resources');
+    }
+  }
+
+  async function createComputeInstance(e: any) {
+    e.preventDefault();
+    setComputeBusy(true);
+    setComputeMessage('');
+    try {
+      const response = await fetch(`${api}/compute/instances`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          organizationId, provider: computeProvider, name: computeName, image: computeImage,
+          vcpus: Number(computeVcpus), memoryMiB: Number(computeMemory), diskGiB: Number(computeDisk),
+          region: computeRegion || null, sshPublicKey: computeSshKey.trim() || null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not queue VM creation');
+      setComputeMessage(`VM ${computeName} queued for provisioning. Its status will update as the provider host responds.`);
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || 'VM creation failed');
+    } finally {
+      setComputeBusy(false);
+    }
+  }
+
+  async function createComputeSnapshot(instanceId: string) {
+    const name = window.prompt('Snapshot name (lowercase letters, numbers and hyphens)');
+    if (!name) return;
+    try {
+      const response = await fetch(`${api}/compute/instances/${instanceId}/snapshots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ name }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not create snapshot');
+      setComputeMessage(`Snapshot ${name} queued.`);
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || 'Snapshot creation failed');
+    }
+  }
+
+  async function restoreComputeSnapshot(snapshotId: string) {
+    if (!window.confirm('Restore this snapshot? Current VM data will be replaced.')) return;
+    try {
+      const response = await fetch(`${api}/compute/snapshots/${snapshotId}/restore`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not restore snapshot');
+      setComputeMessage('Snapshot restore queued.');
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || 'Snapshot restore failed');
+    }
+  }
+
+  async function deleteComputeSnapshot(snapshotId: string) {
+    if (!window.confirm('Delete this snapshot permanently?')) return;
+    try {
+      const response = await fetch(`${api}/compute/snapshots/${snapshotId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not delete snapshot');
+      setComputeMessage('Snapshot deletion queued.');
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || 'Snapshot deletion failed');
+    }
+  }
+
+  async function copySshCommand(ip: string) {
+    try {
+      await navigator.clipboard.writeText(`ssh kestrel@${ip}`);
+      setComputeMessage('SSH command copied to clipboard.');
+    } catch {
+      setComputeMessage(`SSH command: ssh kestrel@${ip}`);
+    }
+  }
+
+  async function computeInstanceAction(instanceId: string, action: 'start' | 'stop' | 'delete') {
+    if (action === 'delete' && !window.confirm('Delete this virtual machine and release its allocated capacity?')) return;
+    setComputeMessage('');
+    try {
+      const response = await fetch(`${api}/compute/instances/${instanceId}/actions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Could not ${action} VM`);
+      setComputeMessage(`VM ${action} request queued.`);
+      await loadCompute();
+    } catch (error: any) {
+      setComputeMessage(error.message || `VM ${action} failed`);
+    }
+  }
+
+  useEffect(() => {
+    if (page !== 'compute' || !organizationId || !accessToken) return;
+    loadCompute();
+    const timer = setInterval(loadCompute, 4000);
+    return () => clearInterval(timer);
+  }, [page, organizationId, accessToken, api]);
+
+  useEffect(() => {
+    if (page !== 'deployments' || !selectedProject || !accessToken) return;
+    loadDeployments(selectedProject);
+    const timer = setInterval(() => loadDeployments(selectedProject), 5000);
+    return () => clearInterval(timer);
+  }, [page, selectedProject, accessToken]);
+
+  async function downloadArtifact(artifactId: string) {
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/artifacts/${artifactId}/download`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not prepare artifact download');
+      const link = document.createElement('a');
+      link.href = data.url;
+      link.download = data.name || 'kestrel-artifact';
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error: any) {
+      setActionMessage(error.message || 'Artifact download failed');
+    }
+  }
+
+  async function deleteArtifact(artifactId: string) {
+    if (!window.confirm('Permanently delete this stored artifact?')) return;
+    setActionMessage('');
+    try {
+      const response = await fetch(`${api}/artifacts/${artifactId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not delete artifact');
+      setActionMessage('Artifact deleted.');
+      await connect();
+    } catch (error: any) {
+      setActionMessage(error.message || 'Artifact deletion failed');
+    }
   }
 
   const counts = useMemo(
@@ -1278,12 +1568,11 @@ function AppShell({ page }: { page: Page }) {
                   />
                 </label>
                 <label>
-                  Repository URL
+                  Repository URL (optional)
                   <input
                     value={projectRepo}
                     onChange={(e) => setProjectRepo(e.target.value)}
                     placeholder="https://github.com/org/repo.git"
-                    required
                   />
                 </label>
                 <label>
@@ -1311,21 +1600,24 @@ function AppShell({ page }: { page: Page }) {
               </div>
               {snapshot?.projects?.length ? (
                 snapshot.projects.map((p: any) => (
-                  <div className="table-row justify-between" key={p.id}>
-                    <div className="flex items-center gap-3">
-                      <Github size={18} />
-                      <div>
-                        <b>{p.name}</b>
-                        <small>
-                          {p.repo} · {p.defaultBranch}
-                        </small>
+                  <div className="project-entry" key={p.id}>
+                    <div className="table-row justify-between">
+                      <div className="flex items-center gap-3">
+                        <Github size={18} />
+                        <div>
+                          <b>{p.name}</b>
+                          <small>
+                            {p.repo || 'Uploaded source'} · {p.defaultBranch || 'main'}
+                          </small>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Button kind="light" onClick={() => openProjectSettings(p.id)}>
+                          <KeyRound size={13} /> Secrets & Webhook
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <Button kind="light" onClick={() => openProjectSettings(p.id)}>
-                        <KeyRound size={13} /> Secrets & Webhook
-                      </Button>
-                    </div>
+                    <ProjectFiles projectId={p.id} accessToken={accessToken} apiBase={api} />
                   </div>
                 ))
               ) : (
@@ -1430,6 +1722,228 @@ function AppShell({ page }: { page: Page }) {
           </div>
         )}
 
+        {/* DEPLOYMENTS */}
+        {page === 'deployments' && !inspectedRun && (
+          <div className="page-content">
+            <PageHeading
+              eyebrow="WORKSPACE / DEPLOYMENTS"
+              title="Deployment environments"
+              desc="Release container images to assigned Rust workers, verify health and roll back to the previous healthy release."
+            />
+            <div className="panel deployment-project-panel">
+              <div className="panel-head">
+                <div><h3>Project scope</h3><p>Choose the project whose environments you want to manage.</p></div>
+              </div>
+              <div className="deployment-form-grid">
+                <label>Project
+                  <select value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)}>
+                    {(snapshot?.projects || []).map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-head">
+                <div><h3>Create environment</h3><p>Assign a published host port on a Rust execution worker.</p></div>
+                <span className="pill pill-muted">CONTAINER DEPLOYMENT</span>
+              </div>
+              {snapshot?.workers?.some((w: any) => w.runtime === 'rust') ? (
+                <form className="deployment-form-grid" onSubmit={createDeploymentEnvironment}>
+                  <label>Environment name
+                    <input value={deploymentName} onChange={(e) => setDeploymentName(e.target.value)} required maxLength={80} />
+                  </label>
+                  <label>Environment type
+                    <select value={deploymentEnvironmentKey} onChange={(e) => setDeploymentEnvironmentKey(e.target.value)}>
+                      <option value="development">Development</option><option value="staging">Staging</option>
+                      <option value="production">Production</option><option value="preview">Preview</option>
+                    </select>
+                  </label>
+                  <label>Rust worker
+                    <select value={deploymentWorkerId} onChange={(e) => setDeploymentWorkerId(e.target.value)} required>
+                      <option value="">Choose a Rust worker</option>
+                      {snapshot.workers.filter((w: any) => w.runtime === 'rust').map((w: any) => (
+                        <option key={w.id} value={w.id}>{w.hostname} · {w.state}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>Published host port
+                    <input type="number" min="1024" max="65535" value={deploymentHostPort} onChange={(e) => setDeploymentHostPort(e.target.value)} required />
+                  </label>
+                  <label>Container port
+                    <input type="number" min="1" max="65535" value={deploymentContainerPort} onChange={(e) => setDeploymentContainerPort(e.target.value)} required />
+                  </label>
+                  <label>Health-check path
+                    <input value={deploymentHealthPath} onChange={(e) => setDeploymentHealthPath(e.target.value)} required placeholder="/" />
+                  </label>
+                  <label className="deployment-wide">Public URL (optional)
+                    <input value={deploymentPublicUrl} onChange={(e) => setDeploymentPublicUrl(e.target.value)} placeholder="https://app.example.com" />
+                  </label>
+                  <div className="deployment-wide"><Button type="submit" disabled={!selectedProject || !deploymentWorkerId}>Create environment <Plus size={14} /></Button></div>
+                </form>
+              ) : (
+                <div className="deployment-empty">
+                  <b>No Rust workers are connected to this workspace.</b>
+                  <p>Deployment environments require an online, registered Rust worker. Existing Node workers can continue running build pipelines.</p>
+                </div>
+              )}
+            </div>
+
+            {actionMessage && <div className="action-message deployment-message">{actionMessage}</div>}
+
+            {deploymentEnvironments.length ? deploymentEnvironments.map((environment: any) => (
+              <section className="panel deployment-environment" key={environment.id}>
+                <div className="panel-head">
+                  <div>
+                    <h3>{environment.name} <span className="deployment-tag">{environment.environmentKey}</span></h3>
+                    <p>{environment.workerName} · Worker {environment.workerState} · Port {environment.hostPort}:{environment.containerPort}</p>
+                  </div>
+                  <span className={`pill ${environment.currentReleaseStatus === 'healthy' ? 'pill-green' : 'pill-muted'}`}>
+                    {environment.pendingReleaseStatus || environment.currentReleaseStatus || 'NOT DEPLOYED'}
+                  </span>
+                </div>
+                <div className="deployment-meta">
+                  <span>Health path: <b>{environment.healthPath}</b></span>
+                  <span>Current image: <b>{environment.currentImage || 'None'}</b></span>
+                  <span>Last health check: <b>{environment.lastHealthCheck ? new Date(environment.lastHealthCheck).toLocaleString() : 'Not checked'}</b></span>
+                  {environment.publicUrl && <a href={environment.publicUrl} target="_blank" rel="noreferrer">Open application <ArrowUpRight size={13} /></a>}
+                </div>
+                <div className="deployment-release-actions">
+                  <input value={deploymentImage} onChange={(e) => setDeploymentImage(e.target.value)} placeholder="Container image, e.g. ghcr.io/org/app:1.2.0" />
+                  <Button onClick={() => deployImage(environment.id)} disabled={!deploymentImage.trim() || ['queued','deploying'].includes(environment.pendingReleaseStatus)}>Deploy image <Play size={13} /></Button>
+                  <Button kind="light" onClick={() => rollbackDeployment(environment.id)} disabled={!environment.currentReleaseId || ['queued','deploying'].includes(environment.currentReleaseStatus)}>Rollback</Button>
+                </div>
+                <div className="deployment-history">
+                  <b>Release history</b>
+                  {(deploymentReleases[environment.id] || []).length ? (deploymentReleases[environment.id] || []).map((release: any) => (
+                    <div className="table-row" key={release.id}>
+                      <StatusIndicator status={release.status === 'healthy' ? 'succeeded' : release.status === 'failed' ? 'failed' : 'running'} />
+                      <div className="flex-1"><b>Release #{release.releaseNumber}</b><small>{release.image} · {release.status}{release.rollbackOf ? ' · Rollback' : ''}</small></div>
+                      <span className="row-meta">{release.deployedAt ? new Date(release.deployedAt).toLocaleString() : new Date(release.createdAt).toLocaleString()}</span>
+                    </div>
+                  )) : <p className="deployment-muted">No releases yet.</p>}
+                </div>
+              </section>
+            )) : (
+              <div className="panel deployment-empty"><b>No deployment environments configured.</b><p>Create an environment above after connecting a Rust worker.</p></div>
+            )}
+          </div>
+        )}
+
+        {/* COMPUTE */}
+        {page === 'compute' && !inspectedRun && (
+          <div className="page-content">
+            <PageHeading
+              eyebrow="INFRASTRUCTURE / COMPUTE"
+              title="Virtual machines"
+              desc="Create and manage VMs on dedicated Kestrel provider hosts. Provisioning is asynchronous and depends on an online host with available capacity."
+            />
+            {computeQuota && (
+              <div className="metric-grid">
+                {[
+                  { label: 'VM instances', used: computeQuota.usedInstances, max: computeQuota.maxInstances, unit: '' },
+                  { label: 'vCPU', used: computeQuota.usedVcpu, max: computeQuota.maxVcpu, unit: '' },
+                  { label: 'Memory', used: computeQuota.usedMemoryMiB, max: computeQuota.maxMemoryMiB, unit: ' MiB' },
+                  { label: 'Storage', used: computeQuota.usedDiskGiB, max: computeQuota.maxDiskGiB, unit: ' GiB' },
+                ].map((item) => (
+                  <div className="metric-card" key={item.label}>
+                    <div><span>{item.label}</span><Cpu size={16} /></div>
+                    <strong>{item.used}{item.unit}</strong>
+                    <small>of {item.max}{item.unit} allocated</small>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="panel">
+              <div className="panel-head">
+                <div><h3>Create a virtual machine</h3><p>Choose an available provider pool and specify the guest resources.</p></div>
+                <span className="pill pill-muted">ASYNC PROVISIONING</span>
+              </div>
+              <form className="deployment-form-grid" onSubmit={createComputeInstance}>
+                <label>Provider
+                  <select value={computeProvider} onChange={(e) => {
+                    setComputeProvider(e.target.value);
+                    setComputeImage(e.target.value === 'incus' ? 'ubuntu:24.04' : e.target.value === 'firecracker' ? 'ubuntu-24.04.ext4' : 'quay.io/containerdisks/ubuntu:24.04');
+                  }}>
+                    <option value="incus">Incus · General-purpose VM</option>
+                    <option value="firecracker">Firecracker · MicroVM</option>
+                    <option value="kubevirt">KubeVirt · Kubernetes VM</option>
+                  </select>
+                </label>
+                <label>VM name
+                  <input value={computeName} onChange={(e) => setComputeName(e.target.value)} pattern="[a-z0-9][a-z0-9-]{0,61}[a-z0-9]" minLength={1} maxLength={63} required />
+                </label>
+                <label>Image / rootfs reference
+                  <input value={computeImage} onChange={(e) => setComputeImage(e.target.value)} maxLength={512} required />
+                </label>
+                <label>vCPU
+                  <input type="number" min="1" max="64" value={computeVcpus} onChange={(e) => setComputeVcpus(e.target.value)} required />
+                </label>
+                <label>Memory (MiB)
+                  <input type="number" min="512" max="262144" step="512" value={computeMemory} onChange={(e) => setComputeMemory(e.target.value)} required />
+                </label>
+                <label>Disk (GiB)
+                  <input type="number" min="5" max="4096" value={computeDisk} onChange={(e) => setComputeDisk(e.target.value)} required />
+                </label>
+                <label>Region (optional)
+                  <input value={computeRegion} onChange={(e) => setComputeRegion(e.target.value)} maxLength={80} placeholder="Any available region" />
+                </label>
+                <label className="deployment-wide">SSH public key (optional)
+                  <input value={computeSshKey} onChange={(e) => setComputeSshKey(e.target.value)} maxLength={16384} placeholder="ssh-ed25519 AAAA..." />
+                </label>
+                <div className="deployment-wide">
+                  <Button type="submit" disabled={computeBusy || !organizationId || !computeImage.trim()}>
+                    {computeBusy ? 'Queueing VM…' : 'Create virtual machine'} <Plus size={14} />
+                  </Button>
+                </div>
+              </form>
+              <p className="deployment-muted">
+                Firecracker requires an operator-installed rootfs filename. Incus uses a configured image alias. KubeVirt uses a containerDisk image reference.
+              </p>
+            </div>
+            {computeMessage && <div className="action-message deployment-message">{computeMessage}</div>}
+            <section className="panel">
+              <div className="panel-head">
+                <div><h3>Your virtual machines</h3><p>Actions are sent to the assigned provider host and reflected when the agent confirms them.</p></div>
+                <button onClick={loadCompute}>Refresh <RotateCcw size={13} /></button>
+              </div>
+              {computeInstances.length ? computeInstances.map((vm: any) => (
+                <div className="table-row" key={vm.id}>
+                  <Cpu size={18} />
+                  <div className="flex-1">
+                    <b>{vm.name}</b>
+                    <small>{vm.provider} · {vm.region || 'Any region'} · {vm.vcpus} vCPU · {vm.memoryMiB} MiB · {vm.diskGiB} GiB</small>
+                    <small>{vm.ipv4?.length ? `IPv4: ${vm.ipv4.join(', ')}` : vm.errorMessage || vm.image}</small>
+                  </div>
+                  {vm.status === 'running' && vm.ipv4?.[0] && vm.sshPublicKey && (
+                    <Button kind="light" onClick={() => copySshCommand(vm.ipv4[0])}>Copy SSH</Button>
+                  )}
+                  <span className={`pill ${vm.status === 'running' ? 'pill-green' : 'pill-muted'}`}>{vm.status}</span>
+                  {vm.status === 'stopped' && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'start')}>Start</Button>}
+                  {vm.status === 'running' && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'stop')}>Stop</Button>}
+                  {!['provisioning','starting','stopping','deleting','deleted'].includes(vm.status) && <Button kind="light" onClick={() => computeInstanceAction(vm.id, 'delete')}><Trash2 size={13} /> Delete</Button>}
+                  {vm.provider !== 'firecracker' && ['running','stopped'].includes(vm.status) && (
+                    <Button kind="light" onClick={() => createComputeSnapshot(vm.id)}>Snapshot <Plus size={13} /></Button>
+                  )}
+                  <div className="deployment-history deployment-wide">
+                    <b>Snapshots</b>
+                    {(computeSnapshots[vm.id] || []).length ? (computeSnapshots[vm.id] || []).map((snapshot: any) => (
+                      <div className="table-row" key={snapshot.id}>
+                        <Boxes size={15} />
+                        <div className="flex-1"><b>{snapshot.name}</b><small>{snapshot.status} · {new Date(snapshot.createdAt).toLocaleString()}</small></div>
+                        {snapshot.status === 'ready' && vm.status === 'stopped' && <Button kind="light" onClick={() => restoreComputeSnapshot(snapshot.id)}>Restore</Button>}
+                        {snapshot.status === 'ready' && <Button kind="light" onClick={() => deleteComputeSnapshot(snapshot.id)}><Trash2 size={13} /></Button>}
+                      </div>
+                    )) : <p className="deployment-muted">No snapshots created.</p>}
+                  </div>
+                </div>
+              )) : (
+                <div className="deployment-empty"><b>No virtual machines yet.</b><p>Create a VM above when a Kestrel provider host is online and has capacity.</p></div>
+              )}
+            </section>
+          </div>
+        )}
+
         {/* ARTIFACTS */}
         {page === 'artifacts' && !inspectedRun && (
           <div className="page-content">
@@ -1452,13 +1966,20 @@ function AppShell({ page }: { page: Page }) {
                     <div className="flex-1">
                       <b>{a.name || a.id}</b>
                       <small>
-                        Key: {a.objectKey} · Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content:{' '}
+                        Run: {String(a.runId).slice(0, 8)} · Size: {(a.sizeBytes / 1024).toFixed(1)} KB · Content:{' '}
                         {a.contentType || 'application/octet-stream'}
                       </small>
                     </div>
                     <span className="text-xs text-neutral-400 font-mono">
                       {new Date(a.createdAt).toLocaleDateString()}
+                      {a.expiresAt ? ` · Expires ${new Date(a.expiresAt).toLocaleDateString()}` : ' · No expiry'}
                     </span>
+                    <button className="outline-button" onClick={() => downloadArtifact(a.id)} title="Download artifact">
+                      <ArrowDownRight size={15} /> Download
+                    </button>
+                    <button className="outline-button" onClick={() => deleteArtifact(a.id)} title="Delete artifact">
+                      <Trash2 size={15} /> Delete
+                    </button>
                   </div>
                 ))
               ) : (
@@ -1468,6 +1989,7 @@ function AppShell({ page }: { page: Page }) {
                   desc="Artifacts produced in dist/ or build/ directories will appear here when completed."
                 />
               )}
+              {actionMessage && <div className="action-message">{actionMessage}</div>}
             </div>
           </div>
         )}

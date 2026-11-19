@@ -18,6 +18,10 @@ import {
   signJwt,
   verifyJwt,
 } from './lib/auth.mjs';
+import { registerProjectFileRoutes } from './routes/project-files.mjs';
+import { registerArtifactRoutes } from './routes/artifacts.mjs';
+import { registerDeploymentRoutes } from './routes/deployments.mjs';
+import { registerComputeRoutes } from './routes/compute.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -33,7 +37,8 @@ if (supabaseUrl && supabaseAnonKey) {
 }
 
 app.disable('x-powered-by');
-app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
+// Vercel terminates public requests at its edge proxy; trust exactly one hop there.
+app.set('trust proxy', process.env.VERCEL ? 1 : process.env.TRUST_PROXY === 'true' ? 1 : false);
 
 app.use(
   helmet({
@@ -297,6 +302,7 @@ app.get('/api/health', async (_req, res) => {
       time: now(),
     });
   } catch (e) {
+    console.error('Database health check failed:', { code: e.code, message: e.message });
     res.status(503).json({
       ok: false,
       database: 'unavailable',
@@ -362,6 +368,7 @@ app.get('/api/workspaces', userAuth, async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
+    console.error('Workspace lookup failed:', { code: e.code, message: e.message });
     res.status(500).json({ error: 'Could not fetch workspaces' });
   }
 });
@@ -371,7 +378,7 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
   try {
     const [p, r, w, a] = await Promise.all([
       query(
-        `select id, name, repository_url as repo, default_branch as "defaultBranch", created_at as "createdAt"
+        `select id, name, repository_url as repo, source_type as "sourceType", default_branch as "defaultBranch", created_at as "createdAt"
          from public.projects
          where organization_id = $1
          order by created_at desc`,
@@ -410,7 +417,7 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
         [req.organizationId]
       ),
       query(
-        `select id, hostname, architecture as arch, region, state,
+        `select id, hostname, architecture as arch, region, state, runtime,
                 last_seen_at as "lastSeenAt", max_concurrency as "maxConcurrency"
          from public.workers
          where organization_id = $1
@@ -420,11 +427,11 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
       query(
         `select a.id, a.name, a.run_id as "runId", a.object_key as "objectKey",
                 a.size_bytes as "sizeBytes", a.sha256, a.content_type as "contentType",
-                a.created_at as "createdAt"
+                a.created_at as "createdAt", a.expires_at as "expiresAt"
          from public.artifacts a
          join public.pipeline_runs r on r.id = a.run_id
          join public.projects p on p.id = r.project_id
-         where p.organization_id = $1
+         where p.organization_id = $1 and a.deleted_at is null and (a.expires_at is null or a.expires_at > now())
          order by a.created_at desc
          limit 100`,
         [req.organizationId]
@@ -439,6 +446,7 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
       serverTime: now(),
     });
   } catch (e) {
+    console.error('Workspace snapshot lookup failed:', { code: e.code, message: e.message });
     res.status(500).json({ error: 'Could not load workspace snapshot' });
   }
 });
@@ -451,11 +459,14 @@ app.post('/api/projects', sensitiveLimiter, userAuth, orgAccess, async (req, res
     return res.status(403).json({ error: 'Developer access required' });
   }
   const { name, repo, defaultBranch = 'main' } = req.body || {};
-  let repoUrl;
-  try {
-    repoUrl = new URL(repo);
-  } catch {
-    return res.status(400).json({ error: 'Invalid repository URL format' });
+  const repoValue = typeof repo === 'string' ? repo.trim() : '';
+  let repoUrl = null;
+  if (repoValue) {
+    try {
+      repoUrl = new URL(repoValue);
+    } catch {
+      return res.status(400).json({ error: 'Invalid repository URL format' });
+    }
   }
 
   const allowedHosts = (
@@ -469,29 +480,36 @@ app.post('/api/projects', sensitiveLimiter, userAuth, orgAccess, async (req, res
     !name ||
     typeof name !== 'string' ||
     name.trim().length < 2 ||
-    !repoUrl ||
-    repoUrl.protocol !== 'https:' ||
-    repoUrl.username ||
-    repoUrl.password ||
-    !allowedHosts.includes(repoUrl.hostname.toLowerCase())
+    name.trim().length > 120 ||
+    (repoValue && (
+      !repoUrl ||
+      repoUrl.protocol !== 'https:' ||
+      repoUrl.username ||
+      repoUrl.password ||
+      !allowedHosts.includes(repoUrl.hostname.toLowerCase())
+    ))
   ) {
     return res.status(400).json({
-      error: `Use a valid name and credential-free HTTPS repository on an approved Git host: ${allowedHosts.join(', ')}`,
+      error: repoValue
+        ? `Use a valid credential-free HTTPS repository on an approved Git host: ${allowedHosts.join(', ')}`
+        : 'Project name must be between 2 and 120 characters',
     });
   }
 
   try {
     const r = await transaction(async (c) => {
       const proj = await c.query(
-        'insert into public.projects(organization_id, name, repository_url, default_branch, created_by) values($1, $2, $3, $4, $5) returning *',
-        [req.organizationId, name.trim(), repo.trim(), defaultBranch.trim() || 'main', req.user.id]
+        'insert into public.projects(organization_id, name, repository_url, default_branch, created_by, source_type) values($1, $2, $3, $4, $5, $6) returning *',
+        [req.organizationId, name.trim(), repoValue || null, String(defaultBranch || 'main').trim() || 'main', req.user.id, repoValue ? 'git' : 'upload']
       );
-      // Generate default webhook secret
-      const webhookSecret = crypto.randomBytes(24).toString('hex');
-      await c.query(
-        'insert into public.github_webhooks(project_id, webhook_secret) values($1, $2)',
-        [proj.rows[0].id, webhookSecret]
-      );
+      // Git-backed projects receive a signed webhook. Uploaded projects do not need a Git remote.
+      if (repoValue) {
+        const webhookSecret = crypto.randomBytes(24).toString('hex');
+        await c.query(
+          'insert into public.github_webhooks(project_id, webhook_secret) values($1, $2)',
+          [proj.rows[0].id, webhookSecret]
+        );
+      }
       await c.query(
         'insert into public.audit_events(organization_id, actor_id, action, target_type, target_id) values($1, $2, $3, $4, $5)',
         [req.organizationId, req.user.id, 'project.created', 'project', proj.rows[0].id]
@@ -703,9 +721,9 @@ app.post('/api/webhooks/github', async (req, res) => {
       );
       for (const j of safe) {
         await c.query(
-          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries)
-           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries]
+          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries, artifact_paths)
+           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries, j.artifacts]
         );
       }
       await c.query('update public.github_webhooks set last_triggered_at = now() where project_id = $1', [project.id]);
@@ -754,9 +772,9 @@ app.post('/api/runs', sensitiveLimiter, userAuth, async (req, res) => {
 
       for (const j of safe) {
         await c.query(
-          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries)
-           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries]
+          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries, artifact_paths)
+           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries, j.artifacts]
         );
       }
 
@@ -828,6 +846,12 @@ app.post('/api/runs/:runId/cancel', sensitiveLimiter, userAuth, async (req, res)
         "update public.jobs set status = 'canceled', finished_at = now(), canceled_at = now() where run_id = $1 and status in ('queued', 'running')",
         [runId]
       );
+      await c.query(
+        `update public.deployment_releases
+         set status = 'failed', health_checked_at = now(), error_message = 'Deployment run was canceled'
+         where pipeline_run_id = $1 and status in ('queued', 'deploying')`,
+        [runId]
+      );
       // Mark run as canceled
       await c.query(
         "update public.pipeline_runs set status = 'canceled', finished_at = now(), canceled_at = now(), canceled_by = $2 where id = $1",
@@ -872,6 +896,7 @@ app.post('/api/runs/:runId/retry', sensitiveLimiter, userAuth, async (req, res) 
         `update public.jobs
          set status = 'queued',
              attempt = 0,
+             available_at = now(),
              exit_code = null,
              duration_ms = null,
              started_at = null,
@@ -881,6 +906,12 @@ app.post('/api/runs/:runId/retry', sensitiveLimiter, userAuth, async (req, res) 
              lease_expires_at = null,
              canceled_at = null
          where run_id = $1 and status in ('failed', 'canceled', 'skipped')`,
+        [runId]
+      );
+      await c.query(
+        `update public.deployment_releases
+         set status = 'queued', health_checked_at = null, error_message = null, deployed_at = null
+         where pipeline_run_id = $1 and status = 'failed'`,
         [runId]
       );
       // Reset run status to queued
@@ -951,7 +982,7 @@ app.get('/api/jobs/:jobId/logs', userAuth, async (req, res) => {
 // Worker Protocol Endpoints
 // ==========================================
 app.post('/api/workers/register', workerAuth, async (req, res) => {
-  const { workerId, hostname = workerId, arch = 'linux/amd64', region = 'unknown', maxConcurrency = 1 } = req.body || {};
+  const { workerId, hostname = workerId, arch = 'linux/amd64', region = 'unknown', maxConcurrency = 1, runtime = 'node' } = req.body || {};
   if (workerId !== req.worker.id) {
     return res.status(403).json({ error: 'Worker identity mismatch' });
   }
@@ -959,9 +990,9 @@ app.post('/api/workers/register', workerAuth, async (req, res) => {
     await query(
       `update public.workers
        set hostname = $2, architecture = $3, region = $4,
-           max_concurrency = $5, state = 'online', last_seen_at = now()
+           max_concurrency = $5, runtime = $7,\n           state = case when desired_state = 'offline' then 'offline' when desired_state = 'draining' then 'draining' else 'online' end,\n           last_seen_at = now()
        where id = $1 and organization_id = $6`,
-      [workerId, hostname, arch, region, Math.min(128, Math.max(1, Number(maxConcurrency))), req.worker.organizationId]
+      [workerId, hostname, arch, region, Math.min(128, Math.max(1, Number(maxConcurrency))), req.worker.organizationId, runtime === 'rust' ? 'rust' : 'node']
     );
     res.json({ ok: true, workerId });
   } catch (e) {
@@ -973,7 +1004,7 @@ app.post('/api/workers/heartbeat', workerAuth, async (req, res) => {
   const r = await query(
     `update public.workers
      set last_seen_at = now(),
-         state = case when $2 then 'draining' else 'online' end
+         state = case when desired_state = 'offline' then 'offline'\n                      when desired_state = 'draining' or $2 then 'draining'\n                      when exists (select 1 from public.jobs j where j.worker_id = workers.id and j.status = 'running') then 'busy'\n                      else 'online' end
      where id = $1 and id = $3 returning id`,
     [req.body.workerId, !!req.body.draining, req.worker.id]
   );
@@ -992,8 +1023,52 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       if (!worker.rowCount) return null;
       const w = worker.rows[0];
 
+      // Recover jobs abandoned by a worker that crashed or lost its connection.
+      await c.query(
+        `update public.jobs j
+         set status = case when j.attempt <= j.max_retries then 'queued' else 'failed' end,
+             worker_id = null,
+             lease_token = null,
+             lease_expires_at = null,
+             started_at = case when j.attempt <= j.max_retries then null else j.started_at end,
+             finished_at = case when j.attempt <= j.max_retries then null else now() end,
+             exit_code = case when j.attempt <= j.max_retries then null else 124 end,
+             available_at = case when j.attempt <= j.max_retries then now() + make_interval(secs => (least(300, 10 * power(2, least(j.attempt - 1, 5))))::int) else j.available_at end
+         where j.status = 'running'
+           and j.lease_expires_at <= now()
+           and exists (
+             select 1 from public.pipeline_runs rr
+             join public.projects pp on pp.id = rr.project_id
+             where rr.id = j.run_id and pp.organization_id = $1
+           )`,
+        [w.organization_id]
+      );
+      await c.query(
+        `update public.deployment_releases dr
+         set status = 'failed', health_checked_at = now(),
+             error_message = 'Deployment worker lease expired after retries'
+         where dr.status = 'deploying'
+           and exists (select 1 from public.jobs j where j.deployment_release_id = dr.id and j.status = 'failed')`
+      );
+      await c.query(
+        `update public.pipeline_runs r
+         set status = 'failed', finished_at = now()
+         where r.status = 'running'
+           and exists (select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed')
+           and not exists (select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued', 'running'))
+           and exists (select 1 from public.projects p where p.id = r.project_id and p.organization_id = $1)`,
+        [w.organization_id]
+      );
+      await c.query(
+        `update public.workers w
+         set state = 'online'
+         where w.organization_id = $1 and w.state = 'busy'
+           and not exists (select 1 from public.jobs j where j.worker_id = w.id and j.status = 'running')`,
+        [w.organization_id]
+      );
+
       const active = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [w.id]);
-      if (active.rows[0].n >= w.max_concurrency || w.state === 'draining') return null;
+      if (active.rows[0].n >= w.max_concurrency || ['draining', 'offline'].includes(w.state)) return null;
 
       // Skip jobs whose dependencies have failed, canceled, or were skipped
       await c.query(
@@ -1012,14 +1087,43 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
            )`,
         [w.organization_id]
       );
+      await c.query(
+        `update public.pipeline_runs r
+         set status = case
+           when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed')
+                and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'failed'
+           when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'canceled')
+                and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'canceled'
+           when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'succeeded'
+           else 'running'
+         end,
+         finished_at = case
+           when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then now()
+           else null end
+         where r.id in (select pr.id from public.pipeline_runs pr join public.projects p on p.id = pr.project_id where p.organization_id = $1)
+           and r.status in ('queued','running')
+           and exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('failed','skipped','canceled'))`,
+        [w.organization_id]
+      );
 
       // Find candidate job where all dependencies succeeded
       const candidate = await c.query(
-        `select j.*, r.branch, r.commit_sha, p.repository_url, p.id as project_id
+        `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id,
+                de.id as deployment_env_id, de.host_port as deployment_host_port,
+                de.container_port as deployment_container_port, de.health_path as deployment_health_path,
+                de.health_timeout_seconds as deployment_health_timeout,
+                de.public_url as deployment_public_url, de.secret_names as deployment_secret_names,
+                new_release.image as deployment_image, new_release.container_name as deployment_container_name,
+                current_release.image as previous_deployment_image,
+                current_release.container_name as previous_deployment_container
          from public.jobs j
          join public.pipeline_runs r on r.id = j.run_id
          join public.projects p on p.id = r.project_id
-         where p.organization_id = $1 and j.status = 'queued'
+         left join public.deployment_environments de on de.id = j.deployment_environment_id
+         left join public.deployment_releases current_release on current_release.id = de.current_release_id
+         left join public.deployment_releases new_release on new_release.id = j.deployment_release_id
+         where p.organization_id = $1 and j.status = 'queued' and j.available_at <= now()
+           and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
            and not exists (
              select 1 from unnest(j.needs) d(id)
              join public.jobs dep on dep.run_id = j.run_id and dep.external_id = d.id
@@ -1028,7 +1132,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          order by j.created_at
          limit 1
          for update of j skip locked`,
-        [w.organization_id]
+        [w.organization_id, w.id, w.runtime]
       );
 
       if (!candidate.rowCount) return null;
@@ -1049,6 +1153,9 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       );
 
       await c.query("update public.workers set state = 'busy', last_seen_at = now() where id = $1", [w.id]);
+      if (j.job_type === 'deployment' && j.deployment_release_id) {
+        await c.query("update public.deployment_releases set status = 'deploying' where id = $1 and status = 'queued'", [j.deployment_release_id]);
+      }
 
       // Fetch and decrypt project secrets for this job
       const secretsQuery = await c.query(
@@ -1068,6 +1175,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         ...u.rows[0],
         leaseToken: lease,
         repositoryUrl: j.repository_url,
+        sourceType: j.source_type,
         branch: j.branch,
         commitSha: j.commit_sha,
         runId: j.run_id,
@@ -1076,6 +1184,21 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         cpuMillicores: j.cpu_millicores,
         timeoutSeconds: j.timeout_seconds,
         secrets,
+        jobType: j.job_type || 'build',
+        deployment: j.job_type === 'deployment' ? {
+          environmentId: j.deployment_env_id,
+          releaseId: j.deployment_release_id,
+          image: j.deployment_image,
+          containerName: j.deployment_container_name,
+          hostPort: j.deployment_host_port,
+          containerPort: j.deployment_container_port,
+          healthPath: j.deployment_health_path,
+          healthTimeoutSeconds: j.deployment_health_timeout,
+          publicUrl: j.deployment_public_url,
+          secretNames: j.deployment_secret_names || [],
+          previousImage: j.previous_deployment_image,
+          previousContainer: j.previous_deployment_container,
+        } : null,
       };
     });
 
@@ -1100,13 +1223,43 @@ app.post('/api/workers/jobs/:jobId/logs', workerAuth, async (req, res) => {
     const cleanMessage = redactSecrets(String(e.message || '')).slice(0, 8000);
     await query(
       'insert into public.job_logs(job_id, stream, message) values($1, $2, $3)',
-      [req.params.jobId, e.stream === 'stderr' ? 'stderr' : 'stdout', cleanMessage]
+      [req.params.jobId, e.stream === 'stderr' ? 'stderr' : e.stream === 'system' ? 'system' : 'stdout', cleanMessage]
     );
   }
 
-  // Extend lease by 45 seconds on successful heartbeat / log flush
-  await query("update public.jobs set lease_expires_at = now() + interval '45 seconds' where id = $1", [req.params.jobId]);
+  // Refresh only while the same worker still owns the same unexpired lease.
+  const extended = await query(
+    "update public.jobs set lease_expires_at = now() + interval '45 seconds' where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running' and lease_expires_at > now() returning id",
+    [req.params.jobId, leaseToken, req.worker.id]
+  );
+  if (!extended.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
   res.json({ ok: true });
+});
+
+// Refresh a running job lease without inserting a fake/empty log entry.
+app.post('/api/workers/jobs/:jobId/lease', workerAuth, async (req, res) => {
+  const lease = String(req.get('x-kestrel-lease') || req.body?.leaseToken || '');
+  const result = await query(
+    `update public.jobs
+     set lease_expires_at = now() + interval '45 seconds'
+     where id = $1 and worker_id = $2 and lease_token = $3
+       and status = 'running' and lease_expires_at > now()
+     returning id, lease_expires_at`,
+    [req.params.jobId, req.worker.id, lease]
+  );
+  if (!result.rowCount) return res.status(409).json({ error: 'Job lease is invalid or expired' });
+  res.json({ ok: true, leaseExpiresAt: result.rows[0].lease_expires_at });
+});
+
+// Worker-side cancellation polling. The lease token prevents another worker from inspecting this job.
+app.get('/api/workers/jobs/:jobId/status', workerAuth, async (req, res) => {
+  const lease = String(req.get('x-kestrel-lease') || '');
+  const result = await query(
+    'select status from public.jobs where id = $1 and worker_id = $2 and lease_token = $3',
+    [req.params.jobId, req.worker.id, lease]
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Job lease not found' });
+  res.json({ status: result.rows[0].status });
 });
 
 // Job Completion
@@ -1116,14 +1269,27 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
 
   const r = await query(
     `update public.jobs
-     set status = $3,
+     set status = case
+           when status = 'canceled' then 'canceled'
+           when $3 = 'failed' and attempt <= max_retries then 'queued'
+           else $3 end,
+         available_at = case
+           when status <> 'canceled' and $3 = 'failed' and attempt <= max_retries
+             then now() + make_interval(secs => (least(300, 10 * power(2, least(attempt - 1, 5))))::int)
+           else available_at end,
          exit_code = $4,
          duration_ms = $5,
-         finished_at = now(),
+         finished_at = case
+           when status = 'canceled' then coalesce(finished_at, now())
+           when $3 = 'failed' and attempt <= max_retries then null
+           else now() end,
          lease_token = null,
-         lease_expires_at = null
-     where id = $1 and lease_token = $2 and worker_id = $6 and status = 'running'
-     returning run_id`,
+         lease_expires_at = null,
+         worker_id = case
+           when status = 'canceled' or ($3 = 'failed' and attempt <= max_retries) then null
+           else worker_id end
+     where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled') and lease_expires_at > now()
+     returning run_id, status`,
     [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id]
   );
 
@@ -1134,11 +1300,58 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
   const runId = r.rows[0].run_id;
 
   await transaction(async (c) => {
-    // Check overall run status
+    const completedStatus = r.rows[0].status;
+    const deploymentJob = await c.query(
+      'select deployment_release_id from public.jobs where id = $1 and job_type = \'deployment\'',
+      [req.params.jobId]
+    );
+    if (deploymentJob.rowCount && deploymentJob.rows[0].deployment_release_id && completedStatus !== 'queued') {
+      const releaseId = deploymentJob.rows[0].deployment_release_id;
+      await c.query(
+        `update public.deployment_releases
+         set status = case when $2 = 'succeeded' then 'healthy' else 'failed' end,
+             deployed_at = case when $2 = 'succeeded' then now() else null end,
+             health_checked_at = now(),
+             error_message = case when $2 = 'succeeded' then null else 'Deployment failed health verification or container startup' end
+         where id = $1`,
+        [releaseId, completedStatus]
+      );
+      if (completedStatus === 'succeeded') {
+        await c.query(
+          'update public.deployment_environments set current_release_id = $1, updated_at = now() where id = (select environment_id from public.deployment_releases where id = $1)',
+          [releaseId]
+        );
+      }
+    }
+
+    if (completedStatus === 'queued') {
+      await c.query(
+        "insert into public.job_logs(job_id, stream, message) values($1, 'system', $2)",
+        [req.params.jobId, 'Job failed; retry scheduled because attempts remain']
+      );
+    } else {
+      // Skip all downstream jobs that can no longer run, including transitive dependants.
+      for (let pass = 0; pass < 100; pass += 1) {
+        const skipped = await c.query(
+          `update public.jobs j
+           set status = 'skipped', finished_at = now(), exit_code = 125
+           where j.run_id = $1 and j.status = 'queued'
+             and exists (
+               select 1 from public.jobs d
+               where d.run_id = j.run_id and d.external_id = any(j.needs)
+                 and d.status in ('failed', 'canceled', 'skipped')
+             )`,
+          [runId]
+        );
+        if (!skipped.rowCount) break;
+      }
+    }
+
     await c.query(
       `update public.pipeline_runs r
        set status = case
-         when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed') then 'failed'
+         when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'failed')
+              and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'failed'
          when exists(select 1 from public.jobs j where j.run_id = r.id and j.status = 'canceled')
               and not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'canceled'
          when not exists(select 1 from public.jobs j where j.run_id = r.id and j.status in ('queued','running')) then 'succeeded'
@@ -1152,44 +1365,17 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
       [runId]
     );
 
-    // Update worker state to online if no remaining running jobs
     const remaining = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [req.worker.id]);
     await c.query(
-      "update public.workers set state = case when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
+      "update public.workers set state = case when state in ('draining', 'offline') then state when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
       [req.worker.id, remaining.rows[0].n]
     );
   });
 
-  res.json({ ok: true, status: finalStatus });
+  res.json({ ok: true, status: r.rows[0].status });
 });
 
-// Artifacts Upload Registration
-app.post('/api/workers/jobs/:jobId/artifacts', workerAuth, async (req, res) => {
-  const { leaseToken, name, objectKey, sizeBytes = 0, sha256 = null, contentType = 'application/octet-stream' } = req.body || {};
-  if (!name || !objectKey) {
-    return res.status(400).json({ error: 'Artifact name and objectKey are required' });
-  }
-
-  const valid = await query(
-    "select run_id from public.jobs where id = $1 and lease_token = $2 and worker_id = $3 and status = 'running'",
-    [req.params.jobId, leaseToken, req.worker.id]
-  );
-  if (!valid.rowCount) {
-    return res.status(409).json({ error: 'Lease is invalid or expired' });
-  }
-
-  try {
-    const r = await query(
-      `insert into public.artifacts(run_id, name, object_key, size_bytes, sha256, content_type)
-       values($1, $2, $3, $4, $5, $6)
-       returning *`,
-      [valid.rows[0].run_id, name.slice(0, 255), objectKey.slice(0, 1024), Math.max(0, Number(sizeBytes)), sha256, contentType]
-    );
-    res.status(201).json(r.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: 'Could not register artifact' });
-  }
-});
+// Artifact bytes are uploaded through registerArtifactRoutes; metadata-only registration is intentionally disabled.
 
 // ==========================================
 // Admin & Platform Management
@@ -1234,13 +1420,37 @@ app.post('/api/admin/workers', sensitiveLimiter, userAuth, platformAdmin, async 
   }
 });
 
+// Change worker scheduling state without revoking its credential.
+app.post('/api/admin/workers/:workerId/state', sensitiveLimiter, userAuth, platformAdmin, async (req, res) => {
+  const { state } = req.body || {};
+  if (!['online', 'draining', 'offline'].includes(state)) {
+    return res.status(400).json({ error: 'State must be online, draining or offline' });
+  }
+  try {
+    const result = await query(
+      `update public.workers set desired_state = $2, state = $2
+       where id = $1 returning id, state, desired_state, last_seen_at`,
+      [req.params.workerId, state]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Worker not found' });
+    await query(
+      `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+       select organization_id, $2, $3, 'worker', id, $4::jsonb from public.workers where id = $1`,
+      [req.params.workerId, req.user.id, `worker.state.${state}`, JSON.stringify({ state })]
+    );
+    res.json({ ok: true, worker: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not update worker state' });
+  }
+});
+
 // Revoke Worker Credential
 app.post('/api/admin/workers/:workerId/revoke', sensitiveLimiter, userAuth, platformAdmin, async (req, res) => {
   const { workerId } = req.params;
   try {
     await transaction(async (c) => {
       await c.query('update public.worker_credentials set revoked_at = now() where worker_id = $1', [workerId]);
-      await c.query("update public.workers set state = 'offline' where id = $1", [workerId]);
+      await c.query("update public.workers set desired_state = 'offline', state = 'offline' where id = $1", [workerId]);
     });
     res.json({ ok: true, workerId, revoked: true });
   } catch (e) {
@@ -1268,6 +1478,37 @@ app.get('/api/admin/overview', userAuth, platformAdmin, async (_req, res) => {
   });
 });
 
+app.get('/api/admin/health', userAuth, platformAdmin, async (_req, res) => {
+  try {
+    const [workers, queue, database] = await Promise.all([
+      query(`select
+        count(*) filter (where state in ('online','busy') and last_seen_at >= now() - interval '45 seconds')::int as online,
+        count(*) filter (where last_seen_at < now() - interval '45 seconds' or last_seen_at is null)::int as stale,
+        count(*) filter (where state = 'draining')::int as draining,
+        count(*) filter (where state = 'offline')::int as offline
+        from public.workers`),
+      query(`select
+        count(*) filter (where status = 'queued')::int as queued,
+        count(*) filter (where status = 'running')::int as running,
+        count(*) filter (where status = 'failed')::int as failed
+        from public.jobs`),
+      query('select now() as checked_at'),
+    ]);
+    const w = workers.rows[0], q = queue.rows[0];
+    res.json({
+      checkedAt: database.rows[0].checked_at,
+      database: 'connected',
+      artifactStorage: process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'missing_configuration',
+      workers: w,
+      queue: q,
+      scheduler: Number(w.online) > 0 ? 'worker_capacity_available' : Number(q.queued) > 0 ? 'queued_without_online_workers' : 'no_online_workers',
+    });
+  } catch (error) {
+    console.error('Admin health check failed:', { code: error.code, message: error.message });
+    res.status(503).json({ error: 'Could not read platform health' });
+  }
+});
+
 app.get('/api/admin/audit', userAuth, platformAdmin, async (_req, res) => {
   const r = await query('select * from public.audit_events order by created_at desc limit 200');
   res.json(r.rows);
@@ -1277,7 +1518,8 @@ app.get('/api/admin/audit', userAuth, platformAdmin, async (_req, res) => {
 app.get('/api/cron/recovery', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret) return res.status(503).json({ error: 'Cron authentication is not configured' });
+  if (authHeader !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: 'Unauthorized cron request' });
   }
   try {
@@ -1287,6 +1529,12 @@ app.get('/api/cron/recovery', async (req, res) => {
     res.status(500).json({ error: 'Lease recovery failed' });
   }
 });
+
+// Private project file storage endpoints; membership is checked on every request.
+registerProjectFileRoutes(app, { userAuth, workerAuth, query });
+registerArtifactRoutes(app, { userAuth, workerAuth, query });
+registerDeploymentRoutes(app, { userAuth, query, transaction });
+registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
@@ -1302,16 +1550,9 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && isMain) {
   const recovery = setInterval(async () => {
     try {
       await query('select * from public.recover_stale_leases()');
-    } catch {
-      // In case the migration hasn't been applied yet, fallback to inline recovery
-      try {
-        await query(
-          "update public.jobs set status = case when attempt >= 3 then 'failed' else 'queued' end, worker_id = null, lease_token = null, lease_expires_at = null, finished_at = case when attempt >= 3 then now() else null end where status = 'running' and lease_expires_at < now()"
-        );
-        await query(
-          "update public.workers set state = 'offline' where last_seen_at < now() - interval '45 seconds' and state not in ('offline', 'draining')"
-        );
-      } catch {}
+    } catch (error) {
+      // Do not run a weaker fallback that can bypass retry limits or dependency recovery.
+      console.error('Scheduled worker recovery failed:', error.message);
     }
   }, 5000).unref();
 

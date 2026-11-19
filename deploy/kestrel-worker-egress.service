@@ -1,0 +1,13 @@
+[Unit]
+Description=Kestrel Docker worker egress protections
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/kestrel/deploy/harden-worker-egress.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

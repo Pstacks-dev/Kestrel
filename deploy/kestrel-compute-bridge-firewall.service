@@ -1,0 +1,13 @@
+[Unit]
+Description=Kestrel Compute Bridge Firewall
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/kestrel/compute-agent.env
+ExecStart=/opt/kestrel/bin/harden-compute-bridge.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
