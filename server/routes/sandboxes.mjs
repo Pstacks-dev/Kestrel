@@ -78,6 +78,15 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
           [organizationId],
         );
         const quota = quotaResult.rowCount ? quotaResult.rows[0] : DEFAULT_QUOTA;
+        await c.query('select pg_advisory_xact_lock(71420931)');
+        const globalLimit = Math.max(1, Math.min(10000, Number(process.env.KESTREL_SANDBOX_GLOBAL_MAX || 10)));
+        const globalUsed = await c.query(
+          `select count(*)::int as active from public.sandbox_instances
+           where deleted_at is null and status in ('provisioning','running','unknown')`,
+        );
+        if (globalUsed.rows[0].active >= globalLimit) {
+          return { error: 'The platform sandbox pool is currently at capacity. Try again later.', status: 429 };
+        }
         const used = await c.query(
           `select count(*)::int as instances, coalesce(sum(vcpus),0)::int as vcpu
            from public.sandbox_instances where organization_id = $1 and deleted_at is null and status not in ('deleted','failed')`,
