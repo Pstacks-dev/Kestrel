@@ -61,10 +61,8 @@ const nav: { id: Page; label: string; icon: any; group: string }[] = [
   { id: 'pipelines', label: 'Pipelines', icon: Workflow, group: 'WORKSPACE' },
   { id: 'runs', label: 'Run history', icon: Clock3, group: 'WORKSPACE' },
   { id: 'deployments', label: 'Deployments', icon: Server, group: 'WORKSPACE' },
-  { id: 'projects', label: 'Projects', icon: Layers3, group: 'INFRASTRUCTURE' },
-  { id: 'compute', label: 'Compute', icon: Cpu, group: 'INFRASTRUCTURE' },
-  { id: 'sandboxes', label: 'Sandboxes', icon: TerminalSquare, group: 'INFRASTRUCTURE' },
-  { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'INFRASTRUCTURE' },
+  { id: 'projects', label: 'Projects', icon: Layers3, group: 'WORKSPACE' },
+  { id: 'artifacts', label: 'Artifacts', icon: Boxes, group: 'WORKSPACE' },
   { id: 'settings', label: 'Settings', icon: Command, group: 'MANAGE' },
 ];
 
@@ -792,7 +790,10 @@ function AppShell({ page }: { page: Page }) {
       setInspectedRunId(data.id);
       await connect();
     } catch (err: any) {
-      setActionMessage(err.message || 'Pipeline trigger failed');
+      const message = err.message || 'Pipeline could not be queued';
+      setActionMessage(message === 'Pipeline could not be queued'
+        ? 'Pipeline could not be queued. No run was created. Please try again shortly; if it keeps happening, contact support.'
+        : message);
     }
   }
 
@@ -1246,7 +1247,7 @@ function AppShell({ page }: { page: Page }) {
           </span>
           <ChevronDown size={14} />
         </div>
-        {['WORKSPACE', 'INFRASTRUCTURE', 'MANAGE'].map((group) => (
+        {['WORKSPACE', 'MANAGE'].map((group) => (
           <div className="nav-group" key={group}>
             <small>{group}</small>
             {nav
@@ -1420,7 +1421,7 @@ function AppShell({ page }: { page: Page }) {
               <div>
                 <div className="eyebrow">WORKSPACE / PIPELINES</div>
                 <h1>Pipeline trigger</h1>
-                <p>Submit jobs with dependency relationships to execution nodes.</p>
+                <p>Run your project's install, test, and build steps in sequence.</p>
               </div>
               <div className="flex items-center gap-2">
                 <Button onClick={triggerDemoRun} kind="light">
@@ -1435,7 +1436,7 @@ function AppShell({ page }: { page: Page }) {
               <div className="panel-head">
                 <div>
                   <h3>Queue pipeline execution</h3>
-                  <p>Jobs will be claimed atomically by provisioned workers.</p>
+                  <p>Kestrel will prepare and run each stage automatically.</p>
                 </div>
                 <span className="pill pill-muted">{counts.projects} projects</span>
               </div>
@@ -1654,9 +1655,9 @@ function AppShell({ page }: { page: Page }) {
         {page === 'projects' && !inspectedRun && (
           <div className="page-content">
             <PageHeading
-              eyebrow="INFRASTRUCTURE / PROJECTS"
+              eyebrow="WORKSPACE / PROJECTS"
               title="Projects & Repositories"
-              desc="Manage registered Git repositories, encrypted secrets, and GitHub webhooks."
+              desc="Connect repositories and manage project configuration."
             />
             <div className="panel">
               <div className="panel-head">
@@ -2158,9 +2159,9 @@ function AppShell({ page }: { page: Page }) {
         {page === 'artifacts' && !inspectedRun && (
           <div className="page-content">
             <PageHeading
-              eyebrow="INFRASTRUCTURE / ARTIFACTS"
+              eyebrow="WORKSPACE / ARTIFACTS"
               title="Build Artifacts"
-              desc="Compiled binaries, packages and reports collected from completed jobs."
+              desc="Build outputs, packages and reports from your pipeline runs."
             />
             <div className="panel">
               <div className="panel-head">
