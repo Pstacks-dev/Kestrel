@@ -94,3 +94,16 @@ test('auto-build settings are validated and queued after successful non-containe
  assert.match(migration,/container_build_settings/);
  assert.match(migration,/container_builds_auto_run_unique/);
 });
+
+
+test('container build runner rejects symlinked context escape before Docker is called',async()=>{
+ const workspace=await mkdtemp(path.join(os.tmpdir(),'kestrel-context-'));
+ const outside=await mkdtemp(path.join(os.tmpdir(),'kestrel-outside-'));
+ try{
+  await writeFile(path.join(outside,'Dockerfile'),'FROM scratch');
+  const fs=await import('node:fs/promises');await fs.symlink(outside,path.join(workspace,'escape'));
+  let called=false;
+  const result=await buildAndPushContainerImage({registryHost:'ghcr.io',imageRepository:'team/web',imageTag:'sha-escape',dockerfilePath:'Dockerfile',contextPath:'escape'},{workspace,hostWorkspace:workspace,username:'u',password:'p',commandRunner:async()=>{called=true;return {exitCode:0,stdout:'',durationMs:1};}});
+  assert.equal(result.exitCode,1);assert.match(result.error,/escapes the workspace/);assert.equal(called,false);
+ }finally{await rm(workspace,{recursive:true,force:true});await rm(outside,{recursive:true,force:true});}
+});
