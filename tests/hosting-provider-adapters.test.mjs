@@ -78,11 +78,11 @@ test('AWS App Runner SigV4 signature matches independently calculated canonical 
  const signedHeaders='content-type;host;x-amz-date;x-amz-target';
  assert.ok(auth.includes('SignedHeaders='+signedHeaders));
  const headers=captured.init.headers,date=headers['x-amz-date'],day=date.slice(0,8),region='us-east-1';
- const canonicalHeaders=signedHeaders.split(';').map(name=>name+':'+headers[name].trim()+'\\n').join('');
+ const canonicalHeaders=signedHeaders.split(';').map(name=>name+':'+headers[name].trim()+'\n').join('');
  const payloadHash=crypto.createHash('sha256').update(captured.init.body).digest('hex');
- const canonicalRequest=['POST','/','',canonicalHeaders+signedHeaders,payloadHash].join('\\n');
+ const canonicalRequest=['POST','/','',canonicalHeaders+signedHeaders,payloadHash].join('\n');
  const scope=day+'/'+region+'/apprunner/aws4_request';
- const stringToSign=['AWS4-HMAC-SHA256',date,scope,crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\\n');
+ const stringToSign=['AWS4-HMAC-SHA256',date,scope,crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
  const hmac=(key,value)=>crypto.createHmac('sha256',key).update(value).digest();
  const signingKey=hmac(hmac(hmac(hmac('AWS4'+credentials['aws-apprunner'].secretAccessKey,day),region),'apprunner'),'aws4_request');
  const expected=hmac(signingKey,stringToSign).toString('hex');
