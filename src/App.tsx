@@ -575,6 +575,12 @@ function AppShell({ page }: { page: Page }) {
   const [rustWorkerProvisioning, setRustWorkerProvisioning] = useState(false);
   const [rustWorkerCredential, setRustWorkerCredential] = useState<any>(null);
   const [showRustSetup, setShowRustSetup] = useState(false);
+  const [showNodeWorkerSetup, setShowNodeWorkerSetup] = useState(false);
+  const [nodeWorkerName, setNodeWorkerName] = useState('Kestrel Build Worker');
+  const [nodeWorkerRegion, setNodeWorkerRegion] = useState('local');
+  const [nodeWorkerConcurrency, setNodeWorkerConcurrency] = useState('1');
+  const [nodeWorkerProvisioning, setNodeWorkerProvisioning] = useState(false);
+  const [nodeWorkerCredential, setNodeWorkerCredential] = useState<any>(null);
 
   // Kestrel Compute
   const [computeInstances, setComputeInstances] = useState<any[]>([]);
@@ -1157,6 +1163,46 @@ function AppShell({ page }: { page: Page }) {
     }
   }
 
+  async function provisionNodeWorker(e: any) {
+    e.preventDefault();
+    if (!organizationId) return;
+    setNodeWorkerProvisioning(true);
+    setActionMessage('');
+    setNodeWorkerCredential(null);
+    try {
+      const response = await fetch(api + '/workspaces/' + organizationId + '/workers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ name: nodeWorkerName, region: nodeWorkerRegion, maxConcurrency: Number(nodeWorkerConcurrency), runtime: 'node' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not provision build worker');
+      setNodeWorkerCredential(data);
+      setActionMessage('Build worker credential created. Copy the configuration now; the token will not be shown again.');
+      setShowNodeWorkerSetup(true);
+      await connect();
+    } catch (error: any) {
+      setActionMessage(error.message || 'Build worker provisioning failed');
+    } finally {
+      setNodeWorkerProvisioning(false);
+    }
+  }
+
+  function copyNodeWorkerEnv() {
+    if (!nodeWorkerCredential) return;
+    const content = [
+      'KESTREL_API_URL=https://kestrel-ci-cd.vercel.app',
+      `KESTREL_WORKER_ID=${nodeWorkerCredential.workerId}`,
+      `KESTREL_WORKER_TOKEN=${nodeWorkerCredential.token}`,
+      'KESTREL_WORKER_HOST_WORKDIR=C:/kestrel-worker/work',
+      `KESTREL_REGION=${nodeWorkerRegion || 'local'}`,
+      `KESTREL_CONCURRENCY=${nodeWorkerConcurrency}`,
+      'KESTREL_JOB_IMAGE=node:22-bookworm-slim',
+      'KESTREL_JOB_NETWORK=bridge',
+    ].join('\\n');
+    navigator.clipboard?.writeText(content);
+  }
+
   async function provisionRustWorker(e: any) {
     e.preventDefault();
     if (!organizationId) return;
@@ -1641,6 +1687,39 @@ function AppShell({ page }: { page: Page }) {
                 </div>
               ))}
             </div>
+            <section className="panel node-worker-setup">
+              <div className="panel-head">
+                <div><h3>Build workers</h3><p>Connect a Docker host to run pipeline jobs and container image builds.</p></div>
+                <span className={snapshot?.workers?.some((w: any) => w.runtime === 'node' && w.state === 'online') ? 'pill pill-green' : 'pill pill-muted'}>
+                  {snapshot?.workers?.filter((w: any) => w.runtime === 'node' && w.state === 'online').length || 0} ONLINE
+                </span>
+              </div>
+              <p className="text-sm text-neutral-500">{snapshot?.workers?.filter((w: any) => w.runtime === 'node').length || 0} Node workers registered · {snapshot?.workers?.filter((w: any) => w.runtime === 'node' && w.state !== 'online').length || 0} offline</p>
+              {!showNodeWorkerSetup && <Button kind="light" onClick={() => { setShowNodeWorkerSetup(true); setNodeWorkerCredential(null); }}><Plus size={14}/> Provision build worker</Button>}
+              {showNodeWorkerSetup && (
+                <div className="mt-3">
+                  {!nodeWorkerCredential ? (
+                    <form className="deployment-form-grid" onSubmit={provisionNodeWorker}>
+                      <label>Worker name<input value={nodeWorkerName} onChange={e => setNodeWorkerName(e.target.value)} minLength={2} maxLength={80} required /></label>
+                      <label>Region<input value={nodeWorkerRegion} onChange={e => setNodeWorkerRegion(e.target.value)} maxLength={80} placeholder="local, eu-west, us-east" /></label>
+                      <label>Concurrency<select value={nodeWorkerConcurrency} onChange={e => setNodeWorkerConcurrency(e.target.value)}><option value="1">1 (recommended)</option><option value="2">2</option><option value="4">4</option><option value="8">8</option></select></label>
+                      <div className="deployment-wide flex gap-2"><Button type="submit" disabled={nodeWorkerProvisioning}>{nodeWorkerProvisioning ? 'Provisioning…' : 'Generate one-time worker token'}</Button><Button kind="light" type="button" onClick={() => setShowNodeWorkerSetup(false)}>Cancel</Button></div>
+                    </form>
+                  ) : (
+                    <div className="deployment-worker-instructions">
+                      <div className="notice"><ShieldCheck size={15}/> This credential is shown once. Keep it private and use it only in your worker's local .env.worker file.</div>
+                      <label>Worker ID <code>{nodeWorkerCredential.workerId}</code><button type="button" onClick={() => navigator.clipboard?.writeText(nodeWorkerCredential.workerId)}>Copy</button></label>
+                      <label>One-time token <code className="credential-token">{nodeWorkerCredential.token}</code><button type="button" onClick={() => navigator.clipboard?.writeText(nodeWorkerCredential.token)}>Copy token</button></label>
+                      <button type="button" className="btn btn-light" onClick={copyNodeWorkerEnv}>Copy .env.worker configuration</button>
+                      <div className="setup-steps"><b>Start the worker on Windows with Docker Desktop</b><ol><li>Ensure Docker Desktop is running in Linux-container mode.</li><li>Clone the Kestrel repository and create .env.worker in its root; paste the copied configuration.</li><li>In PowerShell from the repository folder, run <code>docker compose --env-file .env.worker -f docker-compose.worker.yml up -d --build</code>.</li><li>Check logs with <code>docker compose -f docker-compose.worker.yml logs -f kestrel-worker</code> and refresh Kestrel until it reports Online.</li></ol></div>
+                      <p className="deployment-muted">The worker runs build jobs inside isolated Docker containers. Its Docker socket grants host-level control; use a dedicated host and never expose the socket over TCP.</p>
+                      <Button kind="light" onClick={() => { setNodeWorkerCredential(null); setShowNodeWorkerSetup(false); }}>Close setup (token hidden)</Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
             <div className="dashboard-grid">
               <section className="panel recent-panel">
                 <div className="panel-head">
