@@ -5,13 +5,56 @@ import { getHostingProvider, normalizeSubdomain, providerDomainCandidates } from
 
 const ADMIN_ROLES = ['owner', 'admin'];
 
+const NETLIFY_MAX_FILES = 50;
+const NETLIFY_MAX_BYTES = 25 * 1024 * 1024;
+const safeRelativeArtifact = (name) => typeof name === 'string' && name.length <= 512 && !name.startsWith('/') && !name.includes('\\') && !/^[A-Za-z]:/.test(name) && name.split('/').every(part => part && part !== '.' && part !== '..' && !/[\\u0000-\\u001f]/.test(part));
+
+export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fetch, publishDirectory = '', storageUrl = process.env.SUPABASE_URL, serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY } = {}) {
+  if (!storageUrl || !serviceKey) throw new Error('Artifact storage is not configured for automatic static deployments');
+  const prefix = String(publishDirectory || '').trim().replace(/^\\/+|\\/+$/g, '');
+  if (prefix && !safeRelativeArtifact(prefix)) throw new Error('Publish directory must be a safe relative path');
+  const artifacts = await query(
+    'select name,object_key,size_bytes from public.artifacts where run_id=$1 and deleted_at is null and (expires_at is null or expires_at > now()) order by name',
+    [runId]
+  );
+  if (!artifacts.rowCount) throw new Error('Successful pipeline run has no build artifacts. Add an artifact-producing build job first.');
+  if (artifacts.rowCount > NETLIFY_MAX_FILES) throw new Error('Static deployment exceeds the 50-file limit; reduce build artifacts.');
+  const files = {};
+  let total = 0;
+  for (const artifact of artifacts.rows) {
+    let name = String(artifact.name || '').replace(/^\\/+/, '');
+    if (prefix) {
+      if (!name.startsWith(prefix + '/')) continue;
+      name = name.slice(prefix.length + 1);
+    } else {
+      name = name.replace(/^(dist|build|artifacts)\\//, '');
+    }
+    if (!safeRelativeArtifact(name)) throw new Error('Build artifact contains an unsafe path');
+    const objectPath = String(artifact.object_key || '').split('/').map(encodeURIComponent).join('/');
+    const response = await fetchImpl(storageUrl.replace(/\\/$/, '') + '/storage/v1/object/kestrel-artifacts/' + objectPath, {
+      headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) throw new Error('Could not retrieve a pipeline build artifact from private storage');
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 10 * 1024 * 1024 || total + bytes.length > NETLIFY_MAX_BYTES) throw new Error('Static build artifacts exceed the 25 MiB automatic deploy limit');
+    if (files['/' + name]) throw new Error('Build artifact names conflict after publish-directory mapping');
+    total += bytes.length;
+    files['/' + name] = 'base64:' + bytes.toString('base64');
+  }
+  if (!Object.keys(files).length) throw new Error('No build artifacts matched the configured publish directory');
+  if (!files['/index.html']) throw new Error('Static deployment artifacts must include index.html at the publish root');
+  return files;
+}
+
+
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
     const { projectId, pipelineRunId, projectSlug, image, imageRepository, imageTag, registryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
     const slug = normalizeSubdomain(projectSlug);
     if (!projectId || !pipelineRunId || !slug) return res.status(400).json({ error: 'Project, successful pipeline run and valid subdomain are required' });
     if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
-    if (!image && !sourceTarball && !gitSource) return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
+    if (!image && !sourceTarball && !gitSource && appType !== 'static') return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
     if (!env || typeof env !== 'object' || Array.isArray(env) || Object.keys(env).length > 100) return res.status(400).json({ error: 'Deployment environment variables are invalid' });
     const envEntries = Object.entries(env);
     if (envEntries.some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !['string', 'number', 'boolean'].includes(typeof value) || String(value).length > 8192) || envEntries.reduce((size, [key, value]) => size + key.length + String(value).length, 0) > 65536) {
@@ -88,6 +131,12 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         deployFiles: req.body?.deployFiles, publishDirectory: req.body?.publishDirectory, imageRepository: req.body?.imageRepository,
         imageTag: req.body?.imageTag, registryType: req.body?.registryType, instanceSize: req.body?.instanceSize, buildpacks: req.body?.buildpacks,
       };
+      if (connection.provider_id === 'netlify' && !deploymentRequest.deployFiles) {
+        deploymentRequest.deployFiles = await prepareNetlifyArtifactFiles(pipelineRunId, { query, publishDirectory: req.body?.publishDirectory || req.body?.outputDirectory });
+      }
+      if (!deploymentRequest.image && !deploymentRequest.sourceTarball && !deploymentRequest.gitSource && !deploymentRequest.deployFiles) {
+        return res.status(400).json({ error: 'Provider deployment requires a verified image, source archive, Git source, or built artifacts' });
+      }
       const result = await deployToHostingProvider(connection.provider_id, credential, deploymentRequest);
       if (!result.ok) {
         await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,result.error]);
