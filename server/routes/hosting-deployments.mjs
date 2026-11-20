@@ -60,6 +60,7 @@ export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fe
   if (!Object.keys(files).length) throw new Error('No build artifacts matched the configured publish directory');
   if (!files['/index.html']) throw new Error('Static deployment artifacts must include index.html at the publish root');
   return files;
+}
 
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
