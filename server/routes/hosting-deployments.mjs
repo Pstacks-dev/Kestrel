@@ -69,8 +69,8 @@ export async function prepareHerokuSourceArchive({ repositoryUrl, commitSha, org
   try { parsed = new URL(repositoryUrl); } catch { throw new Error('Heroku source build requires a GitHub repository URL'); }
   if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || parsed.username || parsed.password) throw new Error('Automatic Heroku source builds currently require a public GitHub repository');
   const parts = parsed.pathname.split('/').filter(Boolean);
-  if (parts.length < 2 || !/^[A-Za-z0-9_.-]+$/.test(parts[0]) || !/^[A-Za-z0-9_.-]+$/.test(parts[1].replace(/\\.git$/,''))) throw new Error('GitHub repository URL is invalid');
-  const owner=parts[0],repo=parts[1].replace(/\\.git$/,'');
+  if (parts.length < 2 || !/^[A-Za-z0-9_.-]+$/.test(parts[0]) || !/^[A-Za-z0-9_.-]+$/.test((parts[1].endsWith('.git')?parts[1].slice(0,-4):parts[1]))) throw new Error('GitHub repository URL is invalid');
+  const owner=parts[0],repo=(parts[1].endsWith('.git')?parts[1].slice(0,-4):parts[1]);
   const sourceUrl='https://codeload.github.com/'+owner+'/'+repo+'/tar.gz/'+commitSha;
   const sourceResponse=await fetchImpl(sourceUrl,{headers:{Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});
   if (!sourceResponse.ok) throw new Error(sourceResponse.status===404?'Repository is private or the validated commit is unavailable; connect GitHub access or supply an archive URL':'GitHub source archive download failed');
