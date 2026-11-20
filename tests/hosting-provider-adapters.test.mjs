@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment } from '../server/deploy/providers/index.mjs';
 
 const ids=['render','railway','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean','heroku','vercel','netlify'];
@@ -67,12 +68,23 @@ test('status refresh API adapters cover all ten providers with mocked live respo
  for(const item of cases){const result=await refreshHostingDeployment(item.id,item.cred,item.deployment,{fetchImpl:mockFetch((url,init)=>{assert.ok(url.startsWith('https://'),item.id);if(item.id==='railway')return response(item.payload);return response(item.payload);})});assert.equal(result.ok,true,item.id+': '+result.error);assert.equal(result.status,'live',item.id);assert.ok(result.url,item.id+' should return a deployment URL');}
 });
 
-test('AWS App Runner SigV4 Authorization uses lowercase canonical SignedHeaders',async()=>{
+test('AWS App Runner SigV4 signature matches independently calculated canonical request',async()=>{
  let captured;
  const result=await verifyHostingProvider('aws-apprunner',credentials['aws-apprunner'],{fetchImpl:async(url,init)=>{captured={url:String(url),init};return response({ServiceSummaryList:[]});}});
  assert.equal(result.ok,true,result.error);
  assert.equal(captured.url,'https://apprunner.us-east-1.amazonaws.com/');
  assert.equal(captured.init.headers['x-amz-target'],'AmazonAppRunner.ListServices');
- assert.match(captured.init.headers.authorization,/SignedHeaders=content-type;host;x-amz-date;x-amz-target/);
- assert.match(captured.init.headers.authorization,/Signature=[a-f0-9]{64}$/);
+ const auth=captured.init.headers.authorization;
+ const signedHeaders='content-type;host;x-amz-date;x-amz-target';
+ assert.ok(auth.includes('SignedHeaders='+signedHeaders));
+ const headers=captured.init.headers,date=headers['x-amz-date'],day=date.slice(0,8),region='us-east-1';
+ const canonicalHeaders=signedHeaders.split(';').map(name=>name+':'+headers[name].trim()+'\\n').join('');
+ const payloadHash=crypto.createHash('sha256').update(captured.init.body).digest('hex');
+ const canonicalRequest=['POST','/','',canonicalHeaders+signedHeaders,payloadHash].join('\\n');
+ const scope=day+'/'+region+'/apprunner/aws4_request';
+ const stringToSign=['AWS4-HMAC-SHA256',date,scope,crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\\n');
+ const hmac=(key,value)=>crypto.createHmac('sha256',key).update(value).digest();
+ const signingKey=hmac(hmac(hmac(hmac('AWS4'+credentials['aws-apprunner'].secretAccessKey,day),region),'apprunner'),'aws4_request');
+ const expected=hmac(signingKey,stringToSign).toString('hex');
+ assert.equal(auth.match(/Signature=([a-f0-9]{64})$/)?.[1],expected,'signature must use the canonical AWS request');
 });
