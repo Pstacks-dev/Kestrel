@@ -100,8 +100,8 @@ export async function prepareHerokuSourceArchive({ repositoryUrl, commitSha, org
 
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
-    const { projectId, pipelineRunId, projectSlug, image: suppliedImage, containerBuildId, imageRepository, imageTag, registryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
-    let image=suppliedImage;
+    const { projectId, pipelineRunId, projectSlug, image: suppliedImage, containerBuildId, imageRepository: suppliedImageRepository, imageTag: suppliedImageTag, registryType: suppliedRegistryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
+    let image=suppliedImage, imageRepository=suppliedImageRepository, imageTag=suppliedImageTag, registryType=suppliedRegistryType;
     const slug = normalizeSubdomain(projectSlug);
     if (!projectId || !pipelineRunId || !slug) return res.status(400).json({ error: 'Project, successful pipeline run and valid subdomain are required' });
     if (image && containerBuildId) return res.status(400).json({ error: 'Use either a manually supplied image or a completed container build, not both' });
@@ -149,7 +149,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       const commitSha = run.commit_sha;
       if (containerBuildId) {
         const built=await query(
-          `select b.status,b.image_ref,b.image_digest,r.commit_sha as "buildCommitSha",b.source_pipeline_run_id as "sourceRunId"
+          `select b.status,b.image_ref,b.image_digest,b.registry_host,b.image_repository,b.image_tag,r.commit_sha as "buildCommitSha",b.source_pipeline_run_id as "sourceRunId"
            from public.container_builds b join public.pipeline_runs r on r.id=b.source_pipeline_run_id
            join public.organization_members m on m.organization_id=b.organization_id
            where b.id=$1 and b.project_id=$2 and m.user_id=$3`,
@@ -159,6 +159,9 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         if (built.rows[0].status!=='succeeded' || !built.rows[0].image_ref) return res.status(409).json({error:'Container build must finish successfully before deployment'});
         if (built.rows[0].sourceRunId!==pipelineRunId || built.rows[0].buildCommitSha!==commitSha || !/@sha256:[a-f0-9]{64}$/i.test(built.rows[0].image_ref)) return res.status(409).json({error:'Container image must match the selected successful pipeline commit'});
         image=built.rows[0].image_ref;
+        imageRepository=built.rows[0].image_repository;
+        imageTag=built.rows[0].image_tag;
+        registryType=built.rows[0].registry_host==='ghcr.io'?'GHCR':'DockerHub';
       }
       if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
       if (!commitSha) return res.status(409).json({ error: 'Successful pipeline run does not have a pinned commit SHA' });
