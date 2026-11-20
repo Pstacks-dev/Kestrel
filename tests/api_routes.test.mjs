@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import app from '../server/control-plane.mjs';
+import { validateWorkerProvisioning } from '../server/lib/worker-provisioning.mjs';
 
 test('API Endpoints and Security Middleware', async (t) => {
   const server = http.createServer(app);
@@ -102,4 +103,15 @@ test('API Endpoints and Security Middleware', async (t) => {
     assert.equal(res.status, 401);
     delete process.env.CRON_SECRET;
   });
+});
+
+test('worker provisioning validation supports Node and Rust runtimes with bounded concurrency',()=>{
+ const node=validateWorkerProvisioning({name:'Node build worker',region:'local',maxConcurrency:2,runtime:'node'});
+ assert.deepEqual(node,{ok:true,name:'Node build worker',region:'local',maxConcurrency:2,runtime:'node'});
+ const rust=validateWorkerProvisioning({name:'Rust deploy worker',runtime:'rust'});
+ assert.equal(rust.ok,true); assert.equal(rust.runtime,'rust');
+ assert.equal(validateWorkerProvisioning({runtime:'container'}).ok,false);
+ assert.equal(validateWorkerProvisioning({name:'x',runtime:'node'}).ok,false);
+ assert.equal(validateWorkerProvisioning({runtime:'node',maxConcurrency:0}).ok,false);
+ assert.equal(validateWorkerProvisioning({runtime:'node',maxConcurrency:9}).ok,false);
 });
