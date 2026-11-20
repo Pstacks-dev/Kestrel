@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment } from '../server/deploy/providers/index.mjs';
+import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment, getHostingDeploymentLogs, cleanupHostingDeployment } from '../server/deploy/providers/index.mjs';
 
 const ids=['render','railway','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean','heroku','vercel','netlify'];
 const response=(payload,status=200)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
@@ -87,4 +87,38 @@ test('AWS App Runner SigV4 signature matches independently calculated canonical 
  const signingKey=hmac(hmac(hmac(hmac('AWS4'+credentials['aws-apprunner'].secretAccessKey,day),region),'apprunner'),'aws4_request');
  const expected=hmac(signingKey,stringToSign).toString('hex');
  assert.equal(auth.match(/Signature=([a-f0-9]{64})$/)?.[1],expected,'signature must use the canonical AWS request');
+});
+
+
+test('failed deployment cleanup calls provider deletion endpoint and never exposes credentials',async()=>{
+ const cases=[
+  ['render',{token:'r-token'},{providerResourceId:'srv-123'},'DELETE','/services/srv-123'],
+  ['railway',{token:'rw-token'},{metadata:{serviceId:'svc-123'}},'POST','graphql'],
+  ['flyio',{token:'fly-token'},{metadata:{appName:'demo'}},'DELETE','/apps/demo'],
+  ['cloud-run',{accessToken:'gcp-token'},{providerResourceId:'projects/p/locations/r/services/demo'},'DELETE','services/demo'],
+  ['aws-apprunner',{accessKeyId:'AKID',secretAccessKey:'secret',region:'us-east-1'},{metadata:{serviceArn:'arn:aws:apprunner:us-east-1:123:service/x/abc'}},'POST','DeleteService'],
+  ['azure-container-apps',{accessToken:'azure-token'},{metadata:{resourceId:'/subscriptions/s/resourceGroups/g/providers/Microsoft.App/containerApps/demo'}},'DELETE','containerApps/demo'],
+  ['digitalocean',{token:'do-token'},{metadata:{appId:'app-123'}},'DELETE','/apps/app-123'],
+  ['heroku',{token:'hk-token'},{metadata:{appId:'app-123'}},'DELETE','/apps/app-123'],
+  ['vercel',{token:'vc-token'},{providerResourceId:'dep-123'},'DELETE','/deployments/dep-123'],
+  ['netlify',{token:'nt-token'},{providerResourceId:'deploy-123'},'DELETE','/deploys/deploy-123'],
+ ];
+ for(const [provider,cred,deploy,method,needle] of cases){
+  let hit=false;
+  const result=await cleanupHostingDeployment(provider,cred,deploy,{fetchImpl:async(url,init={})=>{
+   hit=true;assert.ok(String(url).includes(needle),provider+' endpoint');if(provider!=='railway')assert.equal(init.method,method);
+   if(provider==='railway')assert.match(init.body,/serviceDelete/);
+   return response({});
+  }});
+  assert.equal(result.ok,true,provider+': '+result.error);assert.equal(hit,true);
+ }
+});
+
+test('provider log retrieval is supported for selected providers and rejects unsupported providers',async()=>{
+ const netlify=await getHostingDeploymentLogs('netlify',{token:'nt-token'},{providerResourceId:'deploy-abc'},{fetchImpl:async(url,init)=>{assert.ok(String(url).includes('/deploys/deploy-abc/log'));assert.equal(init.headers.Authorization,'Bearer nt-token');return new Response('build output',{status:200});}});
+ assert.equal(netlify.ok,true);assert.equal(netlify.logs,'build output');
+ const vercel=await getHostingDeploymentLogs('vercel',{token:'vc-token'},{providerResourceId:'dep-abc'},{fetchImpl:async(url,init)=>{assert.ok(String(url).includes('/v2/deployments/dep-abc/events'));assert.equal(init.headers.Authorization,'Bearer vc-token');return response([{type:'stdout',text:'ok'}]);}});
+ assert.equal(vercel.ok,true);assert.match(vercel.logs,/stdout/);
+ const unsupported=await getHostingDeploymentLogs('render',{token:'r-token'},{providerResourceId:'srv'});
+ assert.equal(unsupported.ok,false);assert.match(unsupported.error,/not supported/);
 });
