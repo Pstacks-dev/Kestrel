@@ -62,6 +62,41 @@ export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fe
   return files;
 }
 
+export async function prepareHerokuSourceArchive({ repositoryUrl, commitSha, organizationId, runId, query, fetchImpl = fetch, storageUrl = process.env.SUPABASE_URL, serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY } = {}) {
+  if (!storageUrl || !serviceKey) throw new Error('Private artifact storage is not configured for Heroku source builds');
+  if (!/^[a-f0-9]{40,64}$/i.test(String(commitSha || ''))) throw new Error('A verified commit SHA is required to build a source archive');
+  let parsed;
+  try { parsed = new URL(repositoryUrl); } catch { throw new Error('Heroku source build requires a GitHub repository URL'); }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || parsed.username || parsed.password) throw new Error('Automatic Heroku source builds currently require a public GitHub repository');
+  const parts = parsed.pathname.split('/').filter(Boolean);
+  if (parts.length < 2 || !/^[A-Za-z0-9_.-]+$/.test(parts[0]) || !/^[A-Za-z0-9_.-]+$/.test(parts[1].replace(/\\.git$/,''))) throw new Error('GitHub repository URL is invalid');
+  const owner=parts[0],repo=parts[1].replace(/\\.git$/,'');
+  const sourceUrl='https://codeload.github.com/'+owner+'/'+repo+'/tar.gz/'+commitSha;
+  const sourceResponse=await fetchImpl(sourceUrl,{headers:{Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});
+  if (!sourceResponse.ok) throw new Error(sourceResponse.status===404?'Repository is private or the validated commit is unavailable; connect GitHub access or supply an archive URL':'GitHub source archive download failed');
+  const archive=Buffer.from(await sourceResponse.arrayBuffer());
+  if (!archive.length || archive.length > 50*1024*1024) throw new Error('GitHub source archive exceeds the 50 MiB Heroku source-build limit');
+  const sha256=crypto.createHash('sha256').update(archive).digest('hex');
+  const storageBase=storageUrl.endsWith('/')?storageUrl.slice(0,-1):storageUrl;
+  const objectKey=organizationId+'/'+runId+'/heroku-source-'+commitSha+'.tgz';
+  const encodedKey=objectKey.split('/').map(encodeURIComponent).join('/');
+  const upload=await fetchImpl(storageBase+'/storage/v1/object/kestrel-artifacts/'+encodedKey,{method:'POST',headers:{apikey:serviceKey,Authorization:'Bearer '+serviceKey,'Content-Type':'application/gzip','x-upsert':'true'},body:archive,signal:AbortSignal.timeout(30000)});
+  if(!upload.ok)throw new Error('Could not store the verified Heroku source archive');
+  try {
+    const signed=await fetchImpl(storageBase+'/storage/v1/object/sign/kestrel-artifacts/'+encodedKey,{method:'POST',headers:{apikey:serviceKey,Authorization:'Bearer '+serviceKey,'Content-Type':'application/json'},body:JSON.stringify({expiresIn:3600}),signal:AbortSignal.timeout(15000)});
+    const signedData=await signed.json().catch(()=>null);
+    if(!signed.ok)throw new Error('Could not create a temporary source archive URL');
+    const signedPath=signedData?.signedURL||signedData?.signedUrl;
+    if(typeof signedPath!=='string')throw new Error('Storage did not return a signed source archive URL');
+    const archiveUrl=signedPath.startsWith('http')?signedPath:storageBase+'/storage/v1'+(signedPath.startsWith('/')?'':'/')+signedPath;
+    await query('insert into public.artifacts(run_id,name,object_key,size_bytes,sha256,content_type,expires_at) values($1,$2,$3,$4,$5,$6,now()+interval \'1 day\')',[runId,'heroku-source-'+commitSha+'.tgz',objectKey,archive.length,sha256,'application/gzip']);
+    return archiveUrl;
+  } catch (error) {
+    await fetchImpl(storageBase+'/storage/v1/object/kestrel-artifacts/'+encodedKey,{method:'DELETE',headers:{apikey:serviceKey,Authorization:'Bearer '+serviceKey},signal:AbortSignal.timeout(10000)}).catch(()=>{});
+    throw error;
+  }
+}
+
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
     const { projectId, pipelineRunId, projectSlug, image, imageRepository, imageTag, registryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
@@ -122,7 +157,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         if (gitSource && (gitSource.org !== org || gitSource.repo !== repoName)) return res.status(400).json({ error: 'Git source must match the Kestrel project repository' });
         pinnedGitSource = { org, repo: repoName, ref: run.branch, sha: commitSha };
       }
-      if (connection.provider_id === 'heroku') {
+      if (connection.provider_id === 'heroku' && sourceTarball) {
         let archive;
         try { archive = new URL(sourceTarball); } catch {}
         if (!archive || archive.protocol !== 'https:' || !archive.pathname.includes(commitSha)) return res.status(400).json({ error: 'Heroku source archive must be HTTPS and pinned to the validated commit SHA' });
@@ -150,6 +185,9 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         deployFiles: req.body?.deployFiles, publishDirectory: req.body?.publishDirectory, imageRepository: req.body?.imageRepository,
         imageTag: req.body?.imageTag, registryType: req.body?.registryType, instanceSize: req.body?.instanceSize, buildpacks: req.body?.buildpacks,
       };
+      if (connection.provider_id === 'heroku' && !deploymentRequest.sourceTarball) {
+        deploymentRequest.sourceTarball = await prepareHerokuSourceArchive({ repositoryUrl: repoUrl, commitSha, organizationId: connection.organization_id, runId: pipelineRunId, query });
+      }
       if (connection.provider_id === 'netlify' && !deploymentRequest.deployFiles) {
         deploymentRequest.deployFiles = await prepareNetlifyArtifactFiles(pipelineRunId, { query, publishDirectory: req.body?.publishDirectory || req.body?.outputDirectory });
       }
