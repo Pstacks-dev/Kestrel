@@ -55,7 +55,7 @@ export async function verifyHostingProvider(providerId,credential,{fetchImpl=fet
    case 'netlify':{const d=await api(fetchImpl,API.netlify+'/sites?per_page=1',{token:t});return {ok:true,providerId,accountLabel:'Netlify',sampleCount:Array.isArray(d)?d.length:undefined};}
    default:return {ok:false,providerId,error:'Unknown provider'};
   }
- }catch(e){return {ok:false,providerId,error:safeErr(e)};}
+ }catch(e){return {ok:false,providerId,error:safeErr(e),retryable:Boolean(e?.provider&&e?.status===429),ambiguous:Boolean(!e?.provider||e?.status>=500)};}
 }
 function validate(providerId,r){
  const image=r.image||r.containerImage;
