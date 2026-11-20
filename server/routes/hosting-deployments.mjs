@@ -7,11 +7,12 @@ const ADMIN_ROLES = ['owner', 'admin'];
 
 const NETLIFY_MAX_FILES = 50;
 const NETLIFY_MAX_BYTES = 25 * 1024 * 1024;
-const safeRelativeArtifact = (name) => typeof name === 'string' && name.length <= 512 && !name.startsWith('/') && !name.includes('\\') && !/^[A-Za-z]:/.test(name) && name.split('/').every(part => part && part !== '.' && part !== '..' && !/[\\x00-\\x1f]/.test(part));
+const safeRelativeArtifact = (name) => typeof name === 'string' && name.length <= 512 && !name.startsWith('/') && !name.includes('\\') && !/^[A-Za-z]:/.test(name) && name.split('/').every(part => part && part !== '.' && part !== '..' && !part.split('').some(char => char.charCodeAt(0) < 32));
 
 export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fetch, publishDirectory = '', storageUrl = process.env.SUPABASE_URL, serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY } = {}) {
   if (!storageUrl || !serviceKey) throw new Error('Artifact storage is not configured for automatic static deployments');
   const prefix = String(publishDirectory || '').trim().split('/').filter(Boolean).join('/');
+  const storageBase = storageUrl.endsWith('/') ? storageUrl.slice(0, -1) : storageUrl;
   if (prefix && !safeRelativeArtifact(prefix)) throw new Error('Publish directory must be a safe relative path');
   const artifacts = await query('select name,object_key,size_bytes from public.artifacts where run_id=$1 and deleted_at is null and (expires_at is null or expires_at > now()) order by name', [runId]);
   if (!artifacts.rowCount) throw new Error('Successful pipeline run has no build artifacts. Add an artifact-producing build job first.');
@@ -29,7 +30,7 @@ export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fe
     const key = String(artifact.object_key || '');
     if (!safeRelativeArtifact(key)) throw new Error('Stored artifact key is invalid');
     const objectPath = key.split('/').map(encodeURIComponent).join('/');
-    const response = await fetchImpl(storageUrl.replace(/\\/$/, '') + '/storage/v1/object/kestrel-artifacts/' + objectPath, { headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey }, signal: AbortSignal.timeout(20000) });
+    const response = await fetchImpl(storageBase + '/storage/v1/object/kestrel-artifacts/' + objectPath, { headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey }, signal: AbortSignal.timeout(20000) });
     if (!response.ok) throw new Error('Could not retrieve a pipeline build artifact from private storage');
     const bytes = Buffer.from(await response.arrayBuffer());
     if (!bytes.length || bytes.length > 10 * 1024 * 1024 || total + bytes.length > NETLIFY_MAX_BYTES) throw new Error('Static build artifacts exceed the 25 MiB automatic deploy limit');
