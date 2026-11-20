@@ -50,7 +50,7 @@ export async function buildAndPushContainerImage(config,{workspace,hostWorkspace
     if(result.exitCode!==0)return {exitCode:1,error:'Container registry login failed',durationMs:result.durationMs};
     result=await commandRunner(dockerBin,['build','--pull','--file',path.resolve(hostContext,config.dockerfilePath),'--tag',imageTag,hostContext],{env,timeoutMs,onLine,signal});
     if(result.exitCode!==0)return {exitCode:result.exitCode,error:'Container image build failed',durationMs:result.durationMs};
-    result=await commandRunner(dockerBin,['push',imageTag],{env,timeoutMs,onLine});
+    result=await commandRunner(dockerBin,['push',imageTag],{env,timeoutMs,onLine,signal});
     if(result.exitCode!==0)return {exitCode:result.exitCode,error:'Container image push failed',durationMs:result.durationMs};
     result=await commandRunner(dockerBin,['image','inspect','--format','{{index .RepoDigests 0}}',imageTag],{env,timeoutMs:30000,onLine,signal});
     const imageRef=String(result.stdout||'').trim();
