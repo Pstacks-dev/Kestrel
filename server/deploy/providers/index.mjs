@@ -138,9 +138,9 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    }
    case 'netlify':{
     const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');
-    const files={};for(const [path,content] of Object.entries(r.deployFiles)){if(typeof content!=='string'||!path.startsWith('/')||path.includes('..'))throw new Error('Unsafe Netlify file path or content');files[path]=crypto.createHash('sha256').update(content).digest('hex');}
+    const files={},uploadContents={};for(const [path,content] of Object.entries(r.deployFiles)){if(typeof content!=='string'||!path.startsWith('/')||path.includes('..'))throw new Error('Unsafe Netlify file path or content');const bytes=content.startsWith('base64:')?Buffer.from(content.slice(7),'base64'):Buffer.from(content,'utf8');if(content.startsWith('base64:')&&bytes.toString('base64')!==content.slice(7))throw new Error('Invalid base64 deploy file');files[path]=crypto.createHash('sha256').update(bytes).digest('hex');uploadContents[path]=bytes;}
     data=await api(fetchImpl,API.netlify+'/sites/'+site+'/deploys',{method:'POST',token:t,body:{files}});id=data?.id;metadata={siteId:site};url=data?.deploy_url||data?.url;
-    for(const [path,content] of Object.entries(r.deployFiles)){const upload=await fetchImpl(API.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/octet-stream'},body:content,signal:AbortSignal.timeout(15000)});if(!upload.ok)throw new Error('Netlify file upload failed HTTP '+upload.status);}
+    for(const [path,bytes] of Object.entries(uploadContents)){const upload=await fetchImpl(API.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/octet-stream'},body:bytes,signal:AbortSignal.timeout(15000)});if(!upload.ok)throw new Error('Netlify file upload failed HTTP '+upload.status);}
     break;
    }
    default:throw new Error('Unsupported provider');
