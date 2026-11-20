@@ -617,15 +617,18 @@ function AppShell({ page }: { page: Page }) {
   async function loadHostingConnections() {
     if (!organizationId || !accessToken) return;
     try {
-      const [providerRes, connectionRes] = await Promise.all([
+      const [providerRes, connectionRes, deploymentRes] = await Promise.all([
         fetch(`${api}/hosting/providers`, { headers: { Authorization: `Bearer ${accessToken}` } }),
         fetch(`${api}/organizations/${organizationId}/hosting-connections`, { headers: { Authorization: `Bearer ${accessToken}` } }),
+        fetch(`${api}/organizations/${organizationId}/hosting-deployments`, { headers: { Authorization: `Bearer ${accessToken}` } }),
       ]);
-      if (!providerRes.ok || !connectionRes.ok) throw new Error('Could not load provider connection data');
+      if (!providerRes.ok || !connectionRes.ok || !deploymentRes.ok) throw new Error('Could not load provider connection data');
       const providerData = await providerRes.json();
       const connectionData = await connectionRes.json();
+      const deploymentData = await deploymentRes.json();
       setHostingProviders(providerData.providers || []);
       setHostingConnections(connectionData.connections || []);
+      setHostingDeployments(deploymentData.deployments || []);
     } catch (error: any) {
       setHostingMessage(error.message || 'Unable to load hosting providers');
     }
