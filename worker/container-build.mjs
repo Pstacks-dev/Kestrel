@@ -18,7 +18,7 @@ export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,si
     signal?.addEventListener('abort',abort,{once:true});
     for(const [stream,pipe] of [['stdout',child.stdout],['stderr',child.stderr]])pipe.on('data',(buf)=>{
       const text=buf.toString();capture(stream,text);
-      const chunks=(tail[stream]+text).split(/\\r?\\n/);tail[stream]=chunks.pop()||'';
+      const chunks=(tail[stream]+text).split(/\r?\n/);tail[stream]=chunks.pop()||'';
       for(const line of chunks)if(line)onLine?.(stream,line);
       while(tail[stream].length>maxLineBytes){onLine?.(stream,tail[stream].slice(0,maxLineBytes));tail[stream]=tail[stream].slice(maxLineBytes);}
     });
@@ -26,7 +26,7 @@ export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,si
       clearTimeout(timer);signal?.removeEventListener('abort',abort);
       for(const stream of ['stdout','stderr']){
         if(tail[stream])onLine?.(stream,tail[stream]);
-        if(truncated[stream]){const marker='\\n[output truncated; capture limit reached]';if(stream==='stdout')stdout+=marker;else stderr+=marker;}
+        if(truncated[stream]){const marker='\n[output truncated; capture limit reached]';if(stream==='stdout')stdout+=marker;else stderr+=marker;}
       }
       resolve({exitCode:timedOut?124:code??1,stdout,stderr,durationMs:Date.now()-started});
     });
