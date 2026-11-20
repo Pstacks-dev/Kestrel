@@ -55,12 +55,12 @@ export async function verifyHostingProvider(providerId,credential,{fetchImpl=fet
    case 'netlify':{const d=await api(fetchImpl,API.netlify+'/sites?per_page=1',{token:t});return {ok:true,providerId,accountLabel:'Netlify',sampleCount:Array.isArray(d)?d.length:undefined};}
    default:return {ok:false,providerId,error:'Unknown provider'};
   }
- }catch(e){return {ok:false,providerId,error:safeErr(e),providerDeploymentId:id||null,metadata};}
+ }catch(e){return {ok:false,providerId,error:safeErr(e)};}
 }
 function validate(providerId,r){
  const image=r.image||r.containerImage;
  if(image&&!/@sha256:[a-fA-F0-9]{64}$/.test(image))throw new Error('Container image must be pinned to SHA-256 digest');
- if(!image&&!r.repoUrl&&!r.sourceTarball&&!r.gitSource)throw new Error('Validated source repository required');
+ if(!image&&!r.repoUrl&&!r.sourceTarball&&!r.gitSource&&!r.deployFiles)throw new Error('Validated source repository required');
  if(['render','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean'].includes(providerId)&&!image)throw new Error(providerId+' requires immutable image');
  if(providerId==='heroku'&&!r.sourceTarball)throw new Error('Heroku requires source archive');
  if(providerId==='vercel'&&!r.gitSource)throw new Error('Vercel requires Git source');
@@ -192,7 +192,7 @@ export async function getHostingDeploymentLogs(providerId, credential, deploymen
 export async function cleanupHostingDeployment(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
  const c=parseCred(credential),t=token(c),id=deployment.providerResourceId,m=deployment.metadata||{};
  try {
-  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn && !m.appName && !(m.siteCreated && m.siteId)) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
+  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn && !m.appName && !m.siteId) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
   switch(providerId){
    case 'render': await api(fetchImpl,API.render+'/services/'+required({id},'id'),{method:'DELETE',token:t});break;
    case 'railway': {const q='mutation serviceDelete($id: String!) { serviceDelete(id: $id) }';const d=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:q,variables:{id:required(m,'serviceId')}}});if(d?.errors?.length)throw new Error('Provider service deletion failed');break;}
