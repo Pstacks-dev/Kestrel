@@ -21,6 +21,10 @@ const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK === 'none' ? 'none' : 'bridge';
 const EXECUTOR = process.env.KESTREL_WORKER_EXECUTOR || 'docker'; // 'docker' | 'local' | 'mock'
 
+if (process.env.NODE_ENV === 'production' && (TOKEN === 'dev-worker-token-change-me' || TOKEN.length < 32)) {
+  throw new Error('Production workers require a separately provisioned KESTREL_WORKER_TOKEN of at least 32 characters');
+}
+
 if (process.env.NODE_ENV === 'production' && !/@sha256:[a-f0-9]{64}$/i.test(JOB_IMAGE) && EXECUTOR === 'docker') {
   throw new Error('Production workers require KESTREL_JOB_IMAGE pinned by immutable sha256 digest');
 }
