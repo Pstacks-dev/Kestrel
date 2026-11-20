@@ -13,10 +13,10 @@ test('provider lookup is explicit and unknown ids return null', () => {
 });
 
 test('normalizes project subdomain input and rejects invalid length', () => {
-  assert.equal(normalizeSubdomain(' My App!! '), 'my-app');
+  assert.equal(normalizeSubdomain(' My App '), 'my-app');
   assert.equal(normalizeSubdomain('a'), null);
   assert.equal(normalizeSubdomain('x'.repeat(64)), null);
-  assert.equal(normalizeSubdomain('---'), null);
+  assert.equal(normalizeSubdomain('../bad'), null);
 });
 
 test('produces provider hostname candidates without claiming reservation', () => {

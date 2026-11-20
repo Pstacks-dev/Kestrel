@@ -19,7 +19,9 @@ export function getHostingProvider(providerId) {
 
 export function normalizeSubdomain(value) {
   if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const trimmed = value.trim();
+  if (!/^[a-zA-Z0-9 -]+$/.test(trimmed)) return null;
+  const normalized = trimmed.toLowerCase().replace(/ +/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   if (normalized.length < 2 || normalized.length > 63 || normalized.startsWith('-') || normalized.endsWith('-')) return null;
   return normalized;
 }
