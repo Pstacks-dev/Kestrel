@@ -3,11 +3,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,signal,spawnImpl=spawn}={}) {
+export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,signal,spawnImpl=spawn,maxCaptureBytes=256*1024,maxLineBytes=16*1024}={}) {
   const started=Date.now();
   return new Promise((resolve)=>{
     const child=spawnImpl(command,args,{cwd,env,shell:false,stdio:['pipe','pipe','pipe']});
-    let stdout='',stderr='',tail={stdout:'',stderr:''},timedOut=false;
+    let stdout='',stderr='',tail={stdout:'',stderr:''},captured={stdout:0,stderr:0},truncated={stdout:false,stderr:false},timedOut=false;\n    const capture=(stream,text)=>{const remaining=Math.max(0,maxCaptureBytes-captured[stream]);if(remaining>0){const kept=text.slice(0,remaining);if(stream==='stdout')stdout+=kept;else stderr+=kept;captured[stream]+=kept.length;}if(text.length>remaining)truncated[stream]=true;};
     const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),3000).unref?.();},timeoutMs||1800000);
     const abort=()=>{timedOut=true;child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),3000).unref?.();};
     signal?.addEventListener('abort',abort,{once:true});
@@ -21,7 +21,7 @@ async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,signal,sp
       for(const stream of ['stdout','stderr'])if(tail[stream])onLine?.(stream,tail[stream]);
       resolve({exitCode:timedOut?124:code??1,stdout,stderr,durationMs:Date.now()-started});
     });
-    child.on('error',(error)=>{clearTimeout(timer);onLine?.('stderr',error.message);resolve({exitCode:1,stdout,stderr:stderr+error.message,durationMs:Date.now()-started});});
+    child.on('error',(error)=>{clearTimeout(timer);onLine?.('stderr',error.message);capture('stderr',error.message);resolve({exitCode:1,stdout,stderr,durationMs:Date.now()-started});});
     if(input)child.stdin.write(input);
     child.stdin.end();
   });
