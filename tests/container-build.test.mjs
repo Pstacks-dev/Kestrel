@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { validateContainerBuildRequest } from '../server/lib/container-build-validation.mjs';
-import { buildAndPushContainerImage } from '../worker/container-build.mjs';
+import { buildAndPushContainerImage, runProcess } from '../worker/container-build.mjs';
 
 test('container build input validator restricts registries, paths and tags',()=>{
  const good=validateContainerBuildRequest({registryHost:'ghcr.io',imageRepository:'team/web',commitSha:'a'.repeat(40)});
@@ -57,6 +57,7 @@ test('container build route, worker claim and completion are wired to image buil
  assert.match(route,/successful pipeline run/);
  assert.match(route,/project_secrets/);
  assert.match(route,/container_build_config/);
+ assert.ok(route.includes('select id from public.projects where id=$1 for update'));
  assert.match(control,/j\.job_type = 'container_build'/);
  assert.match(control,/containerImageDigest/);
  assert.match(control,/container_builds set status/);
@@ -106,4 +107,40 @@ test('container build runner rejects symlinked context escape before Docker is c
   const result=await buildAndPushContainerImage({registryHost:'ghcr.io',imageRepository:'team/web',imageTag:'sha-escape',dockerfilePath:'Dockerfile',contextPath:'escape'},{workspace,hostWorkspace:workspace,username:'u',password:'p',commandRunner:async()=>{called=true;return {exitCode:0,stdout:'',durationMs:1};}});
   assert.equal(result.exitCode,1);assert.match(result.error,/escapes the workspace/);assert.equal(called,false);
  }finally{await rm(workspace,{recursive:true,force:true});await rm(outside,{recursive:true,force:true});}
+});
+
+
+test('container build process bounds captured stdout, stderr, and unterminated log lines',async()=>{
+ const lines=[];
+ const result=await runProcess(process.execPath,['-e',"process.stdout.write('x'.repeat(400000));process.stderr.write('y'.repeat(400000));"],{timeoutMs:10000,onLine:(stream,line)=>lines.push({stream,line}),maxCaptureBytes:64*1024,maxLineBytes:4096});
+ assert.equal(result.exitCode,0);
+ assert.ok(result.stdout.length<=64*1024+'\n[output truncated; capture limit reached]'.length);
+ assert.ok(result.stderr.length<=64*1024+'\\n[output truncated; capture limit reached]'.length);
+ assert.match(result.stdout,/output truncated/);
+ assert.match(result.stderr,/output truncated/);
+ assert.ok(lines.some(item=>item.stream==='stdout'&&item.line.length<=4096));
+ assert.ok(lines.some(item=>item.stream==='stderr'&&item.line.length<=4096));
+});
+
+
+test('container build process terminates timed-out commands with exit code 124',async()=>{
+ const started=Date.now();
+ const result=await runProcess(process.execPath,['-e','setTimeout(()=>{},10000)'],{timeoutMs:80});
+ assert.equal(result.exitCode,124);
+ assert.ok(Date.now()-started<3000);
+});
+
+
+test('container build runner does not spawn commands after pre-abort',async()=>{
+ const controller=new AbortController();controller.abort();
+ let spawned=false;
+ const result=await runProcess('ignored',[],{signal:controller.signal,spawnImpl:()=>{spawned=true;throw new Error('should not spawn');}});
+ assert.equal(result.exitCode,124);
+ assert.equal(spawned,false);
+});
+
+test('container build runner ignores log callback failures',async()=>{
+ const result=await runProcess(process.execPath,['-e',"console.log('safe')"],{timeoutMs:10000,onLine:()=>{throw new Error('log sink failed');}});
+ assert.equal(result.exitCode,0);
+ assert.match(result.stdout,/safe/);
 });

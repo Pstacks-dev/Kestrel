@@ -209,3 +209,41 @@ test('Railway uses an immutable image when both source repository and image are 
  assert.equal(result.ok,true,result.error);
  assert.deepEqual(createPayload.variables.input.source,{image});
 });
+
+
+test('provider failures classify retry safety conservatively', async () => {
+ const digest='sha256:'+'b'.repeat(64), input={projectSlug:'retry-app',image:'registry.example/app@'+digest,appType:'docker'};
+ const rateLimited=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>response({message:'rate limited'},429)});
+ assert.equal(rateLimited.ok,false); assert.equal(rateLimited.retryable,true); assert.equal(rateLimited.ambiguous,false);
+ const serverError=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>response({message:'internal error'},500)});
+ assert.equal(serverError.ok,false); assert.equal(serverError.retryable,false); assert.equal(serverError.ambiguous,true);
+ const networkFailure=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>{throw new Error('socket timeout');}});
+ assert.equal(networkFailure.ok,false); assert.equal(networkFailure.retryable,false); assert.equal(networkFailure.ambiguous,true);
+});
+
+test('partial provider resources are returned for cleanup and cannot be retried',async()=>{
+ const digest='sha256:'+'c'.repeat(64),input={projectSlug:'partial-app',image:'registry.example/app@'+digest,commitSha:'abc123'};
+ let calls=0;
+ const result=await deployToHostingProvider('railway',credentials.railway,input,{fetchImpl:mockFetch((url,init)=>{
+  calls++;
+  if(calls===1)return response({data:{serviceCreate:{id:'rail-partial-service'}}});
+  return response({message:'rate limited'},429);
+ })});
+ assert.equal(result.ok,false);
+ assert.equal(result.providerDeploymentId,'rail-partial-service');
+ assert.equal(result.metadata.serviceId,'rail-partial-service');
+ assert.equal(result.metadata.cleanupRequired,true);
+ assert.equal(result.metadata.partialResourceCreated,true);
+ assert.equal(result.retryable,false);
+ assert.equal(result.ambiguous,true);
+});
+
+test('rate-limited deploy on an existing Netlify site is safe to retry',async()=>{
+ const result=await deployToHostingProvider('netlify',{token:'nt-token',siteId:'existing-site'},{projectSlug:'existing-site',deployFiles:{'/index.html':'hello'}},{fetchImpl:async()=>response({message:'rate limited'},429)});
+ assert.equal(result.ok,false);
+ assert.equal(result.metadata.siteId,'existing-site');
+ assert.equal(result.metadata.siteCreated,false);
+ assert.equal(result.metadata.cleanupRequired,false);
+ assert.equal(result.retryable,true);
+ assert.equal(result.ambiguous,false);
+});

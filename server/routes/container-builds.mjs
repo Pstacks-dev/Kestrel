@@ -87,6 +87,8 @@ export function registerContainerBuildRoutes(app, { userAuth, query, transaction
       const secrets=await query('select name from public.project_secrets where project_id=$1 and name=any($2)',[req.params.projectId,secretNames]);
       if(secrets.rowCount!==2)return res.status(400).json({error:'Add the configured registry username and password to project secrets before building'});
       const created=await transaction(async(c)=>{
+        // Serialize build-run numbering for this project to avoid concurrent MAX()+1 collisions.
+        await c.query('select id from public.projects where id=$1 for update',[req.params.projectId]);
         const next=await c.query('select coalesce(max(run_number),0)+1 as n from public.pipeline_runs where project_id=$1',[req.params.projectId]);
         const buildRun=await c.query(
           `insert into public.pipeline_runs(project_id,run_number,branch,commit_sha,commit_message,status,triggered_by)

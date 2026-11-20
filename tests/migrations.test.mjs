@@ -116,3 +116,42 @@ test('automatic container build settings enforce per-source-run idempotency',asy
  assert.match(migration,/where auto_triggered/);
  assert.match(migration,/enable row level security/);
 });
+
+test('hosting deployment lifecycle event timeline uses the next migration and membership-checked route',async()=>{
+ const migration=await readFile(new URL('../db/migrations/028_hosting_deployment_events.sql',import.meta.url),'utf8');
+ const routes=await readFile(new URL('../server/routes/hosting-deployments.mjs',import.meta.url),'utf8');
+ assert.ok(migration.includes('hosting_deployment_events'));
+ assert.ok(migration.includes('enable row level security'));
+ assert.ok(migration.includes('revoke all on public.hosting_deployment_events from anon, authenticated'));
+ assert.ok(routes.includes('deployment.created'));
+ assert.ok(routes.includes('provider.accepted'));
+ assert.ok(routes.includes('deployment.failed'));
+ assert.ok(routes.includes('provider.failed'));
+ assert.ok(routes.includes('status.refreshed'));
+ assert.ok(routes.includes('/api/hosting-deployments/:deploymentId/events'));
+ assert.ok(routes.includes('retry_payload_ciphertext'));
+});
+
+test('hosting deployment retry migration is bounded and request payload encryption is required',async()=>{
+ const migration=await readFile(new URL('../db/migrations/029_hosting_deployment_retries.sql',import.meta.url),'utf8');
+ const routes=await readFile(new URL('../server/routes/hosting-deployments.mjs',import.meta.url),'utf8');
+ assert.ok(migration.includes('retry_count between 0 and 3'));
+ assert.ok(migration.includes('retry_payload_ciphertext'));
+ assert.ok(routes.includes('encryptSecret(JSON.stringify(deploymentRequest))'));
+ assert.ok(routes.includes('retry_count<3'));
+ assert.ok(routes.includes("metadata->>'retryable'='true'"));
+ assert.ok(routes.includes('provider_resource_id is null'));
+});
+
+test('hosting and container build foreign keys have covering indexes',async()=>{
+ const migration=await readFile(new URL('../db/migrations/030_hosting_build_fk_indexes.sql',import.meta.url),'utf8');
+ for(const index of [
+  'container_build_settings_created_by_idx',
+  'container_builds_build_pipeline_run_idx',
+  'container_builds_created_by_idx',
+  'hosting_deployment_events_created_by_idx',
+  'hosting_provider_connections_created_by_idx',
+  'hosting_provider_deployments_created_by_idx',
+  'hosting_provider_deployments_pipeline_run_idx'
+ ]) assert.ok(migration.includes(index),`missing index: ${index}`);
+});

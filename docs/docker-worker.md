@@ -13,23 +13,9 @@ does not need to connect inbound to your PC.
 
 ## 1. Provision a worker credential
 
-In Kestrel, sign in as a platform administrator and call:
+Sign in to Kestrel as a workspace owner, admin, or developer. From **Workspace / Overview**, use **Build workers → Provision build worker**, select the Node runtime (the pipeline/image-build worker), and generate the one-time credential. Copy the worker ID and token immediately; the token is shown only once. Never commit it or paste it into source control.
 
-`POST /api/admin/workers`
-
-JSON body:
-
-```json
-{
-  "organizationId": "YOUR_ORGANIZATION_ID",
-  "name": "PStacks Docker Worker",
-  "region": "local",
-  "maxConcurrency": 1
-}
-```
-
-The response contains `workerId` and a one-time `token`. Copy both immediately.
-The token is shown only once. Never commit it or paste it into source control.
+The authenticated workspace API is also available at `POST /api/workspaces/:orgId/workers` with `{ "name": "PStacks Docker Worker", "region": "local", "maxConcurrency": 1, "runtime": "node" }`.
 
 ## 2. Configure the worker
 
@@ -53,9 +39,13 @@ to a sha256 digest. Do not use a floating tag for production workers.
 
 ## 3. Start the worker
 
+On Linux:
+
 ```sh
 docker compose --env-file .env.worker -f docker-compose.worker.yml up -d --build
 ```
+
+On Windows with Docker Desktop in Linux-container mode, run the same command in PowerShell from the repository root. Use forward slashes in the host path in `.env.worker`, for example `C:/kestrel-worker/work`.
 
 Compose also reads `.env.worker` through the service's `env_file` setting.
 The command above builds the worker image and starts the worker in the background.
