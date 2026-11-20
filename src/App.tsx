@@ -2517,7 +2517,7 @@ function AppShell({ page }: { page: Page }) {
             </div>
             <div className="panel settings-panel mt-6">
               <h3>Deploy a validated pipeline</h3>
-              <p>Only successful pipeline runs can deploy. Container image input must be pinned to a SHA-256 digest.</p>
+              <p>Only successful pipeline runs can deploy. Container image input must be pinned to a SHA-256 digest. Netlify static deploys automatically package the run's stored build artifacts (including binary assets); include a root index.html.</p>
               <form className="project-form" onSubmit={deployHostingProvider}>
                 <label>Provider<select value={hostingProviderId} onChange={(e) => setHostingProviderId(e.target.value)}>{hostingProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
                 <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
