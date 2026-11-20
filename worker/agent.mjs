@@ -492,6 +492,7 @@ async function execute(job) {
         password:job.secrets?.[config.passwordSecret],
         timeoutSeconds:job.timeoutSeconds||1800,
         onLine:onJobLine,
+        signal:abortController.signal,
       });
       if(result.imageRef)onJobLine('stdout','Published immutable image '+result.imageRef);
       if(result.error)onJobLine('stderr',result.error);
