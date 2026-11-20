@@ -1449,13 +1449,15 @@ app.get('/api/admin/organizations', userAuth, platformAdmin, async (_req, res) =
 
 // Workspace-scoped worker provisioning for deployment runtime setup.
 app.post('/api/workspaces/:orgId/workers', sensitiveLimiter, userAuth, orgAccess, async (req, res) => {
-  const { name = 'Kestrel Deployment Worker', region = 'unknown', maxConcurrency = 1 } = req.body || {};
+  const { name = 'Kestrel Worker', region = 'unknown', maxConcurrency = 1, runtime = 'rust' } = req.body || {};
   const workerName = String(name).trim();
   const workerRegion = String(region || 'unknown').trim();
   const concurrency = Number(maxConcurrency);
+  const workerRuntime = String(runtime).toLowerCase();
   if (workerName.length < 2 || workerName.length > 80 || workerRegion.length > 80 ||
-      !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
-    return res.status(400).json({ error: 'Worker name (2-80), region (max 80), and concurrency (1-8) are required' });
+      !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8 ||
+      !['node','rust'].includes(workerRuntime)) {
+    return res.status(400).json({ error: 'Worker name (2-80), region (max 80), concurrency (1-8), and runtime (node or rust) are required' });
   }
   if (!['owner', 'admin', 'developer'].includes(req.orgRole)) {
     return res.status(403).json({ error: 'Workspace developer access required to provision workers' });
@@ -1465,16 +1467,16 @@ app.post('/api/workspaces/:orgId/workers', sensitiveLimiter, userAuth, orgAccess
   try {
     await transaction(async (c) => {
       await c.query(
-        "insert into public.workers(id, organization_id, hostname, architecture, region, state, desired_state, max_concurrency, runtime) values($1, $2, $3, 'pending', $4, 'offline', 'online', $5, 'rust')",
+        "insert into public.workers(id, organization_id, hostname, architecture, region, state, desired_state, max_concurrency, runtime) values($1, $2, $3, 'pending', $4, 'offline', 'online', $5, $6)",
         [workerId, req.organizationId, workerName, workerRegion || 'unknown', concurrency]
       );
       await c.query('insert into public.worker_credentials(worker_id, token_hash) values($1, $2)', [workerId, sha(token)]);
       await c.query(
         "insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata) values($1, $2, 'worker.credential.created', 'worker', $3, $4::jsonb)",
-        [req.organizationId, req.user.id, workerId, JSON.stringify({ runtime: 'rust', hostname: workerName, region: workerRegion })]
+        [req.organizationId, req.user.id, workerId, JSON.stringify({ runtime: workerRuntime, hostname: workerName, region: workerRegion })]
       );
     });
-    res.status(201).json({ workerId, token, warning: 'Copy this token now. It will not be shown again.' });
+    res.status(201).json({ workerId, token, runtime: workerRuntime, warning: 'Copy this token now. It will not be shown again.' });
   } catch (e) {
     console.error('Workspace worker provisioning failed:', { code: e.code, message: e.message });
     res.status(500).json({ error: 'Could not provision deployment worker' });
