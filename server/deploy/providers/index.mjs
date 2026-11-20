@@ -115,7 +115,8 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    case 'azure-container-apps':{
     const sub=required(c,'subscriptionId'),group=required(c,'resourceGroup'),location=required(c,'location'),environmentId=required(c,'containerAppEnvironmentId'),access=required(c,'accessToken');
     const resource='/subscriptions/'+sub+'/resourceGroups/'+group+'/providers/Microsoft.App/containerApps/'+slug;
-    data=await request(fetchImpl,BASE.azure+resource+'?api-version=2024-03-01',{method:'PUT',token:access,body:{location,properties:{managedEnvironmentId:environmentId,configuration:{ingress:{external:true,targetPort:port,transport:'auto'}},template:{containers:[{name:slug,image,env:Object.entries(env).map(([name,value])=>({name,value:String(value)}))}],scale:{minReplicas:0,maxReplicas:1}}}});
+    const body={location,properties:{managedEnvironmentId:environmentId,configuration:{ingress:{external:true,targetPort:port,transport:'auto'}},template:{containers:[{name:slug,image,env:Object.entries(env).map(([name,value])=>({name,value:String(value)}))}],scale:{minReplicas:0,maxReplicas:1}}}};
+    data=await request(fetchImpl,BASE.azure+resource+'?api-version=2024-03-01',{method:'PUT',token:access,body});
     id=data?.id;metadata={resourceId:data?.id||resource};url=data?.properties?.configuration?.ingress?.fqdn?'https://'+data.properties.configuration.ingress.fqdn:null;break;
    }
    case 'digitalocean':{
