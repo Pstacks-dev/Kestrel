@@ -39,9 +39,13 @@ to a sha256 digest. Do not use a floating tag for production workers.
 
 ## 3. Start the worker
 
+On Linux:
+
 ```sh
 docker compose --env-file .env.worker -f docker-compose.worker.yml up -d --build
 ```
+
+On Windows with Docker Desktop in Linux-container mode, run the same command in PowerShell from the repository root. Use forward slashes in the host path in `.env.worker`, for example `C:/kestrel-worker/work`.
 
 Compose also reads `.env.worker` through the service's `env_file` setting.
 The command above builds the worker image and starts the worker in the background.
