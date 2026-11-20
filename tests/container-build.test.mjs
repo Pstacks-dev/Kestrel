@@ -128,3 +128,18 @@ test('container build process terminates timed-out commands with exit code 124',
  assert.equal(result.exitCode,124);
  assert.ok(Date.now()-started<3000);
 });
+
+
+test('container build runner does not spawn commands after pre-abort',async()=>{
+ const controller=new AbortController();controller.abort();
+ let spawned=false;
+ const result=await runProcess('ignored',[],{signal:controller.signal,spawnImpl:()=>{spawned=true;throw new Error('should not spawn');}});
+ assert.equal(result.exitCode,124);
+ assert.equal(spawned,false);
+});
+
+test('container build runner ignores log callback failures',async()=>{
+ const result=await runProcess(process.execPath,['-e',"console.log('safe')"],{timeoutMs:10000,onLine:()=>{throw new Error('log sink failed');}});
+ assert.equal(result.exitCode,0);
+ assert.match(result.stdout,/safe/);
+});
