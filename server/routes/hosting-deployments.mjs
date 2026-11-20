@@ -71,6 +71,8 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       const provider = getHostingProvider(connection.provider_id);
       if (!provider) return res.status(400).json({ error: 'Provider is unsupported' });
       if (!provider.appTypes.includes(appType)) return res.status(400).json({ error: `${provider.name} does not support the selected application type` });
+      if (!image && !sourceTarball && !gitSource && connection.provider_id !== 'netlify') return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
+      if (connection.provider_id === 'netlify' && appType !== 'static') return res.status(400).json({ error: 'Netlify direct artifact deployments currently support static sites only' });
 
       const source = await query(
         `select p.organization_id,p.repository_url,p.default_branch,r.status,r.branch,r.commit_sha
@@ -127,9 +129,6 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       };
       if (connection.provider_id === 'netlify' && !deploymentRequest.deployFiles) {
         deploymentRequest.deployFiles = await prepareNetlifyArtifactFiles(pipelineRunId, { query, publishDirectory: req.body?.publishDirectory || req.body?.outputDirectory });
-      }
-      if (!deploymentRequest.image && !deploymentRequest.sourceTarball && !deploymentRequest.gitSource && !deploymentRequest.deployFiles) {
-        return res.status(400).json({ error: 'Provider deployment requires a verified image, source archive, Git source, or built artifacts' });
       }
       const result = await deployToHostingProvider(connection.provider_id, credential, deploymentRequest);
       if (!result.ok) {
