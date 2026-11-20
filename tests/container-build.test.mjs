@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, stat } from 'node:fs/promises';
-cimport=undefined;
 import os from 'node:os';
 import path from 'node:path';
 import { validateContainerBuildRequest } from '../server/lib/container-build-validation.mjs';
