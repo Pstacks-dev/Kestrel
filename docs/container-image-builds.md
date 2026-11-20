@@ -15,7 +15,7 @@ The build job is created as a separate Kestrel pipeline run, pins the source com
 2. In Kestrel, add the registry username and token/password to Project → Secrets. The default secret names are REGISTRY_USERNAME and REGISTRY_PASSWORD; the build form allows different names.
 3. Choose a successful source pipeline run in Settings → Hosting Providers.
 4. Select the registry, namespace/repository, Dockerfile path, and build context. The tag defaults to a short tag derived from the commit SHA.
-5. Start the build. The worker performs registry login using stdin, builds, pushes, inspects the registry digest, then removes temporary Docker auth and its local image.
+5. Enable automatic builds and save the settings to publish an image after future successful pipeline runs, or start a one-off build. The worker performs registry login using stdin, builds, pushes, inspects the registry digest, then removes temporary Docker auth and its local image.
 6. Once the build is successful, select its immutable image in the deployment form.
 
 ## Worker requirements and security
