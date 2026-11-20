@@ -12,8 +12,8 @@ The deploy endpoint requires a successful Kestrel pipeline run with a commit SHA
 
 ## Provider-specific limitations
 - **Render:** container-image deployment only, with a workspace/owner ID.
-- **Railway:** source repo/service creation and deployment trigger; project/environment IDs required.
-- **Fly.io:** creates app and machine from immutable image; org slug required.
+- **Railway:** source repo/service creation, commit-pinned deployment, and generated public domain; project/environment IDs required.
+- **Fly.io:** creates app, allocates shared IPv4/IPv6, and creates machine from immutable image; org slug required.
 - **Cloud Run:** image-based; Google project and region required.
 - **AWS App Runner:** ECR image; access role ARN and signed AWS credentials required.
 - **Azure Container Apps:** image; existing Container Apps environment and subscription/resource group required.
