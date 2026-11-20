@@ -169,3 +169,43 @@ export async function refreshHostingDeployment(providerId,credential,deployment,
   return {ok:true,providerId,status,url,providerStatus:data?.status||data?.state||data?.readyState||data?.Service?.Status||null};
  }catch(e){return {ok:false,providerId,error:safeErr(e)};}
 }
+
+
+// Retrieve provider-side logs where the provider exposes a documented deployment-log API.
+export async function getHostingDeploymentLogs(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
+ const c=parseCred(credential),t=token(c),id=deployment.providerResourceId,m=deployment.metadata||{};
+ try {
+  let data;
+  switch(providerId){
+   case 'heroku': data=await api(fetchImpl,API.heroku+'/apps/'+required(m,'appId')+'/builds/'+required({id},'id')+'/output',{token:t,headers:{Accept:'application/vnd.heroku+json; version=3'}});break;
+   case 'vercel': data=await api(fetchImpl,API.vercel+'/v2/deployments/'+required({id},'id')+'/events'+(c.teamId?'?teamId='+encodeURIComponent(c.teamId):''),{token:t});break;
+   case 'netlify': {const response=await fetchImpl(API.netlify+'/deploys/'+required({id},'id')+'/log',{headers:{Authorization:'Bearer '+t,Accept:'text/plain'},signal:AbortSignal.timeout(15000)});const text=await response.text();if(!response.ok)throw Object.assign(new Error('Provider API returned HTTP '+response.status),{provider:true,status:response.status});return {ok:true,logs:text.slice(-50000)};}
+   case 'railway': {const q='query deploymentLogs($deploymentId: String!) { deploymentLogs(deploymentId: $deploymentId) }';data=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:q,variables:{deploymentId:id}}});if(data?.errors?.length)throw new Error('Provider deployment logs unavailable');break;}
+   default:return {ok:false,error:'Provider log retrieval is not supported by this adapter yet'};
+  }
+  return {ok:true,logs:JSON.stringify(data).slice(-50000)};
+ }catch(e){return {ok:false,error:safeErr(e)};}
+}
+
+// Explicit cleanup is only invoked by a user action after the control plane verifies a failed deployment.
+// Some providers delete the entire service/app rather than only the individual deployment.
+export async function cleanupHostingDeployment(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
+ const c=parseCred(credential),t=token(c),id=deployment.providerResourceId,m=deployment.metadata||{};
+ try {
+  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
+  switch(providerId){
+   case 'render': await api(fetchImpl,API.render+'/services/'+required({id},'id'),{method:'DELETE',token:t});break;
+   case 'railway': {const q='mutation serviceDelete($id: String!) { serviceDelete(id: $id) }';const d=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:q,variables:{id:required(m,'serviceId')}}});if(d?.errors?.length)throw new Error('Provider service deletion failed');break;}
+   case 'flyio': await api(fetchImpl,API.fly+'/v1/apps/'+required(m,'appName'),{method:'DELETE',token:t});break;
+   case 'cloud-run': await api(fetchImpl,API.cloud+'/'+required({id},'id'),{method:'DELETE',token:required(c,'accessToken')});break;
+   case 'aws-apprunner': await awsApi(c,'/',{__target:'DeleteService',ServiceArn:required(m,'serviceArn')},fetchImpl);break;
+   case 'azure-container-apps': await api(fetchImpl,API.azure+required(m,'resourceId')+'?api-version=2024-03-01',{method:'DELETE',token:required(c,'accessToken')});break;
+   case 'digitalocean': await api(fetchImpl,API.do+'/apps/'+required(m,'appId'),{method:'DELETE',token:t});break;
+   case 'heroku': await api(fetchImpl,API.heroku+'/apps/'+required(m,'appId'),{method:'DELETE',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'}});break;
+   case 'vercel': await api(fetchImpl,API.vercel+'/v13/deployments/'+required({id},'id')+(c.teamId?'?teamId='+encodeURIComponent(c.teamId):''),{method:'DELETE',token:t});break;
+   case 'netlify': await api(fetchImpl,API.netlify+'/deploys/'+required({id},'id'),{method:'DELETE',token:t});break;
+   default:return {ok:false,error:'Provider cleanup is not supported'};
+  }
+  return {ok:true,providerId,deletedResourceId:id||m.appId||m.serviceId||m.serviceArn||m.resourceId||m.serviceName};
+ }catch(e){return {ok:false,providerId,error:safeErr(e)};}
+}
