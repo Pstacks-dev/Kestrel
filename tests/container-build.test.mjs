@@ -112,8 +112,8 @@ test('container build runner rejects symlinked context escape before Docker is c
 test('container build process bounds captured stdout, stderr, and unterminated log lines',async()=>{
  const lines=[];
  const result=await runProcess(process.execPath,['-e',"process.stdout.write('x'.repeat(400000));process.stderr.write('y'.repeat(400000));"],{timeoutMs:10000,onLine:(stream,line)=>lines.push({stream,line}),maxCaptureBytes:64*1024,maxLineBytes:4096});
- assert.equal(result.exitCode,1);
- assert.ok(result.stdout.length<=64*1024+'\\n[output truncated; capture limit reached]'.length);
+ assert.equal(result.exitCode,0);
+ assert.ok(result.stdout.length<=64*1024+'\n[output truncated; capture limit reached]'.length);
  assert.ok(result.stderr.length<=64*1024+'\\n[output truncated; capture limit reached]'.length);
  assert.match(result.stdout,/output truncated/);
  assert.match(result.stderr,/output truncated/);
