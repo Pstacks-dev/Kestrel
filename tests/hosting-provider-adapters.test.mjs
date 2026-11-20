@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment, getHostingDeploymentLogs, cleanupHostingDeployment } from '../server/deploy/providers/index.mjs';
-import { prepareNetlifyArtifactFiles } from '../server/routes/hosting-deployments.mjs';
+import { prepareNetlifyArtifactFiles, validateNetlifyDeployFiles } from '../server/routes/hosting-deployments.mjs';
 
 const ids=['render','railway','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean','heroku','vercel','netlify'];
 const response=(payload,status=200)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
@@ -155,4 +155,12 @@ test('Netlify static deployment uploads base64 artifact contents as bytes and ha
  assert.deepEqual(Buffer.from(uploads[0].init.body),content);
  assert.equal(uploads[0].init.method,'PUT');
  assert.equal(deployManifest.files['/assets/icon.png'],expected);
+});
+
+
+test('Netlify deploy payload validation rejects path traversal and oversized payloads',()=>{
+ assert.throws(()=>validateNetlifyDeployFiles({'/../secret':'x','/index.html':'ok'}),/Unsafe Netlify/);
+ assert.throws(()=>validateNetlifyDeployFiles({'/index.html':'x'.repeat(26*1024*1024)}),/25 MiB/);
+ assert.throws(()=>validateNetlifyDeployFiles({'/assets/a.txt':'ok'}),/index.html/);
+ assert.deepEqual(validateNetlifyDeployFiles({'/index.html':'<html></html>'}),{'/index.html':'<html></html>'});
 });
