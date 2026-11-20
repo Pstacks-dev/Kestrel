@@ -728,6 +728,26 @@ function AppShell({ page }: { page: Page }) {
     catch(error:any){setHostingMessage(error.message||'Could not refresh provider deployment');}
     finally{setHostingBusy(false);}
   }
+  async function retryProviderDeployment(deploymentId: string) {
+    if (!organizationId || !accessToken) return;
+    setHostingBusy(true);
+    setHostingMessage('');
+    try {
+      const response = await fetch(`${api}/hosting-deployments/${deploymentId}/retry`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Deployment retry failed');
+      setHostingMessage(`Retry ${data.deployment?.retryCount ?? ''} accepted; provider status: ${data.providerStatus || data.deployment?.status || 'pending'}`);
+      await loadHostingConnections();
+    } catch (error: any) {
+      setHostingMessage(error.message || 'Could not retry hosting deployment');
+    } finally {
+      setHostingBusy(false);
+    }
+  }
+
   async function deployHostingProvider(event: FormEvent) {
     event.preventDefault(); if (!organizationId || !accessToken) return;
     const project = snapshot?.projects?.find((item: any) => item.id === hostingDeployProject);
@@ -2507,7 +2527,7 @@ function AppShell({ page }: { page: Page }) {
                 <Button type="submit" disabled={hostingBusy || !hostingConnections.some((c) => c.providerId === hostingProviderId && c.status === 'connected')}>{hostingBusy ? 'Deploying…' : 'Deploy validated run'}</Button>
               </form>
               {hostingDeployResult?.providerUrl && <p className="action-message mt-3">Provider accepted: <a href={hostingDeployResult.providerUrl} target="_blank" rel="noreferrer">{hostingDeployResult.providerUrl}</a></p>}
-              {hostingDeployments.slice(0,5).map((deployment: any) => <div className="table-row" key={deployment.id}><b>{deployment.projectSlug}</b><span>{deployment.providerId} · {deployment.status}</span>{deployment.liveUrl && <a href={deployment.liveUrl} target="_blank" rel="noreferrer">{deployment.liveUrl}</a>}<Button kind="light" disabled={hostingBusy} onClick={() => refreshProviderDeployment(deployment.id)}>Refresh status</Button></div>)}
+              {hostingDeployments.slice(0,5).map((deployment: any) => <div className="table-row" key={deployment.id}><b>{deployment.projectSlug}</b><span>{deployment.providerId} · {deployment.status}</span>{deployment.liveUrl && <a href={deployment.liveUrl} target="_blank" rel="noreferrer">{deployment.liveUrl}</a>}<Button kind="light" disabled={hostingBusy} onClick={() => refreshProviderDeployment(deployment.id)}>Refresh status</Button>{deployment.status === 'failed' && deployment.metadata?.retryable === true && <Button kind="light" disabled={hostingBusy} onClick={() => retryProviderDeployment(deployment.id)}>Retry deployment</Button>}</div>)}
             </div>
             <div className="panel settings-panel">
               <h3>Connection Status</h3>
