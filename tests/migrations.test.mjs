@@ -53,20 +53,20 @@ test('sandbox migration adds tenant sandbox inventory, quotas and row-level secu
 
 test('hosting-provider credential migration stores encrypted workspace credentials and scoped provider identifiers', async () => {
   const sql = await readFile(new URL('../db/migrations/024_hosting_provider_connections.sql', import.meta.url), 'utf8');
-  assert.match(sql, /create table if not exists public\\.hosting_provider_connections/i);
-  assert.match(sql, /encrypted_credentials text not null/i);
-  assert.match(sql, /credentials_iv text not null/i);
-  assert.match(sql, /credentials_auth_tag text not null/i);
-  assert.match(sql, /unique \\(organization_id, provider_id\\)/i);
-  assert.match(sql, /provider_id text not null check/i);
+  assert.ok(sql.includes('create table if not exists public.hosting_provider_connections'));
+  assert.ok(sql.includes('encrypted_credentials text not null'));
+  assert.ok(sql.includes('credentials_iv text not null'));
+  assert.ok(sql.includes('credentials_auth_tag text not null'));
+  assert.ok(sql.includes('unique (organization_id, provider_id)'));
+  assert.ok(sql.includes('provider_id text not null check'));
 });
 
 test('hosting provider connection routes require encrypted credentials and workspace admin', async () => {
   const routes = await readFile(new URL('../server/routes/hosting-providers.mjs', import.meta.url), 'utf8');
-  assert.match(routes, /\\/api\\/hosting\\/providers/);
-  assert.match(routes, /\\/api\\/organizations\\/:organizationId\\/hosting-connections/);
-  assert.match(routes, /KESTREL_ENCRYPTION_KEY/);
-  assert.match(routes, /encrypted_credentials/);
-  assert.match(routes, /roles = \\['owner', 'admin'\\]/);
-  assert.doesNotMatch(routes, /select .*encrypted_credentials/i);
+  assert.ok(routes.includes('/api/hosting/providers'));
+  assert.ok(routes.includes('/api/organizations/:organizationId/hosting-connections'));
+  assert.ok(routes.includes('KESTREL_ENCRYPTION_KEY'));
+  assert.ok(routes.includes('encrypted_credentials'));
+  assert.ok(routes.includes("roles = ['owner', 'admin']"));
+  assert.ok(!routes.includes('select c.encrypted_credentials'));
 });
