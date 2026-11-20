@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { decryptSecret } from '../lib/security.mjs';
 import { deployToHostingProvider, refreshHostingDeployment, getHostingDeploymentLogs, cleanupHostingDeployment } from '../deploy/providers/index.mjs';
 import { redactSecrets } from '../lib/security.mjs';
