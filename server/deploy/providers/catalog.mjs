@@ -1,5 +1,5 @@
 export const HOSTING_PROVIDERS = Object.freeze([
-  { id: 'render', name: 'Render', domains: ['onrender.com'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
+  { id: 'render', name: 'Render', domains: ['onrender.com'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'credential-verification' },
   { id: 'railway', name: 'Railway', domains: ['up.railway.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
   { id: 'flyio', name: 'Fly.io', domains: ['fly.dev'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
   { id: 'cloud-run', name: 'Google Cloud Run', domains: ['run.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },

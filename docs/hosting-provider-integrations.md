@@ -20,7 +20,7 @@ The catalog identifies broad app types. Real provider adapters must validate cur
 
 Kestrel should request a project slug from the user, then submit it to the provider's supported API. The provider may reject it as taken, reserved, invalid, or unsupported. Kestrel must show the actual returned hostname and never fabricate availability or claim a URL is live before deployment verification.
 
-Provider URLs remain on provider domains (e.g. `project.onrender.com`, `project.vercel.app`); Kestrel is the control panel. This catalog does not add Kestrel-owned domains or proxy/redirect traffic.
+Provider URLs remain on provider domains (e.g. `project.onrender.com`, `project.vercel.app`); Kestrel is the control panel. Render credential verification is implemented against the Render API. It does not yet deploy services. The other nine provider integrations are catalog/roadmap entries only. This catalog does not add Kestrel-owned domains or proxy/redirect traffic.
 
 ## Security requirements before adapters ship
 
