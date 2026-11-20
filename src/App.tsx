@@ -611,21 +611,36 @@ function AppShell({ page }: { page: Page }) {
   const [hostingCredential, setHostingCredential] = useState('');
   const [hostingBusy, setHostingBusy] = useState(false);
   const [hostingMessage, setHostingMessage] = useState('');
+  const [hostingDeployProject, setHostingDeployProject] = useState('');
+  const [hostingDeployRun, setHostingDeployRun] = useState('');
+  const [hostingDeploySlug, setHostingDeploySlug] = useState('');
+  const [hostingDeployImage, setHostingDeployImage] = useState('');
+  const [hostingDeployImageRepository, setHostingDeployImageRepository] = useState('');
+  const [hostingDeployImageTag, setHostingDeployImageTag] = useState('');
+  const [hostingDeployRegistryType, setHostingDeployRegistryType] = useState('DOCR');
+  const [hostingDeployAppType, setHostingDeployAppType] = useState('node');
+  const [hostingSourceArchive, setHostingSourceArchive] = useState('');
+  const [hostingDeployPort, setHostingDeployPort] = useState('3000');
+  const [hostingDeployments, setHostingDeployments] = useState<any[]>([]);
+  const [hostingDeployResult, setHostingDeployResult] = useState<any>(null);
 
   const active = nav.find((n) => n.id === page) || nav[0];
 
   async function loadHostingConnections() {
     if (!organizationId || !accessToken) return;
     try {
-      const [providerRes, connectionRes] = await Promise.all([
+      const [providerRes, connectionRes, deploymentRes] = await Promise.all([
         fetch(`${api}/hosting/providers`, { headers: { Authorization: `Bearer ${accessToken}` } }),
         fetch(`${api}/organizations/${organizationId}/hosting-connections`, { headers: { Authorization: `Bearer ${accessToken}` } }),
+        fetch(`${api}/organizations/${organizationId}/hosting-deployments`, { headers: { Authorization: `Bearer ${accessToken}` } }),
       ]);
-      if (!providerRes.ok || !connectionRes.ok) throw new Error('Could not load provider connection data');
+      if (!providerRes.ok || !connectionRes.ok || !deploymentRes.ok) throw new Error('Could not load provider connection data');
       const providerData = await providerRes.json();
       const connectionData = await connectionRes.json();
+      const deploymentData = await deploymentRes.json();
       setHostingProviders(providerData.providers || []);
       setHostingConnections(connectionData.connections || []);
+      setHostingDeployments(deploymentData.deployments || []);
     } catch (error: any) {
       setHostingMessage(error.message || 'Unable to load hosting providers');
     }
@@ -665,7 +680,7 @@ function AppShell({ page }: { page: Page }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Provider verification failed');
-      setHostingMessage(`${data.provider} credentials verified.`);
+      setHostingMessage(`${hostingProviders.find((provider) => provider.id === data.providerId)?.name || data.providerId} credentials verified.`);
       await loadHostingConnections();
     } catch (error: any) {
       setHostingMessage(error.message || 'Provider verification failed');
@@ -694,6 +709,28 @@ function AppShell({ page }: { page: Page }) {
     }
   }
 
+  async function refreshProviderDeployment(deploymentId: string) {
+    if (!organizationId || !accessToken) return;
+    setHostingBusy(true);
+    try { const response=await fetch(`${api}/hosting-deployments/${deploymentId}/refresh`,{method:'POST',headers:{Authorization:`Bearer ${accessToken}`}}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Status refresh failed'); setHostingMessage(`Deployment status refreshed: ${data.deployment.status}`); await loadHostingConnections(); }
+    catch(error:any){setHostingMessage(error.message||'Could not refresh provider deployment');}
+    finally{setHostingBusy(false);}
+  }
+  async function deployHostingProvider(event: FormEvent) {
+    event.preventDefault(); if (!organizationId || !accessToken) return;
+    const project = snapshot?.projects?.find((item: any) => item.id === hostingDeployProject);
+    const run = snapshot?.runs?.find((item: any) => item.id === hostingDeployRun);
+    const connection = hostingConnections.find((item) => item.providerId === hostingProviderId);
+    if (!project || !run || run.status !== 'succeeded' || !connection) { setHostingMessage('Choose a connected provider, project and successful pipeline run.'); return; }
+    setHostingBusy(true); setHostingMessage(''); setHostingDeployResult(null);
+    try {
+      const repoUrl = project.repo || project.repository_url || ''; let gitSource: any = undefined;
+      try { const parsed = new URL(repoUrl); const parts = parsed.pathname.split('/').filter(Boolean); if (parsed.hostname === 'github.com' && parts.length >= 2) gitSource = { org: parts[0], repo: parts[1].endsWith('.git') ? parts[1].slice(0,-4) : parts[1], ref: run.branch, sha: run.commitSha }; } catch {}
+      const response = await fetch(`${api}/organizations/${organizationId}/hosting-connections/${connection.id}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ projectId: project.id, pipelineRunId: run.id, projectSlug: hostingDeploySlug, image: hostingDeployImage.trim() || undefined, imageRepository: hostingDeployImageRepository.trim() || undefined, imageTag: hostingDeployImageTag.trim() || undefined, registryType: hostingDeployRegistryType, appType: hostingDeployAppType, port: Number(hostingDeployPort) || 3000, gitSource, sourceTarball: hostingSourceArchive.trim() || undefined }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Provider deployment failed');
+      setHostingDeployResult(data); setHostingMessage(data.note || 'Provider accepted the deployment request.'); await loadHostingConnections();
+    } catch (error: any) { setHostingMessage(error.message || 'Could not start deployment'); } finally { setHostingBusy(false); }
+  }
   async function connect() {
     setLoading(true);
     try {
@@ -2401,21 +2438,21 @@ function AppShell({ page }: { page: Page }) {
             />
             <div className="panel settings-panel mb-6">
               <h3>Hosting provider accounts</h3>
-              <p>Connect provider credentials here. Tokens are encrypted at rest and never returned to the browser after saving. Actual deployment integrations are being enabled provider-by-provider.</p>
+              <p>Connect provider accounts and deploy validated commits to provider-hosted URLs. Credentials are encrypted at rest and never returned after saving.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 {hostingProviders.map((provider) => {
                   const connection = hostingConnections.find((item) => item.providerId === provider.id);
-                  const supported = provider.id === 'render';
+                  const supported = provider.adapterStatus === 'api-integration';
                   return (
                     <div key={provider.id} className="border rounded-xl p-3 flex items-start justify-between gap-3">
                       <div>
                         <b>{provider.name}</b>
                         <small className="block text-neutral-500 mt-1">{provider.domains?.[0] || 'Provider'}</small>
-                        <small className="block mt-1">{supported ? 'Credential verification supported' : 'Integration planned'}</small>
+                        <small className="block mt-1">{supported ? 'API integration enabled' : 'Not enabled'}</small>
                         {connection && <small className="block mt-1">Connection: {connection.status}</small>}
                       </div>
                       <div className="flex flex-col gap-1">
-                        {connection && supported && <Button kind="light" disabled={hostingBusy} onClick={() => verifyHostingConnection(connection.id)}>Verify</Button>}
+                        {connection && <Button kind="light" disabled={hostingBusy} onClick={() => verifyHostingConnection(connection.id)}>Verify</Button>}
                         {connection && <Button kind="light" disabled={hostingBusy} onClick={() => removeHostingConnection(connection.id)}>Remove</Button>}
                       </div>
                     </div>
@@ -2426,7 +2463,7 @@ function AppShell({ page }: { page: Page }) {
                 <label>
                   Provider
                   <select value={hostingProviderId} onChange={(e) => { setHostingProviderId(e.target.value); setHostingConnectionName(`${hostingProviders.find((provider) => provider.id === e.target.value)?.name || e.target.value} account`); }}>
-                    {hostingProviders.map((provider) => <option value={provider.id} key={provider.id}>{provider.name}{provider.id === 'render' ? ' · verification supported' : ' · planned'}</option>)}
+                    {hostingProviders.map((provider) => <option value={provider.id} key={provider.id}>{provider.name}{provider.adapterStatus === 'api-integration' ? ' · API ready' : ' · unavailable'}</option>)}
                   </select>
                 </label>
                 <label>
@@ -2435,11 +2472,29 @@ function AppShell({ page }: { page: Page }) {
                 </label>
                 <label>
                   API token / access key
-                  <input type="password" autoComplete="off" value={hostingCredential} onChange={(e) => setHostingCredential(e.target.value)} placeholder="Paste provider token" required />
+                  <input type="password" autoComplete="off" value={hostingCredential} onChange={(e) => setHostingCredential(e.target.value)} placeholder="API token or provider JSON configuration" required />
                 </label>
                 <Button type="submit" disabled={hostingBusy || !hostingCredential.trim()}>{hostingBusy ? 'Saving…' : 'Save encrypted credential'}</Button>
               </form>
               {hostingMessage && <div className="action-message mt-3">{hostingMessage}</div>}
+            </div>
+            <div className="panel settings-panel mt-6">
+              <h3>Deploy a validated pipeline</h3>
+              <p>Only successful pipeline runs can deploy. Container image input must be pinned to a SHA-256 digest.</p>
+              <form className="project-form" onSubmit={deployHostingProvider}>
+                <label>Provider<select value={hostingProviderId} onChange={(e) => setHostingProviderId(e.target.value)}>{hostingProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+                <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+                <label>Successful run<select value={hostingDeployRun} onChange={(e) => setHostingDeployRun(e.target.value)}><option value="">Select successful run</option>{(snapshot?.runs || []).filter((run: any) => run.projectId === hostingDeployProject && run.status === 'succeeded').map((run: any) => <option key={run.id} value={run.id}>#{run.runNumber} · {run.branch} · {String(run.commitSha || '').slice(0,8)}</option>)}</select></label>
+                <label>Requested subdomain<input value={hostingDeploySlug} onChange={(e) => setHostingDeploySlug(e.target.value)} placeholder="my-project" required minLength={2} maxLength={63} /></label>
+                <label>Immutable image reference<input value={hostingDeployImage} onChange={(e) => setHostingDeployImage(e.target.value)} placeholder="registry/app@sha256:…" /></label>
+                <label>Application type<select value={hostingDeployAppType} onChange={(e) => setHostingDeployAppType(e.target.value)}><option value="node">Node.js</option><option value="python">Python</option><option value="static">Static site</option><option value="docker">Container</option></select></label>
+                {hostingProviderId === 'digitalocean' && <><label>Registry<select value={hostingDeployRegistryType} onChange={(e) => setHostingDeployRegistryType(e.target.value)}><option value="DOCR">DOCR</option><option value="GHCR">GHCR</option><option value="DockerHub">Docker Hub</option><option value="ECR">ECR</option><option value="GCR">GCR</option></select></label><label>Image repository<input value={hostingDeployImageRepository} onChange={(e) => setHostingDeployImageRepository(e.target.value)} placeholder="namespace/repository" /></label><label>Immutable image tag<input value={hostingDeployImageTag} onChange={(e) => setHostingDeployImageTag(e.target.value)} placeholder="sha-commit" /></label></>}
+                <label>Port<input type="number" value={hostingDeployPort} onChange={(e) => setHostingDeployPort(e.target.value)} min="1" max="65535" /></label>
+                {hostingProviderId === 'heroku' && <label>Commit-pinned archive URL<input type="url" value={hostingSourceArchive} onChange={(e) => setHostingSourceArchive(e.target.value)} placeholder="HTTPS archive containing the commit SHA" /></label>}
+                <Button type="submit" disabled={hostingBusy || !hostingConnections.some((c) => c.providerId === hostingProviderId && c.status === 'connected')}>{hostingBusy ? 'Deploying…' : 'Deploy validated run'}</Button>
+              </form>
+              {hostingDeployResult?.providerUrl && <p className="action-message mt-3">Provider accepted: <a href={hostingDeployResult.providerUrl} target="_blank" rel="noreferrer">{hostingDeployResult.providerUrl}</a></p>}
+              {hostingDeployments.slice(0,5).map((deployment: any) => <div className="table-row" key={deployment.id}><b>{deployment.projectSlug}</b><span>{deployment.providerId} · {deployment.status}</span>{deployment.liveUrl && <a href={deployment.liveUrl} target="_blank" rel="noreferrer">{deployment.liveUrl}</a>}<Button kind="light" disabled={hostingBusy} onClick={() => refreshProviderDeployment(deployment.id)}>Refresh status</Button></div>)}
             </div>
             <div className="panel settings-panel">
               <h3>Connection Status</h3>

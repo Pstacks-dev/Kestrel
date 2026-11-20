@@ -1,33 +1,28 @@
-# Hosting provider integration roadmap
+# Hosting Provider Integrations
 
-Kestrel's provider catalog is metadata only. It does **not** reserve names, create provider resources, deploy applications, or imply that a provider account is connected.
+Kestrel's provider catalog has API adapters for Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, Azure Container Apps, DigitalOcean App Platform, Heroku, Vercel and Netlify.
 
-## Provider targets
+## Credential fields
+Most providers accept a provider API token as a string. Cloud Run and Azure use JSON configuration with an OAuth access token and project/resource identifiers. AWS App Runner needs AWS access keys, region, and an ECR access role ARN. Railway needs project and environment IDs; Fly.io needs an organization slug; Render needs an owner/workspace ID; DigitalOcean needs registry information; Vercel needs a project ID; Netlify can use a site ID.
 
-Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, Azure Container Apps, DigitalOcean App Platform, Heroku, Vercel, and Netlify.
+Credentials are encrypted at rest and never returned to clients. Use least-privileged credentials. OAuth access tokens for Google Cloud and Azure are currently supplied by the user and are not refreshed by Kestrel.
 
-The catalog identifies broad app types. Real provider adapters must validate current provider APIs and account/region capability before creating a deployment. Pricing and free-tier availability are not guaranteed.
+## Deployment workflow
+The deploy endpoint requires a successful Kestrel pipeline run with a commit SHA and workspace admin permission. It creates a provider deployment record, then submits the provider API call. Container image references must be SHA-256 digests. Railway/Vercel receive a pinned commit SHA; Heroku requires an HTTPS archive URL containing the validated commit SHA; Netlify direct deployment requires the built files and uploads them individually.
 
-## Target architecture
+## Provider-specific limitations
+- **Render:** container-image deployment only, with a workspace/owner ID.
+- **Railway:** source repo/service creation, commit-pinned deployment, and generated public domain; project/environment IDs required.
+- **Fly.io:** creates app, allocates shared IPv4/IPv6, and creates machine from immutable image; org slug required.
+- **Cloud Run:** image-based; Google project and region required.
+- **AWS App Runner:** ECR image; access role ARN and signed AWS credentials required.
+- **Azure Container Apps:** image; existing Container Apps environment and subscription/resource group required.
+- **DigitalOcean:** image must already exist in the configured registry, tagged using the validated commit SHA; repository/tag fields required.
+- **Heroku:** source archive build; archive URL must include the run commit SHA. Container image release isn't implemented.
+- **Vercel:** linked GitHub source and Vercel project; uses commit SHA.
+- **Netlify:** requires files from a build artifact (not an empty site build). Kestrel UI currently does not yet select/extract artifact files automatically; direct API payload can provide files.
 
-- `catalog.mjs`: provider identity, supported app-type hints, and provider domains.
-- `adapters/<provider>.mjs`: provider API operations (future).
-- `connections`: OAuth or API-key credentials, encrypted at rest, scoped per workspace.
-- `deployments`: immutable deployment records, provider deployment ID, status, generated hostname, logs and timestamps.
-- Orchestrator: build artifact/image, validate provider compatibility, provision, wait for health, report URL and offer redeploy/rollback where supported.
+Provider-accepted deployments start in deploying status. Refresh calls query each provider's status API. A provider is marked live only when that API reports a ready/running state. Provider status polling, log streaming and rollback are not implemented yet.
 
-## Domain/subdomain handling
-
-Kestrel should request a project slug from the user, then submit it to the provider's supported API. The provider may reject it as taken, reserved, invalid, or unsupported. Kestrel must show the actual returned hostname and never fabricate availability or claim a URL is live before deployment verification.
-
-Provider URLs remain on provider domains (e.g. `project.onrender.com`, `project.vercel.app`); Kestrel is the control panel. Render credential verification is implemented against the Render API. It does not yet deploy services. The other nine provider integrations are catalog/roadmap entries only. This catalog does not add Kestrel-owned domains or proxy/redirect traffic.
-
-## Security requirements before adapters ship
-
-- Credentials are never returned to the client after save.
-- Encrypt tokens using the existing server secret encryption facility and rotate/revoke support.
-- Verify workspace membership and role for every provider connection/deployment action.
-- Redact credentials from logs; validate provider callback state and webhook signatures.
-- Use idempotency keys and provider resource cleanup on failed/abandoned deploys.
-- Treat provider quota, billing, region, and plan requirements as provider-specific; don't promise free hosting.
-- Provider-specific smoke tests must run against sandbox accounts before marking an adapter enabled.
+## Test scope
+CI includes mocked API contract tests for all ten credential verifications, deployment submissions and status refreshes. These do not prove a real provider deployment. Live testing requires user-connected accounts, valid credentials and the required provider-side projects/roles/images.

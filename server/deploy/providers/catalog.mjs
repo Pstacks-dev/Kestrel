@@ -1,14 +1,14 @@
 export const HOSTING_PROVIDERS = Object.freeze([
-  { id: 'render', name: 'Render', domains: ['onrender.com'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'credential-verification' },
-  { id: 'railway', name: 'Railway', domains: ['up.railway.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
-  { id: 'flyio', name: 'Fly.io', domains: ['fly.dev'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
-  { id: 'cloud-run', name: 'Google Cloud Run', domains: ['run.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
-  { id: 'aws-apprunner', name: 'AWS App Runner', domains: ['awsapprunner.com'], appTypes: ['node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
-  { id: 'azure-container-apps', name: 'Azure Container Apps', domains: ['azurecontainerapps.io'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
-  { id: 'digitalocean', name: 'DigitalOcean App Platform', domains: ['ondigitalocean.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
-  { id: 'heroku', name: 'Heroku', domains: ['herokuapp.com'], appTypes: ['node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'planned' },
-  { id: 'vercel', name: 'Vercel', domains: ['vercel.app'], appTypes: ['static', 'node'], supportsContainers: false, supportsPersistentServices: false, adapterStatus: 'planned' },
-  { id: 'netlify', name: 'Netlify', domains: ['netlify.app'], appTypes: ['static', 'node'], supportsContainers: false, supportsPersistentServices: false, adapterStatus: 'planned' },
+  { id: 'render', name: 'Render', domains: ['onrender.com'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'railway', name: 'Railway', domains: ['up.railway.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'flyio', name: 'Fly.io', domains: ['fly.dev'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'cloud-run', name: 'Google Cloud Run', domains: ['run.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'aws-apprunner', name: 'AWS App Runner', domains: ['awsapprunner.com'], appTypes: ['node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'azure-container-apps', name: 'Azure Container Apps', domains: ['azurecontainerapps.io'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'digitalocean', name: 'DigitalOcean App Platform', domains: ['ondigitalocean.app'], appTypes: ['static', 'node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'heroku', name: 'Heroku', domains: ['herokuapp.com'], appTypes: ['node', 'python', 'docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'vercel', name: 'Vercel', domains: ['vercel.app'], appTypes: ['static', 'node'], supportsContainers: false, supportsPersistentServices: false, adapterStatus: 'api-integration' },
+  { id: 'netlify', name: 'Netlify', domains: ['netlify.app'], appTypes: ['static', 'node'], supportsContainers: false, supportsPersistentServices: false, adapterStatus: 'api-integration' },
 ]);
 
 export const HOSTING_PROVIDER_BY_ID = new Map(HOSTING_PROVIDERS.map((provider) => [provider.id, provider]));
