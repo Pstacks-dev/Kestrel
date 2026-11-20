@@ -1,8 +1,17 @@
-import { decryptSecret } from '../lib/security.mjs';
+import { decryptSecret, encryptSecret, redactSecrets } from '../lib/security.mjs';
 import { deployToHostingProvider, refreshHostingDeployment } from '../deploy/providers/index.mjs';
 import { getHostingProvider, normalizeSubdomain, providerDomainCandidates } from '../deploy/providers/catalog.mjs';
 
 const ADMIN_ROLES = ['owner', 'admin'];
+
+function safeProviderError(message, credential) {
+  let knownSecrets = [String(credential || '')];
+  try {
+    const parsed = JSON.parse(String(credential || ''));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) knownSecrets = Object.values(parsed).map(String);
+  } catch {}
+  return redactSecrets(String(message || 'Provider request failed'), knownSecrets).slice(0, 500);
+}
 
 async function writeDeploymentEvent(query, deploymentId, eventType, message, metadata = {}, actorId = null) {
   try {
@@ -100,10 +109,12 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         deployFiles: req.body?.deployFiles, publishDirectory: req.body?.publishDirectory, imageRepository: req.body?.imageRepository,
         imageTag: req.body?.imageTag, registryType: req.body?.registryType, instanceSize: req.body?.instanceSize, buildpacks: req.body?.buildpacks,
       };
+      const retryPayload = encryptSecret(JSON.stringify(deploymentRequest));
+      await query(`update public.hosting_provider_deployments set retry_payload_ciphertext=$2,retry_payload_iv=$3,retry_payload_tag=$4 where id=$1`, [deploymentRecordId,retryPayload.encryptedValue,retryPayload.iv,retryPayload.authTag]);
       const result = await deployToHostingProvider(connection.provider_id, credential, deploymentRequest);
       if (!result.ok) {
-        const safeError = String(result.error || 'Provider deployment failed').slice(0, 500);
-        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,safeError]);
+        const safeError = safeProviderError(result.error || 'Provider deployment failed', credential);
+        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,metadata=metadata || $3::jsonb,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,safeError,JSON.stringify({retryable:Boolean(result.retryable),ambiguous:Boolean(result.ambiguous)})]);
         await writeDeploymentEvent(query, deploymentRecordId, 'provider.failed', 'Hosting provider rejected or failed the deployment', { error: safeError, providerId: connection.provider_id, cleanupRequired: Boolean(result.cleanupRequired), cleanupStatus: result.cleanupStatus || 'unknown' }, req.user.id);
         return res.status(502).json({ deployment: { ...record.rows[0], status: 'failed' }, error: safeError });
       }
@@ -126,6 +137,48 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         } catch { /* preserve the original failure response */ }
       }
       res.status(500).json({ error: 'Could not initiate hosting-provider deployment' });
+    }
+  });
+
+
+  app.post('/api/hosting-deployments/:deploymentId/retry', userAuth, async (req, res) => {
+    try {
+      const row = await query(`select d.*,c.encrypted_credentials,c.credentials_iv,c.credentials_auth_tag,m.role
+        from public.hosting_provider_deployments d
+        join public.hosting_provider_connections c on c.id=d.connection_id
+        join public.organization_members m on m.organization_id=d.organization_id
+        where d.id=$1 and m.user_id=$2`, [req.params.deploymentId,req.user.id]);
+      if (!row.rowCount) return res.status(404).json({ error: 'Hosting deployment not found' });
+      const d=row.rows[0];
+      if (!ADMIN_ROLES.includes(d.role)) return res.status(403).json({ error: 'Workspace admin permission required to retry deployment' });
+      if (d.status !== 'failed') return res.status(409).json({ error: 'Only failed deployments can be retried' });
+      if (d.metadata?.retryable !== true) return res.status(409).json({ error: 'This failure is not classified as safely retryable by the provider' });
+      if (d.provider_resource_id) return res.status(409).json({ error: 'A provider resource exists; retry is blocked to prevent duplicate deployments' });
+      if ((d.retry_count || 0) >= 3) return res.status(429).json({ error: 'Retry limit reached (3)' });
+      if (!d.retry_payload_ciphertext || !d.retry_payload_iv || !d.retry_payload_tag) return res.status(409).json({ error: 'Retry payload unavailable; create a new deployment instead' });
+      // Atomically claim the retry. Concurrent requests cannot start duplicate retries.
+      const claimed=await query(`update public.hosting_provider_deployments set status='provisioning',retry_count=retry_count+1,
+        error_message=null,updated_at=now(),completed_at=null where id=$1 and status='failed' and retry_count<3 and provider_resource_id is null
+        returning retry_count`,[d.id]);
+      if (!claimed.rowCount) return res.status(409).json({ error: 'Deployment retry is already in progress or no longer eligible' });
+      const payload=JSON.parse(decryptSecret(d.retry_payload_ciphertext,d.retry_payload_iv,d.retry_payload_tag));
+      const credential=decryptSecret(d.encrypted_credentials,d.credentials_iv,d.credentials_auth_tag);
+      await writeDeploymentEvent(query,d.id,'deployment.retry','Deployment retry started',{ retryCount:claimed.rows[0].retry_count },req.user.id);
+      const result=await deployToHostingProvider(d.provider_id,credential,payload);
+      if (!result.ok) {
+        const safeError=safeProviderError(result.error || 'Provider retry failed', credential);
+        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,metadata=metadata || $3::jsonb,updated_at=now(),completed_at=now() where id=$1`,[d.id,safeError,JSON.stringify({retryable:Boolean(result.retryable),ambiguous:Boolean(result.ambiguous)})]);
+        await writeDeploymentEvent(query,d.id,'provider.failed','Retry attempt failed',{ error:safeError, cleanupRequired:Boolean(result.cleanupRequired),cleanupStatus:result.cleanupStatus||'unknown' },req.user.id);
+        return res.status(502).json({ error:safeError,retryCount:claimed.rows[0].retry_count });
+      }
+      const updated=await query(`update public.hosting_provider_deployments set provider_resource_id=$2,live_url=$3,status=$4,
+        metadata=metadata || $5::jsonb,updated_at=now(),completed_at=case when $4='live' then now() else null end
+        where id=$1 returning id,status,provider_id as "providerId",provider_resource_id as "providerResourceId",live_url as "liveUrl",retry_count as "retryCount"`,
+        [d.id,result.providerDeploymentId,result.url,result.providerStatus==='live'?'live':'deploying',JSON.stringify({providerStatus:result.providerStatus})]);
+      await writeDeploymentEvent(query,d.id,'provider.accepted','Provider accepted retry deployment',{ providerStatus:result.providerStatus,providerResourceId:result.providerDeploymentId||null },req.user.id);
+      return res.status(202).json({ deployment:updated.rows[0],providerStatus:result.providerStatus });
+    } catch {
+      res.status(500).json({ error: 'Could not retry hosting deployment' });
     }
   });
 

@@ -88,3 +88,14 @@ test('AWS App Runner SigV4 signature matches independently calculated canonical 
  const expected=hmac(signingKey,stringToSign).toString('hex');
  assert.equal(auth.match(/Signature=([a-f0-9]{64})$/)?.[1],expected,'signature must use the canonical AWS request');
 });
+
+
+test('provider failures classify retry safety conservatively', async () => {
+ const digest='sha256:'+'b'.repeat(64), input={projectSlug:'retry-app',image:'registry.example/app@'+digest,appType:'docker'};
+ const rateLimited=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>response({message:'rate limited'},429)});
+ assert.equal(rateLimited.ok,false); assert.equal(rateLimited.retryable,true); assert.equal(rateLimited.ambiguous,false);
+ const serverError=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>response({message:'internal error'},500)});
+ assert.equal(serverError.ok,false); assert.equal(serverError.retryable,false); assert.equal(serverError.ambiguous,true);
+ const networkFailure=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>{throw new Error('socket timeout');}});
+ assert.equal(networkFailure.ok,false); assert.equal(networkFailure.retryable,false); assert.equal(networkFailure.ambiguous,true);
+});
