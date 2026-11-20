@@ -2592,6 +2592,8 @@ function AppShell({ page }: { page: Page }) {
                   <label>Build context<input value={hostingBuildContext} onChange={(e)=>setHostingBuildContext(e.target.value)} placeholder="." required /></label>
                   <label>Registry username secret name<input value={hostingBuildUsernameSecret} onChange={(e)=>setHostingBuildUsernameSecret(e.target.value)} required /></label>
                   <label>Registry password/token secret name<input value={hostingBuildPasswordSecret} onChange={(e)=>setHostingBuildPasswordSecret(e.target.value)} required /></label>
+                  <label><input type="checkbox" checked={hostingBuildAutoEnabled} onChange={(e)=>setHostingBuildAutoEnabled(e.target.checked)} /> Automatically build and push after future successful pipeline runs</label>
+                  <Button type="button" kind="light" disabled={hostingBusy||!hostingDeployProject} onClick={saveContainerBuildSettings}>Save auto-build settings</Button>
                   <Button type="submit" disabled={hostingBusy||!hostingDeployProject||!hostingDeployRun}>{hostingBusy?'Queueing build…':'Build and push image'}</Button>
                 </form>
                 <div className="mt-3">{hostingContainerBuilds.slice(0,5).map((build:any)=><div className="table-row" key={build.id}><b>{build.imageRef||build.imageRepository+':'+build.imageTag}</b><span>{build.status} · {String(build.commitSha||'').slice(0,8)}</span>{build.errorMessage&&<small className="text-red-500">{build.errorMessage}</small>}</div>)}</div>
