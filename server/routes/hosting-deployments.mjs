@@ -1,5 +1,6 @@
 import { decryptSecret } from '../lib/security.mjs';
-import { deployToHostingProvider, refreshHostingDeployment } from '../deploy/providers/index.mjs';
+import { deployToHostingProvider, refreshHostingDeployment, getHostingDeploymentLogs, cleanupHostingDeployment } from '../deploy/providers/index.mjs';
+import { redactSecrets } from '../lib/security.mjs';
 import { getHostingProvider, normalizeSubdomain, providerDomainCandidates } from '../deploy/providers/catalog.mjs';
 
 const ADMIN_ROLES = ['owner', 'admin'];
@@ -138,6 +139,53 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       res.json({ deployment: updated.rows[0], providerStatus: refreshed.providerStatus });
     } catch { res.status(500).json({ error: 'Could not refresh hosting deployment status' }); }
   });
+  app.get('/api/hosting-deployments/:deploymentId/logs', userAuth, async (req, res) => {
+    try {
+      const row = await query(
+        `select d.*, c.encrypted_credentials,c.credentials_iv,c.credentials_auth_tag,m.role
+         from public.hosting_provider_deployments d
+         join public.hosting_provider_connections c on c.id=d.connection_id
+         join public.organization_members m on m.organization_id=d.organization_id
+         where d.id=$1 and m.user_id=$2`,
+        [req.params.deploymentId,req.user.id]
+      );
+      if (!row.rowCount) return res.status(404).json({ error: 'Hosting deployment not found' });
+      const d=row.rows[0];
+      const credential=decryptSecret(d.encrypted_credentials,d.credentials_iv,d.credentials_auth_tag);
+      const result=await getHostingDeploymentLogs(d.provider_id,credential,{providerResourceId:d.provider_resource_id,metadata:d.metadata||{}});
+      if (!result.ok) return res.status(501).json({ error: result.error });
+      const knownSecrets=[credential];
+      try { const parsed=JSON.parse(credential); knownSecrets.push(...Object.values(parsed).filter(v=>typeof v==='string')); } catch {}
+      res.json({ deploymentId:d.id, providerId:d.provider_id, logs:redactSecrets(result.logs,knownSecrets) });
+    } catch { res.status(500).json({ error: 'Could not retrieve provider deployment logs' }); }
+  });
+
+  app.post('/api/hosting-deployments/:deploymentId/cleanup', userAuth, async (req, res) => {
+    try {
+      const row=await query(
+        `select d.*,c.encrypted_credentials,c.credentials_iv,c.credentials_auth_tag,m.role
+         from public.hosting_provider_deployments d
+         join public.hosting_provider_connections c on c.id=d.connection_id
+         join public.organization_members m on m.organization_id=d.organization_id
+         where d.id=$1 and m.user_id=$2`,
+        [req.params.deploymentId,req.user.id]
+      );
+      if (!row.rowCount) return res.status(404).json({error:'Hosting deployment not found'});
+      const d=row.rows[0];
+      if (!ADMIN_ROLES.includes(d.role)) return res.status(403).json({error:'Workspace admin permission required to cleanup provider resources'});
+      if (d.status !== 'failed') return res.status(409).json({error:'Cleanup is only allowed for deployments marked failed'});
+      const credential=decryptSecret(d.encrypted_credentials,d.credentials_iv,d.credentials_auth_tag);
+      const cleaned=await cleanupHostingDeployment(d.provider_id,credential,{providerResourceId:d.provider_resource_id,metadata:d.metadata||{}});
+      if (!cleaned.ok) return res.status(502).json({error:cleaned.error});
+      const updated=await query(
+        `update public.hosting_provider_deployments set status='cancelled',error_message=null,metadata=metadata || $2::jsonb,updated_at=now(),completed_at=now()
+         where id=$1 and status='failed' returning id,status,provider_id as "providerId",project_slug as "projectSlug",updated_at as "updatedAt"`,
+        [d.id,JSON.stringify({cleanupCompletedAt:new Date().toISOString(),cleanupResourceId:cleaned.deletedResourceId})]
+      );
+      res.json({ok:true,deployment:updated.rows[0],cleanupScope:'Provider resource deleted. Some providers delete the entire app/service rather than only one deployment.'});
+    } catch {res.status(500).json({error:'Could not cleanup failed hosting deployment'});}
+  });
+
   app.get('/api/hosting-deployments/:deploymentId', userAuth, async (req, res) => {
     try {
       const row = await query(
