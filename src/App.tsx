@@ -860,6 +860,13 @@ function AppShell({ page }: { page: Page }) {
     if (page === 'settings' && organizationId && accessToken) loadHostingConnections();
   }, [page, organizationId, accessToken]);
 
+  useEffect(() => {
+    if (page !== 'settings' || !hostingDeployProject || !accessToken) return;
+    loadContainerBuilds(hostingDeployProject);
+    const poll = setInterval(() => loadContainerBuilds(hostingDeployProject), 5000);
+    return () => clearInterval(poll);
+  }, [page, hostingDeployProject, accessToken]);
+
   // Periodic polling for active runs
   useEffect(() => {
     if (!accessToken || !organizationId) return;
@@ -2568,7 +2575,7 @@ function AppShell({ page }: { page: Page }) {
               </div>
               <form className="project-form" onSubmit={deployHostingProvider}>
                 <label>Provider<select value={hostingProviderId} onChange={(e) => { const nextId=e.target.value; setHostingProviderId(nextId); const supported=hostingProviders.find((provider) => provider.id === nextId)?.appTypes || []; if (supported.length && !supported.includes(hostingDeployAppType)) setHostingDeployAppType(supported[0]); }}>{hostingProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-                <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); setHostingDeployContainerBuildId(''); setHostingDeployImage(''); loadContainerBuilds(e.target.value); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+                <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); setHostingDeployContainerBuildId(''); setHostingDeployImage(''); const selected=snapshot?.projects?.find((p:any)=>p.id===e.target.value); const repoUrl=selected?.repo||selected?.repository_url||''; try { const parsed=new URL(repoUrl); const parts=parsed.pathname.split('/').filter(Boolean); if(parsed.hostname==='github.com'&&parts.length>=2)setHostingBuildRepository(parts[0]+'/'+parts[1].replace(/\\.git$/,'')); } catch {} loadContainerBuilds(e.target.value); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
                 <label>Successful run<select value={hostingDeployRun} onChange={(e) => { setHostingDeployRun(e.target.value); setHostingDeployContainerBuildId(''); setHostingDeployImage(''); }}><option value="">Select successful run</option>{(snapshot?.runs || []).filter((run: any) => run.projectId === hostingDeployProject && run.status === 'succeeded').map((run: any) => <option key={run.id} value={run.id}>#{run.runNumber} · {run.branch} · {String(run.commitSha || '').slice(0,8)}</option>)}</select></label>
                 <label>Requested subdomain<input value={hostingDeploySlug} onChange={(e) => setHostingDeploySlug(e.target.value)} placeholder="my-project" required minLength={2} maxLength={63} /></label>
                 <label>Completed container build<select value={hostingDeployContainerBuildId} onChange={(e) => { const build=hostingContainerBuilds.find((b:any)=>b.id===e.target.value); setHostingDeployContainerBuildId(e.target.value); setHostingDeployImage(build?.imageRef||''); if(build)setHostingDeployAppType('docker'); }}><option value="">Manual image / provider source build</option>{hostingContainerBuilds.filter((b:any)=>b.sourcePipelineRunId===hostingDeployRun&&b.status==='succeeded').map((b:any)=><option key={b.id} value={b.id}>{b.imageRef} · {b.status}</option>)}</select></label><label>Immutable image reference<input value={hostingDeployImage} onChange={(e) => { setHostingDeployImage(e.target.value); setHostingDeployContainerBuildId(''); }} placeholder="registry/app@sha256:…" /></label>
