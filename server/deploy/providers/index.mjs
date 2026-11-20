@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 const BASE={
  render:'https://api.render.com/v1', railway:'https://backboard.railway.app/graphql/v2',
- flyio:'https://api.fly.io', cloudRun:'https://run.googleapis.com',
+ flyio:'https://api.machines.dev', cloudRun:'https://run.googleapis.com',
  aws:'https://apprunner.amazonaws.com', azure:'https://management.azure.com',
  digitalocean:'https://api.digitalocean.com/v2', heroku:'https://api.heroku.com',
  vercel:'https://api.vercel.com', netlify:'https://api.netlify.com/api/v1'
