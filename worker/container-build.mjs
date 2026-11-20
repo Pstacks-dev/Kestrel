@@ -5,34 +5,52 @@ import path from 'node:path';
 
 export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,signal,spawnImpl=spawn,maxCaptureBytes=256*1024,maxLineBytes=16*1024}={}) {
   const started=Date.now();
+  const captureLimit=Math.max(0,Number.isFinite(maxCaptureBytes)?maxCaptureBytes:256*1024);
+  const lineLimit=Math.max(256,Number.isFinite(maxLineBytes)?maxLineBytes:16*1024);
   return new Promise((resolve)=>{
-    const child=spawnImpl(command,args,{cwd,env,shell:false,stdio:['pipe','pipe','pipe']});
-    let stdout='',stderr='',tail={stdout:'',stderr:''},captured={stdout:0,stderr:0},truncated={stdout:false,stderr:false},timedOut=false;
+    let settled=false, timedOut=false, killTimer=null;
+    let stdout='',stderr='',tail={stdout:'',stderr:''},captured={stdout:0,stderr:0},truncated={stdout:false,stderr:false};
+    const safeLine=(stream,line)=>{try{onLine?.(stream,line);}catch{/* Logging must not break build execution. */}};
     const capture=(stream,text)=>{
-      const remaining=Math.max(0,maxCaptureBytes-captured[stream]);
+      const remaining=Math.max(0,captureLimit-captured[stream]);
       if(remaining>0){const kept=text.slice(0,remaining);if(stream==='stdout')stdout+=kept;else stderr+=kept;captured[stream]+=kept.length;}
       if(text.length>remaining)truncated[stream]=true;
     };
-    const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),3000).unref?.();},timeoutMs||1800000);
-    const abort=()=>{timedOut=true;child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),3000).unref?.();};
-    signal?.addEventListener('abort',abort,{once:true});
-    for(const [stream,pipe] of [['stdout',child.stdout],['stderr',child.stderr]])pipe.on('data',(buf)=>{
+    let child;
+    try{child=spawnImpl(command,args,{cwd,env,shell:false,stdio:['pipe','pipe','pipe']});}
+    catch(error){return resolve({exitCode:1,stdout,stderr:String(error?.message||error).slice(0,lineLimit),durationMs:Date.now()-started});}
+    const stop=()=>{
+      if(settled)return;
+      timedOut=true;
+      try{child.kill('SIGTERM');}catch{}
+      killTimer=setTimeout(()=>{try{child.kill('SIGKILL');}catch{}},3000);
+      killTimer.unref?.();
+    };
+    const timer=setTimeout(stop,Math.max(1,Number(timeoutMs)||1800000));
+    const abort=()=>stop();
+    if(signal?.aborted)stop();
+    else signal?.addEventListener('abort',abort,{once:true});
+    for(const [stream,pipe] of [['stdout',child.stdout],['stderr',child.stderr]])pipe?.on('data',(buf)=>{
       const text=buf.toString();capture(stream,text);
       const chunks=(tail[stream]+text).split(/\r?\n/);tail[stream]=chunks.pop()||'';
-      for(const line of chunks)if(line)onLine?.(stream,line);
-      while(tail[stream].length>maxLineBytes){onLine?.(stream,tail[stream].slice(0,maxLineBytes));tail[stream]=tail[stream].slice(maxLineBytes);}
+      for(const line of chunks)if(line)safeLine(stream,line);
+      while(tail[stream].length>lineLimit){safeLine(stream,tail[stream].slice(0,lineLimit));tail[stream]=tail[stream].slice(lineLimit);}
     });
     child.on('close',(code)=>{
-      clearTimeout(timer);signal?.removeEventListener('abort',abort);
+      if(settled)return;settled=true;clearTimeout(timer);if(killTimer)clearTimeout(killTimer);signal?.removeEventListener('abort',abort);
       for(const stream of ['stdout','stderr']){
-        if(tail[stream])onLine?.(stream,tail[stream]);
+        if(tail[stream])safeLine(stream,tail[stream]);
         if(truncated[stream]){const marker='\n[output truncated; capture limit reached]';if(stream==='stdout')stdout+=marker;else stderr+=marker;}
       }
       resolve({exitCode:timedOut?124:code??1,stdout,stderr,durationMs:Date.now()-started});
     });
-    child.on('error',(error)=>{clearTimeout(timer);onLine?.('stderr',error.message);capture('stderr',error.message);resolve({exitCode:1,stdout,stderr,durationMs:Date.now()-started});});
-    if(input)child.stdin.write(input);
-    child.stdin.end();
+    child.on('error',(error)=>{
+      if(settled)return;settled=true;clearTimeout(timer);if(killTimer)clearTimeout(killTimer);signal?.removeEventListener('abort',abort);
+      safeLine('stderr',error.message);capture('stderr',error.message);
+      resolve({exitCode:1,stdout,stderr,durationMs:Date.now()-started});
+    });
+    if(input)child.stdin?.write(input);
+    child.stdin?.end();
   });
 }
 function safePath(value,{allowDot=false}={}) {
