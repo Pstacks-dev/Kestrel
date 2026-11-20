@@ -66,3 +66,13 @@ test('status refresh API adapters cover all ten providers with mocked live respo
  ];
  for(const item of cases){const result=await refreshHostingDeployment(item.id,item.cred,item.deployment,{fetchImpl:mockFetch((url,init)=>{assert.ok(url.startsWith('https://'),item.id);if(item.id==='railway')return response(item.payload);return response(item.payload);})});assert.equal(result.ok,true,item.id+': '+result.error);assert.equal(result.status,'live',item.id);assert.ok(result.url,item.id+' should return a deployment URL');}
 });
+
+test('AWS App Runner SigV4 Authorization uses lowercase canonical SignedHeaders',async()=>{
+ let captured;
+ const result=await verifyHostingProvider('aws-apprunner',credentials['aws-apprunner'],{fetchImpl:async(url,init)=>{captured={url:String(url),init};return response({ServiceSummaryList:[]});}});
+ assert.equal(result.ok,true,result.error);
+ assert.equal(captured.url,'https://apprunner.us-east-1.amazonaws.com/');
+ assert.equal(captured.init.headers['x-amz-target'],'AmazonAppRunner.ListServices');
+ assert.match(captured.init.headers.authorization,/SignedHeaders=content-type;host;x-amz-date;x-amz-target/);
+ assert.match(captured.init.headers.authorization,/Signature=[a-f0-9]{64}$/);
+});
