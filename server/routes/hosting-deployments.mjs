@@ -102,8 +102,10 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       };
       const result = await deployToHostingProvider(connection.provider_id, credential, deploymentRequest);
       if (!result.ok) {
-        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,result.error]);
-        return res.status(502).json({ deployment: { ...record.rows[0], status: 'failed' }, error: result.error });
+        const safeError = String(result.error || 'Provider deployment failed').slice(0, 500);
+        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,safeError]);
+        await writeDeploymentEvent(query, deploymentRecordId, 'provider.failed', 'Hosting provider rejected or failed the deployment', { error: safeError, providerId: connection.provider_id, cleanupRequired: Boolean(result.cleanupRequired), cleanupStatus: result.cleanupStatus || 'unknown' }, req.user.id);
+        return res.status(502).json({ deployment: { ...record.rows[0], status: 'failed' }, error: safeError });
       }
       const hostname = result.hostname || requestedHostname;
       const updated = await query(
