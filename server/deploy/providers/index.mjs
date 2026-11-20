@@ -139,7 +139,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    case 'netlify':{
     const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');metadata={siteId:site};
     const files={},uploadContents={};for(const [path,content] of Object.entries(r.deployFiles)){if(typeof content!=='string'||!path.startsWith('/')||path.includes('..'))throw new Error('Unsafe Netlify file path or content');const bytes=content.startsWith('base64:')?Buffer.from(content.slice(7),'base64'):Buffer.from(content,'utf8');if(content.startsWith('base64:')&&bytes.toString('base64')!==content.slice(7))throw new Error('Invalid base64 deploy file');files[path]=crypto.createHash('sha256').update(bytes).digest('hex');uploadContents[path]=bytes;}
-    data=await api(fetchImpl,API.netlify+'/sites/'+site+'/deploys',{method:'POST',token:t,body:{files}});id=data?.id;metadata={siteId:site};url=data?.deploy_url||data?.url;
+    data=await api(fetchImpl,API.netlify+'/sites/'+site+'/deploys',{method:'POST',token:t,body:{files}});id=data?.id;metadata={siteId:site,siteCreated:!c.siteId};url=data?.deploy_url||data?.url;
     for(const [path,bytes] of Object.entries(uploadContents)){const upload=await fetchImpl(API.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/octet-stream'},body:bytes,signal:AbortSignal.timeout(15000)});if(!upload.ok)throw new Error('Netlify file upload failed HTTP '+upload.status);}
     break;
    }
@@ -192,7 +192,7 @@ export async function getHostingDeploymentLogs(providerId, credential, deploymen
 export async function cleanupHostingDeployment(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
  const c=parseCred(credential),t=token(c),id=deployment.providerResourceId,m=deployment.metadata||{};
  try {
-  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn && !m.appName) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
+  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn && !m.appName && !(m.siteCreated && m.siteId)) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
   switch(providerId){
    case 'render': await api(fetchImpl,API.render+'/services/'+required({id},'id'),{method:'DELETE',token:t});break;
    case 'railway': {const q='mutation serviceDelete($id: String!) { serviceDelete(id: $id) }';const d=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:q,variables:{id:required(m,'serviceId')}}});if(d?.errors?.length)throw new Error('Provider service deletion failed');break;}
@@ -203,7 +203,7 @@ export async function cleanupHostingDeployment(providerId, credential, deploymen
    case 'digitalocean': await api(fetchImpl,API.do+'/apps/'+required(m,'appId'),{method:'DELETE',token:t});break;
    case 'heroku': await api(fetchImpl,API.heroku+'/apps/'+required(m,'appId'),{method:'DELETE',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'}});break;
    case 'vercel': await api(fetchImpl,API.vercel+'/v13/deployments/'+required({id},'id')+(c.teamId?'?teamId='+encodeURIComponent(c.teamId):''),{method:'DELETE',token:t});break;
-   case 'netlify': await api(fetchImpl,API.netlify+'/deploys/'+required({id},'id'),{method:'DELETE',token:t});break;
+   case 'netlify': if(id) await api(fetchImpl,API.netlify+'/deploys/'+id,{method:'DELETE',token:t}); else if(m.siteCreated) await api(fetchImpl,API.netlify+'/sites/'+required(m,'siteId'),{method:'DELETE',token:t}); else throw new Error('Netlify site is an existing connected site; cleanup will not delete it');break;
    default:return {ok:false,error:'Provider cleanup is not supported'};
   }
   return {ok:true,providerId,deletedResourceId:id||m.appId||m.serviceId||m.serviceArn||m.resourceId||m.serviceName};
