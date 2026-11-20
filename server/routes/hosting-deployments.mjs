@@ -9,6 +9,25 @@ const NETLIFY_MAX_FILES = 50;
 const NETLIFY_MAX_BYTES = 25 * 1024 * 1024;
 const safeRelativeArtifact = (name) => typeof name === 'string' && name.length <= 512 && !name.startsWith('/') && !name.includes('\\') && !/^[A-Za-z]:/.test(name) && name.split('/').every(part => part && part !== '.' && part !== '..' && !part.split('').some(char => char.charCodeAt(0) < 32));
 
+export function validateNetlifyDeployFiles(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Netlify deploy files must be an object');
+  const entries=Object.entries(input);
+  if (!entries.length || entries.length > NETLIFY_MAX_FILES) throw new Error('Netlify deploy must contain 1-50 files');
+  let total=0;const files={};
+  for (const [rawPath,content] of entries) {
+    if (typeof content !== 'string' || !rawPath.startsWith('/') || !safeRelativeArtifact(rawPath.slice(1))) throw new Error('Unsafe Netlify file path or content');
+    let bytes;
+    if (content.startsWith('base64:')) {
+      const encoded=content.slice(7);bytes=Buffer.from(encoded,'base64');
+      if (!bytes.length || bytes.toString('base64') !== encoded) throw new Error('Invalid base64 deploy file');
+    } else bytes=Buffer.from(content,'utf8');
+    if (!bytes.length || bytes.length > 10 * 1024 * 1024 || total + bytes.length > NETLIFY_MAX_BYTES) throw new Error('Netlify files exceed the 25 MiB limit');
+    total+=bytes.length;files[rawPath]=content;
+  }
+  if (!files['/index.html']) throw new Error('Netlify static deployments must include /index.html');
+  return files;
+}
+
 export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fetch, publishDirectory = '', storageUrl = process.env.SUPABASE_URL, serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY } = {}) {
   if (!storageUrl || !serviceKey) throw new Error('Artifact storage is not configured for automatic static deployments');
   const prefix = String(publishDirectory || '').trim().split('/').filter(Boolean).join('/');
@@ -73,6 +92,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       if (!provider.appTypes.includes(appType)) return res.status(400).json({ error: `${provider.name} does not support the selected application type` });
       if (!image && !sourceTarball && !gitSource && connection.provider_id !== 'netlify') return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
       if (connection.provider_id === 'netlify' && appType !== 'static') return res.status(400).json({ error: 'Netlify direct artifact deployments currently support static sites only' });
+      if (connection.provider_id === 'netlify' && req.body?.deployFiles) { try { validateNetlifyDeployFiles(req.body.deployFiles); } catch (error) { return res.status(400).json({ error: error.message }); } }
 
       const source = await query(
         `select p.organization_id,p.repository_url,p.default_branch,r.status,r.branch,r.commit_sha
