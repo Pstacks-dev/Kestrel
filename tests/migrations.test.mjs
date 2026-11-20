@@ -78,7 +78,7 @@ test('hosting deployment route marks records failed on unexpected errors after r
   const routes = await readFile(new URL('../server/routes/hosting-deployments.mjs', import.meta.url), 'utf8');
   assert.match(routes, /let deploymentRecordId = null/);
   assert.match(routes, /deploymentRecordId = record\.rows\[0\]\.id/);
-  assert.match(routes, /status='failed',error_message='Deployment request failed before provider confirmation'/);
+  assert.match(routes, /status='failed',error_message=\$4,provider_resource_id=\$2/);
   assert.match(routes, /where id=\$1 and status in \('provisioning','building','deploying'\)/);
   assert.match(routes, /Port must be an integer between 1 and 65535/);
   assert.match(routes, /Deployment environment variables contain invalid keys or values/);
