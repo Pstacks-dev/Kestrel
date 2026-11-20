@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment, getHostingDeploymentLogs, cleanupHostingDeployment } from '../server/deploy/providers/index.mjs';
+import { prepareNetlifyArtifactFiles } from '../server/routes/hosting-deployments.mjs';
 
 const ids=['render','railway','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean','heroku','vercel','netlify'];
 const response=(payload,status=200)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
@@ -121,4 +122,37 @@ test('provider log retrieval is supported for selected providers and rejects uns
  assert.equal(vercel.ok,true);assert.match(vercel.logs,/stdout/);
  const unsupported=await getHostingDeploymentLogs('render',{token:'r-token'},{providerResourceId:'srv'});
  assert.equal(unsupported.ok,false);assert.match(unsupported.error,/not supported/);
+});
+
+
+test('Netlify automatically maps successful run artifacts to publish files and keeps binary bytes',async()=>{
+ const records=[{name:'dist/index.html',object_key:'org/run/index.html',size_bytes:16},{name:'dist/assets/icon.png',object_key:'org/run/icon.png',size_bytes:8}];
+ const calls=[];
+ const files=await prepareNetlifyArtifactFiles('run-1',{
+  query:async(sql,params)=>{assert.equal(params[0],'run-1');return {rowCount:records.length,rows:records};},
+  storageUrl:'https://storage.example.test/',
+  serviceKey:'service-key-test',
+  fetchImpl:async(url,init)=>{calls.push({url,init});return new Response(url.endsWith('icon.png')?Buffer.from([0,1,2,255]):Buffer.from('<html>ok</html>'),{status:200});}
+ });
+ assert.ok(files['/index.html'].startsWith('base64:'));
+ assert.equal(Buffer.from(files['/assets/icon.png'].slice(7),'base64').toString('hex'),'000102ff');
+ assert.equal(calls.length,2);
+ assert.ok(calls.every(c=>c.url.includes('/storage/v1/object/kestrel-artifacts/')));
+ assert.equal(calls[0].init.headers.Authorization,'Bearer service-key-test');
+});
+
+test('Netlify static deployment uploads base64 artifact contents as bytes and hashes bytes',async()=>{
+ const content=Buffer.from([0,1,2,255]);
+ const expected=crypto.createHash('sha256').update(content).digest('hex');
+ const uploads=[];
+ const result=await deployToHostingProvider('netlify',{token:'nt-token',siteId:'site-123'},{projectSlug:'static-test',appType:'static',deployFiles:{'/assets/icon.png':'base64:'+content.toString('base64')}},{fetchImpl:async(url,init={})=>{
+  if(String(url).endsWith('/sites/site-123/deploys'))return response({id:'deploy-123',deploy_url:'https://static-test.netlify.app'});
+  if(String(url).includes('/deploys/deploy-123/files/')){uploads.push({url,init});return new Response('',{status:200});}
+  throw new Error('unexpected provider URL '+url);
+ }});
+ assert.equal(result.ok,true,result.error);
+ assert.equal(uploads.length,1);
+ assert.deepEqual(Buffer.from(uploads[0].init.body),content);
+ assert.equal(uploads[0].init.method,'PUT');
+ assert.equal(expected.length,64);
 });
