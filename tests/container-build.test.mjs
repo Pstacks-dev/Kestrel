@@ -9,8 +9,8 @@ import { buildAndPushContainerImage } from '../worker/container-build.mjs';
 test('container build input validator restricts registries, paths and tags',()=>{
  const good=validateContainerBuildRequest({registryHost:'ghcr.io',imageRepository:'team/web',commitSha:'a'.repeat(40)});
  assert.equal(good.ok,true);
- assert.equal(good.config.imageTag,'sha-'+ 'a'.repeat(12));
- assert.equal(good.config.imageRef,'ghcr.io/team/web:sha-'+ 'a'.repeat(12));
+ assert.equal(good.config.imageTag,'sha-'+ 'a'.repeat(40));
+ assert.equal(good.config.imageRef,'ghcr.io/team/web:sha-'+ 'a'.repeat(40));
  assert.equal(validateContainerBuildRequest({registryHost:'localhost:5000',imageRepository:'team/web',commitSha:'a'.repeat(40)}).ok,false);
  assert.equal(validateContainerBuildRequest({registryHost:'ghcr.io',imageRepository:'team/../web',commitSha:'a'.repeat(40)}).ok,false);
  assert.equal(validateContainerBuildRequest({registryHost:'ghcr.io',imageRepository:'team/web',commitSha:'a'.repeat(40),contextPath:'../outside'}).ok,false);
