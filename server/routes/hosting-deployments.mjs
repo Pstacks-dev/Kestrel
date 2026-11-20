@@ -1,4 +1,4 @@
-import { decryptSecret, encryptSecret } from '../lib/security.mjs';
+import { decryptSecret, encryptSecret, redactSecrets } from '../lib/security.mjs';
 import { deployToHostingProvider, refreshHostingDeployment } from '../deploy/providers/index.mjs';
 import { getHostingProvider, normalizeSubdomain, providerDomainCandidates } from '../deploy/providers/catalog.mjs';
 
@@ -156,7 +156,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       await writeDeploymentEvent(query,d.id,'deployment.retry','Deployment retry started',{ retryCount:claimed.rows[0].retry_count },req.user.id);
       const result=await deployToHostingProvider(d.provider_id,credential,payload);
       if (!result.ok) {
-        const safeError=String(result.error || 'Provider retry failed').slice(0,500);
+        const safeError=redactSecrets(String(result.error || 'Provider retry failed'), Object.values(credential || {})).slice(0,500);
         await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`,[d.id,safeError]);
         await writeDeploymentEvent(query,d.id,'provider.failed','Retry attempt failed',{ error:safeError, cleanupRequired:Boolean(result.cleanupRequired),cleanupStatus:result.cleanupStatus||'unknown' },req.user.id);
         return res.status(502).json({ error:safeError,retryCount:claimed.rows[0].retry_count });
