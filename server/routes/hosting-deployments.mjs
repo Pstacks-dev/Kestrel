@@ -152,7 +152,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       }
       const result = await deployToHostingProvider(connection.provider_id, credential, deploymentRequest);
       if (!result.ok) {
-        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,result.error]);
+        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,provider_resource_id=$3,metadata=metadata || $4::jsonb,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,result.error,result.providerDeploymentId||null,JSON.stringify(result.metadata||{})]);
         return res.status(502).json({ deployment: { ...record.rows[0], status: 'failed' }, error: result.error });
       }
       const hostname = result.hostname || requestedHostname;
