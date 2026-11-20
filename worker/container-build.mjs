@@ -32,7 +32,7 @@ function safePath(value,{allowDot=false}={}) {
 }
 
 export async function buildAndPushContainerImage(config,{workspace,hostWorkspace,dockerBin='docker',username,password,timeoutSeconds=1800,onLine,signal,commandRunner=runProcess}={}) {
-  if(!config||!['ghcr.io','docker.io'].includes(config.registryHost)||! /^[a-z0-9][a-z0-9._-]*(?:\\/[a-z0-9][a-z0-9._-]*)+$/.test(config.imageRepository||'')||String(config.imageRepository).includes('..')||! /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(config.imageTag||'')||!safePath(config.contextPath,{allowDot:true})||!safePath(config.dockerfilePath))return {exitCode:1,error:'Container build configuration is invalid'};
+  if(!config||!['ghcr.io','docker.io'].includes(config.registryHost)||! /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/.test(config.imageRepository||'')||String(config.imageRepository).includes('..')||! /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(config.imageTag||'')||!safePath(config.contextPath,{allowDot:true})||!safePath(config.dockerfilePath))return {exitCode:1,error:'Container build configuration is invalid'};
   if(!username||!password)return {exitCode:1,error:'Registry username or password secret is missing'};
   const context=path.resolve(workspace,config.contextPath==='.'?'':config.contextPath);
   if(context!==path.resolve(workspace)&&!context.startsWith(path.resolve(workspace)+path.sep))return {exitCode:1,error:'Build context escapes the checked-out workspace'};
