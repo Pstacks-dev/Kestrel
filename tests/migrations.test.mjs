@@ -106,3 +106,13 @@ test('container image build migration adds worker configuration and immutable di
  assert.match(migration,/enable row level security/);
  assert.match(migration,/grant all on public\.container_builds to service_role/);
 });
+
+
+test('automatic container build settings enforce per-source-run idempotency',async()=>{
+ const migration=await readFile(new URL('../db/migrations/027_auto_container_build_settings.sql',import.meta.url),'utf8');
+ assert.match(migration,/auto_build_enabled boolean/);
+ assert.match(migration,/registry_host/);
+ assert.match(migration,/container_builds_auto_run_unique/);
+ assert.match(migration,/where auto_triggered/);
+ assert.match(migration,/enable row level security/);
+});
