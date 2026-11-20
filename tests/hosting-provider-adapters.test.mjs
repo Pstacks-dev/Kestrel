@@ -26,15 +26,15 @@ test('mocked provision API contract runs for all ten hosting providers',async()=
  const digest='sha256:'+'a'.repeat(64), image='registry.example/app@'+digest;
  const deployInputs={
  render:{projectSlug:'demo',image,appType:'docker'},
- railway:{projectSlug:'demo',image},
+ railway:{projectSlug:'demo',image,commitSha:'abc123'},
  flyio:{projectSlug:'demo',image},
  'cloud-run':{projectSlug:'demo',image,port:8080},
  'aws-apprunner':{projectSlug:'demo',image,port:8080},
  'azure-container-apps':{projectSlug:'demo',image,port:8080},
- digitalocean:{projectSlug:'demo',image,imageRepository:'repo',imageTag:'sha-a',registryType:'DOCR'},
- heroku:{projectSlug:'demo',repoUrl:'https://github.com/org/repo',sourceTarball:'https://example.test/source.tgz',commitSha:'abc'},
+ digitalocean:{projectSlug:'demo',image,imageRepository:'repo',imageTag:'sha-abc123',registryType:'DOCR',commitSha:'abc123'},
+ heroku:{projectSlug:'demo',repoUrl:'https://github.com/org/repo',sourceTarball:'https://example.test/abc-source.tgz',commitSha:'abc'},
  vercel:{projectSlug:'demo',gitSource:{org:'org',repo:'repo',ref:'main',sha:'abc'}},
- netlify:{projectSlug:'demo',repoUrl:'https://github.com/org/repo',deployFiles:{'/index.html':'sha'}},
+ netlify:{projectSlug:'demo',repoUrl:'https://github.com/org/repo',deployFiles:{'/index.html':'<html>hello</html>'}},
  };
  const urlResponses={
  render:{service:{id:'render-svc',url:'https://demo.onrender.com'}},
