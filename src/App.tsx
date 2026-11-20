@@ -609,6 +609,18 @@ function AppShell({ page }: { page: Page }) {
   const [hostingProviderId, setHostingProviderId] = useState('render');
   const [hostingConnectionName, setHostingConnectionName] = useState('Render account');
   const [hostingCredential, setHostingCredential] = useState('');
+  const hostingCredentialExamples: Record<string, string> = {
+    render: '{"token":"RENDER_API_TOKEN","ownerId":"workspace-id"}',
+    railway: '{"token":"RAILWAY_TOKEN","projectId":"project-id","environmentId":"environment-id"}',
+    flyio: '{"token":"FLY_API_TOKEN","orgSlug":"organization-slug"}',
+    "cloud-run": '{"accessToken":"GOOGLE_OAUTH_ACCESS_TOKEN","projectId":"project-id","region":"us-central1"}',
+    "aws-apprunner": '{"accessKeyId":"AWS_ACCESS_KEY_ID","secretAccessKey":"AWS_SECRET_ACCESS_KEY","region":"us-east-1","accessRoleArn":"arn:aws:iam::123456789012:role/AppRunnerECRAccess","sessionToken":"optional"}',
+    "azure-container-apps": '{"accessToken":"AZURE_ACCESS_TOKEN","subscriptionId":"subscription-id","resourceGroup":"resource-group","location":"eastus","containerAppEnvironmentId":"resource-id"}',
+    digitalocean: '{"token":"DIGITALOCEAN_TOKEN","region":"nyc"}',
+    heroku: '{"token":"HEROKU_API_TOKEN","region":"us"}',
+    vercel: '{"token":"VERCEL_TOKEN","projectId":"project-id","teamId":"optional-team-id"}',
+    netlify: '{"token":"NETLIFY_TOKEN","siteId":"optional-site-id"}',
+  };
   const [hostingBusy, setHostingBusy] = useState(false);
   const [hostingMessage, setHostingMessage] = useState('');
   const [hostingDeployProject, setHostingDeployProject] = useState('');
@@ -2462,7 +2474,7 @@ function AppShell({ page }: { page: Page }) {
               <form className="project-form" onSubmit={saveHostingConnection}>
                 <label>
                   Provider
-                  <select value={hostingProviderId} onChange={(e) => { setHostingProviderId(e.target.value); setHostingConnectionName(`${hostingProviders.find((provider) => provider.id === e.target.value)?.name || e.target.value} account`); }}>
+                  <select value={hostingProviderId} onChange={(e) => { setHostingProviderId(e.target.value); setHostingCredential(''); setHostingConnectionName(`${hostingProviders.find((provider) => provider.id === e.target.value)?.name || e.target.value} account`); }}>
                     {hostingProviders.map((provider) => <option value={provider.id} key={provider.id}>{provider.name}{provider.adapterStatus === 'api-integration' ? ' · API ready' : ' · unavailable'}</option>)}
                   </select>
                 </label>
@@ -2472,7 +2484,8 @@ function AppShell({ page }: { page: Page }) {
                 </label>
                 <label>
                   API token / access key
-                  <input type="password" autoComplete="off" value={hostingCredential} onChange={(e) => setHostingCredential(e.target.value)} placeholder="API token or provider JSON configuration" required />
+                  <input type="password" autoComplete="off" value={hostingCredential} onChange={(e) => setHostingCredential(e.target.value)} placeholder="Paste API token or provider JSON" required />
+                  <small className="block mt-1 text-neutral-500">For providers with multiple fields, paste a JSON object. Example: {hostingCredentialExamples[hostingProviderId] || '{"token":"PROVIDER_API_TOKEN"}'}</small>
                 </label>
                 <Button type="submit" disabled={hostingBusy || !hostingCredential.trim()}>{hostingBusy ? 'Saving…' : 'Save encrypted credential'}</Button>
               </form>
