@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { validateContainerBuildRequest } from '../server/lib/container-build-validation.mjs';
-import { buildAndPushContainerImage } from '../worker/container-build.mjs';
+import { buildAndPushContainerImage, runProcess } from '../worker/container-build.mjs';
 
 test('container build input validator restricts registries, paths and tags',()=>{
  const good=validateContainerBuildRequest({registryHost:'ghcr.io',imageRepository:'team/web',commitSha:'a'.repeat(40)});
@@ -106,4 +106,17 @@ test('container build runner rejects symlinked context escape before Docker is c
   const result=await buildAndPushContainerImage({registryHost:'ghcr.io',imageRepository:'team/web',imageTag:'sha-escape',dockerfilePath:'Dockerfile',contextPath:'escape'},{workspace,hostWorkspace:workspace,username:'u',password:'p',commandRunner:async()=>{called=true;return {exitCode:0,stdout:'',durationMs:1};}});
   assert.equal(result.exitCode,1);assert.match(result.error,/escapes the workspace/);assert.equal(called,false);
  }finally{await rm(workspace,{recursive:true,force:true});await rm(outside,{recursive:true,force:true});}
+});
+
+
+test('container build process bounds captured stdout, stderr, and unterminated log lines',async()=>{
+ const lines=[];
+ const result=await runProcess(process.execPath,['-e',"process.stdout.write('x'.repeat(400000));process.stderr.write('y'.repeat(400000));"],{timeoutMs:10000,onLine:(stream,line)=>lines.push({stream,line}),maxCaptureBytes:64*1024,maxLineBytes:4096});
+ assert.equal(result.exitCode,1);
+ assert.ok(result.stdout.length<=64*1024+'\\n[output truncated; capture limit reached]'.length);
+ assert.ok(result.stderr.length<=64*1024+'\\n[output truncated; capture limit reached]'.length);
+ assert.match(result.stdout,/output truncated/);
+ assert.match(result.stderr,/output truncated/);
+ assert.ok(lines.some(item=>item.stream==='stdout'&&item.line.length<=4096));
+ assert.ok(lines.some(item=>item.stream==='stderr'&&item.line.length<=4096));
 });
