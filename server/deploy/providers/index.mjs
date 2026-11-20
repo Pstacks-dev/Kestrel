@@ -55,7 +55,7 @@ export async function verifyHostingProvider(providerId,credential,{fetchImpl=fet
    case 'netlify':{const d=await api(fetchImpl,API.netlify+'/sites?per_page=1',{token:t});return {ok:true,providerId,accountLabel:'Netlify',sampleCount:Array.isArray(d)?d.length:undefined};}
    default:return {ok:false,providerId,error:'Unknown provider'};
   }
- }catch(e){return {ok:false,providerId,error:safeErr(e)};}
+ }catch(e){return {ok:false,providerId,error:safeErr(e),providerDeploymentId:id||null,metadata};}
 }
 function validate(providerId,r){
  const image=r.image||r.containerImage;
@@ -93,7 +93,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
     if(domain?.errors?.length)throw new Error('Railway public domain creation failed');url=domain?.data?.serviceDomainCreate?.domain?'https://'+domain.data.serviceDomainCreate.domain:null;metadata.serviceDomainId=domain?.data?.serviceDomainCreate?.id;break;
    }
    case 'flyio':{
-    const org=required(c,'orgSlug');const app=await api(fetchImpl,API.fly+'/v1/apps',{method:'POST',token:t,body:{app_name:slug,org_slug:org}});
+    const org=required(c,'orgSlug');const app=await api(fetchImpl,API.fly+'/v1/apps',{method:'POST',token:t,body:{app_name:slug,org_slug:org}});metadata={appName:slug};id=app?.id||slug;
     const allocate='mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { app { sharedIpAddress } } }';
     const ip4=await api(fetchImpl,API.flyGraph,{method:'POST',token:t,body:{query:allocate,variables:{input:{appId:slug,type:'shared_v4',region:''}}}});if(ip4?.errors?.length)throw new Error('Fly shared IPv4 allocation failed');
     const allocate6='mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { ipAddress { id address type region createdAt } } }';
@@ -127,7 +127,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    }
    case 'heroku':{
     let archive;try{archive=new URL(r.sourceTarball);}catch{}if(!archive||archive.protocol!=='https:'||!archive.pathname.includes(r.commitSha))throw new Error('Heroku archive must be HTTPS and include validated commit SHA');
-    const app=await api(fetchImpl,API.heroku+'/apps',{method:'POST',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{name:slug,region:c.region||'us'}});
+    const app=await api(fetchImpl,API.heroku+'/apps',{method:'POST',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{name:slug,region:c.region||'us'}});metadata={appId:app?.id,webUrl:app?.web_url};
     const build=await api(fetchImpl,API.heroku+'/apps/'+app.id+'/builds',{method:'POST',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{source:{url:r.sourceTarball,version:r.commitSha},buildpacks:r.buildpacks}});
     id=build?.id;metadata={appId:app?.id,webUrl:app?.web_url};url=app?.web_url;data={app,build};break;
    }
@@ -137,7 +137,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
     id=data?.id;metadata={teamId:c.teamId};url=data?.url?'https://'+data.url:null;break;
    }
    case 'netlify':{
-    const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');
+    const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');metadata={siteId:site};
     const files={},uploadContents={};for(const [path,content] of Object.entries(r.deployFiles)){if(typeof content!=='string'||!path.startsWith('/')||path.includes('..'))throw new Error('Unsafe Netlify file path or content');const bytes=content.startsWith('base64:')?Buffer.from(content.slice(7),'base64'):Buffer.from(content,'utf8');if(content.startsWith('base64:')&&bytes.toString('base64')!==content.slice(7))throw new Error('Invalid base64 deploy file');files[path]=crypto.createHash('sha256').update(bytes).digest('hex');uploadContents[path]=bytes;}
     data=await api(fetchImpl,API.netlify+'/sites/'+site+'/deploys',{method:'POST',token:t,body:{files}});id=data?.id;metadata={siteId:site};url=data?.deploy_url||data?.url;
     for(const [path,bytes] of Object.entries(uploadContents)){const upload=await fetchImpl(API.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/octet-stream'},body:bytes,signal:AbortSignal.timeout(15000)});if(!upload.ok)throw new Error('Netlify file upload failed HTTP '+upload.status);}
