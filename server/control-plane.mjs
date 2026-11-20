@@ -1399,7 +1399,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
     );
 
     const sourceRun=await c.query('select r.status,r.project_id,r.commit_sha,r.branch,p.organization_id from public.pipeline_runs r join public.projects p on p.id=r.project_id where r.id=$1 for update',[runId]);
-    if (!isContainerBuild && sourceRun.rowCount && sourceRun.rows[0].status==='succeeded') {
+    if (!isContainerBuild && buildJob.rows[0].job_type !== 'deployment' && sourceRun.rowCount && sourceRun.rows[0].status==='succeeded') {
       const s=sourceRun.rows[0];
       const settings=await c.query('select * from public.container_build_settings where project_id=$1 and auto_build_enabled=true',[s.project_id]);
       if(settings.rowCount) {
