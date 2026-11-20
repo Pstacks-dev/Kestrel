@@ -24,6 +24,7 @@ import { registerDeploymentRoutes } from './routes/deployments.mjs';
 import { registerHostingProviderRoutes } from './routes/hosting-providers.mjs';
 import { registerHostingDeploymentRoutes } from './routes/hosting-deployments.mjs';
 import { registerContainerBuildRoutes } from './routes/container-builds.mjs';
+import { validateContainerBuildRequest } from './lib/container-build-validation.mjs';
 import { registerComputeRoutes } from './routes/compute.mjs';
 import { registerSandboxRoutes } from './routes/sandboxes.mjs';
 
@@ -1397,6 +1398,29 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
       [runId]
     );
 
+    const sourceRun=await c.query('select r.status,r.project_id,r.commit_sha,r.branch,p.organization_id from public.pipeline_runs r join public.projects p on p.id=r.project_id where r.id=$1 for update',[runId]);
+    if (!isContainerBuild && sourceRun.rowCount && sourceRun.rows[0].status==='succeeded') {
+      const s=sourceRun.rows[0];
+      const settings=await c.query('select * from public.container_build_settings where project_id=$1 and auto_build_enabled=true',[s.project_id]);
+      if(settings.rowCount) {
+        const existingAuto=await c.query('select id from public.container_builds where source_pipeline_run_id=$1 and auto_triggered=true',[runId]);
+        if(!existingAuto.rowCount) {
+          const cfg=settings.rows[0];
+          const valid=validateContainerBuildRequest({...cfg,registryHost:cfg.registry_host,imageRepository:cfg.image_repository,dockerfilePath:cfg.dockerfile_path,contextPath:cfg.context_path,usernameSecret:cfg.username_secret,passwordSecret:cfg.password_secret,commitSha:s.commit_sha});
+          const registrySecrets=await c.query('select name from public.project_secrets where project_id=$1 and name=any($2)',[s.project_id,[cfg.username_secret,cfg.password_secret]]);
+          if(valid.ok&&registrySecrets.rowCount===2) {
+            const next=await c.query('select coalesce(max(run_number),0)+1 as n from public.pipeline_runs where project_id=$1',[s.project_id]);
+            const buildRun=await c.query(`insert into public.pipeline_runs(project_id,run_number,branch,commit_sha,commit_message,status,triggered_by)
+              values($1,$2,$3,$4,$5,'queued',$6) returning id,run_number`,[s.project_id,next.rows[0].n,s.branch,s.commit_sha,('Automatic container build: '+valid.config.imageRef).slice(0,300),null]);
+            const job=await c.query(`insert into public.jobs(run_id,external_id,name,stage,command,needs,memory_limit_mb,cpu_millicores,timeout_seconds,max_retries,job_type,container_build_config)
+              values($1,'container-image','Auto build and push container image','package','kestrel-container-build','{}',4096,2000,1800,0,'container_build',$2::jsonb) returning id`,[buildRun.rows[0].id,JSON.stringify(valid.config)]);
+            await c.query(`insert into public.container_builds(organization_id,project_id,source_pipeline_run_id,build_pipeline_run_id,job_id,registry_host,image_repository,image_tag,dockerfile_path,context_path,status,auto_triggered)
+              values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',true)`,[s.organization_id,s.project_id,runId,buildRun.rows[0].id,job.rows[0].id,valid.config.registryHost,valid.config.imageRepository,valid.config.imageTag,valid.config.dockerfilePath,valid.config.contextPath]);
+            await c.query('insert into public.audit_events(organization_id,action,target_type,target_id,metadata) values($1,$2,$3,$4,$5::jsonb)',[s.organization_id,'container_build.auto_queued','pipeline_run',runId,JSON.stringify({buildRunId:buildRun.rows[0].id,imageRef:valid.config.imageRef})]);
+          }
+        }
+      }
+    }
     const remaining = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [req.worker.id]);
     await c.query(
       "update public.workers set state = case when state in ('draining', 'offline') then state when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
