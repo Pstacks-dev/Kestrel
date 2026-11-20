@@ -209,3 +209,14 @@ test('Railway uses an immutable image when both source repository and image are 
  assert.equal(result.ok,true,result.error);
  assert.deepEqual(createPayload.variables.input.source,{image});
 });
+
+
+test('provider failures classify retry safety conservatively', async () => {
+ const digest='sha256:'+'b'.repeat(64), input={projectSlug:'retry-app',image:'registry.example/app@'+digest,appType:'docker'};
+ const rateLimited=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>response({message:'rate limited'},429)});
+ assert.equal(rateLimited.ok,false); assert.equal(rateLimited.retryable,true); assert.equal(rateLimited.ambiguous,false);
+ const serverError=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>response({message:'internal error'},500)});
+ assert.equal(serverError.ok,false); assert.equal(serverError.retryable,false); assert.equal(serverError.ambiguous,true);
+ const networkFailure=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>{throw new Error('socket timeout');}});
+ assert.equal(networkFailure.ok,false); assert.equal(networkFailure.retryable,false); assert.equal(networkFailure.ambiguous,true);
+});
