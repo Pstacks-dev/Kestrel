@@ -26,6 +26,13 @@ import { registerHostingDeploymentRoutes } from './routes/hosting-deployments.mj
 import { registerComputeRoutes } from './routes/compute.mjs';
 import { registerSandboxRoutes } from './routes/sandboxes.mjs';
 
+if (process.env.NODE_ENV === 'production') {
+  const missing = [];
+  if (!process.env.KESTREL_ENCRYPTION_KEY || process.env.KESTREL_ENCRYPTION_KEY.length < 32) missing.push('KESTREL_ENCRYPTION_KEY (at least 32 characters)');
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) missing.push('JWT_SECRET (at least 32 characters, separate from the encryption key)');
+  if (missing.length) throw new Error('Production security configuration is incomplete: ' + missing.join(', '));
+}
+
 const app = express();
 const port = Number(process.env.PORT || 4000);
 
