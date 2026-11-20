@@ -83,7 +83,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    case 'railway':{
     const projectId=required(c,'projectId'),environmentId=required(c,'environmentId');
     const create='mutation serviceCreate($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }';
-    const created=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:create,variables:{input:{projectId,name:slug,source:repoUrl?{repo:repoUrl}:{image},variables:env}}}});
+    const created=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:create,variables:{input:{projectId,name:slug,source:image?{image}:repoUrl?{repo:repoUrl}:undefined,variables:env}}}});
     if(created?.errors?.length)throw new Error('Railway service creation failed');const service=created?.data?.serviceCreate;if(!service?.id)throw new Error('Railway missing service id');
     const deploy='mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }';
     const deployed=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:deploy,variables:{serviceId:service.id,environmentId,commitSha:r.commitSha}}});

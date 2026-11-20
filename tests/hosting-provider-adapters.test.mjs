@@ -196,3 +196,16 @@ test('Heroku automatic source archive refuses private repos and unsafe repositor
  await assert.rejects(()=>prepareHerokuSourceArchive({repositoryUrl:'https://github.com/private/repo',commitSha:'b'.repeat(40),organizationId:'org',runId:'run',query:async()=>({rowCount:1}),storageUrl:'https://storage.example.test',serviceKey:'secret',fetchImpl:async()=>new Response('',{status:404})}),/Repository is private/);
  await assert.rejects(()=>prepareHerokuSourceArchive({repositoryUrl:'https://evil.example/repo',commitSha:'b'.repeat(40),organizationId:'org',runId:'run',query:async()=>({rowCount:1}),storageUrl:'https://storage.example.test',serviceKey:'secret',fetchImpl:async()=>{throw new Error('should not fetch')}}),/public GitHub repository/);
 });
+
+
+test('Railway uses an immutable image when both source repository and image are supplied',async()=>{
+ const image='ghcr.io/team/app@sha256:'+'f'.repeat(64);let createPayload;
+ const result=await deployToHostingProvider('railway',{token:'railway-token',projectId:'project',environmentId:'environment'},{projectSlug:'demo',image,repoUrl:'https://github.com/team/app',commitSha:'c'.repeat(40)},{fetchImpl:async(url,init)=>{
+  if(String(url).includes('graphql')&&init.body.includes('serviceCreate')){createPayload=JSON.parse(init.body);return response({data:{serviceCreate:{id:'service-id'}}});}
+  if(String(url).includes('graphql')&&init.body.includes('serviceInstanceDeployV2'))return response({data:{serviceInstanceDeployV2:'deploy-id'}});
+  if(String(url).includes('graphql')&&init.body.includes('serviceDomainCreate'))return response({data:{serviceDomainCreate:{domain:'demo.up.railway.app'}}});
+  throw new Error('Unexpected Railway API call');
+ }});
+ assert.equal(result.ok,true,result.error);
+ assert.deepEqual(createPayload.variables.input.source,{image});
+});

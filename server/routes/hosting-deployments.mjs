@@ -100,10 +100,11 @@ export async function prepareHerokuSourceArchive({ repositoryUrl, commitSha, org
 
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
-    const { projectId, pipelineRunId, projectSlug, image, imageRepository, imageTag, registryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
+    const { projectId, pipelineRunId, projectSlug, image: suppliedImage, containerBuildId, imageRepository: suppliedImageRepository, imageTag: suppliedImageTag, registryType: suppliedRegistryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
+    let image=suppliedImage, imageRepository=suppliedImageRepository, imageTag=suppliedImageTag, registryType=suppliedRegistryType;
     const slug = normalizeSubdomain(projectSlug);
     if (!projectId || !pipelineRunId || !slug) return res.status(400).json({ error: 'Project, successful pipeline run and valid subdomain are required' });
-    if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
+    if (image && containerBuildId) return res.status(400).json({ error: 'Use either a manually supplied image or a completed container build, not both' });
     if (!env || typeof env !== 'object' || Array.isArray(env) || Object.keys(env).length > 100) return res.status(400).json({ error: 'Deployment environment variables are invalid' });
     const envEntries = Object.entries(env);
     if (envEntries.some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !['string', 'number', 'boolean'].includes(typeof value) || String(value).length > 8192) || envEntries.reduce((size, [key, value]) => size + key.length + String(value).length, 0) > 65536) {
@@ -129,7 +130,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       const provider = getHostingProvider(connection.provider_id);
       if (!provider) return res.status(400).json({ error: 'Provider is unsupported' });
       if (!provider.appTypes.includes(appType)) return res.status(400).json({ error: `${provider.name} does not support the selected application type` });
-      if (!image && !sourceTarball && !gitSource && !['netlify','heroku'].includes(connection.provider_id)) return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
+      if (!image && !sourceTarball && !gitSource && !containerBuildId && !['netlify','heroku'].includes(connection.provider_id)) return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
       if (connection.provider_id === 'netlify' && appType !== 'static') return res.status(400).json({ error: 'Netlify direct artifact deployments currently support static sites only' });
       if (connection.provider_id === 'heroku' && appType === 'docker') return res.status(400).json({ error: 'Heroku source-build deployments support Node.js or Python buildpacks; container deployment is not implemented' });
       if (connection.provider_id === 'netlify' && req.body?.deployFiles) { try { validateNetlifyDeployFiles(req.body.deployFiles); } catch (error) { return res.status(400).json({ error: error.message }); } }
@@ -146,6 +147,23 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       if (run.organization_id !== connection.organization_id) return res.status(403).json({ error: 'Project is outside this workspace' });
       if (run.status !== 'succeeded') return res.status(409).json({ error: 'Deployment is only allowed after a successful pipeline run' });
       const commitSha = run.commit_sha;
+      if (containerBuildId) {
+        const built=await query(
+          `select b.status,b.image_ref,b.image_digest,b.registry_host,b.image_repository,b.image_tag,r.commit_sha as "buildCommitSha",b.source_pipeline_run_id as "sourceRunId"
+           from public.container_builds b join public.pipeline_runs r on r.id=b.source_pipeline_run_id
+           join public.organization_members m on m.organization_id=b.organization_id
+           where b.id=$1 and b.project_id=$2 and m.user_id=$3`,
+          [containerBuildId,projectId,req.user.id]
+        );
+        if (!built.rowCount) return res.status(404).json({error:'Container build not found'});
+        if (built.rows[0].status!=='succeeded' || !built.rows[0].image_ref) return res.status(409).json({error:'Container build must finish successfully before deployment'});
+        if (built.rows[0].sourceRunId!==pipelineRunId || built.rows[0].buildCommitSha!==commitSha || !/@sha256:[a-f0-9]{64}$/i.test(built.rows[0].image_ref)) return res.status(409).json({error:'Container image must match the selected successful pipeline commit'});
+        image=built.rows[0].image_ref;
+        imageRepository=built.rows[0].image_repository;
+        imageTag=built.rows[0].image_tag;
+        registryType=built.rows[0].registry_host==='ghcr.io'?'GHCR':'DockerHub';
+      }
+      if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
       if (!commitSha) return res.status(409).json({ error: 'Successful pipeline run does not have a pinned commit SHA' });
       if (gitSource?.sha && gitSource.sha !== commitSha) return res.status(400).json({ error: 'Git source SHA must match the validated pipeline commit' });
       const repoUrl = run.repository_url;
