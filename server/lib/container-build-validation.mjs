@@ -10,7 +10,7 @@ export function validateContainerBuildRequest(input={}) {
   if(!/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/.test(imageRepository)||imageRepository.includes('..'))return fail('Image repository must be a lowercase namespace/repository path');
   const commitSha=String(input.commitSha||'');
   if(!/^[a-f0-9]{40,64}$/i.test(commitSha))return fail('A verified source commit SHA is required');
-  const imageTag=String(input.imageTag||('sha-'+commitSha.slice(0,12))).trim();
+  const imageTag=String(input.imageTag||('sha-'+commitSha)).trim();
   if(!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(imageTag))return fail('Image tag is invalid');
   const dockerfilePath=String(input.dockerfilePath||'Dockerfile').trim();
   if(!validRelativePath(dockerfilePath))return fail('Dockerfile path must be a safe relative path');
