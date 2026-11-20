@@ -78,3 +78,19 @@ test('registry login auth config is temporary and removed after push',async()=>{
   await assert.rejects(()=>stat(configDir));
  }finally{await rm(workspace,{recursive:true,force:true});}
 });
+
+
+test('auto-build settings are validated and queued after successful non-container pipeline runs',async()=>{
+ const fs=await import('node:fs/promises');
+ const route=await fs.readFile(new URL('../server/routes/container-builds.mjs',import.meta.url),'utf8');
+ const control=await fs.readFile(new URL('../server/control-plane.mjs',import.meta.url),'utf8');
+ const migration=await fs.readFile(new URL('../db/migrations/027_auto_container_build_settings.sql',import.meta.url),'utf8');
+ assert.match(route,/container-build-settings/);
+ assert.match(route,/autoBuildEnabled/);
+ assert.match(route,/registry username and password secrets/);
+ assert.match(control,/auto_build_enabled=true/);
+ assert.match(control,/container_builds where source_pipeline_run_id/);
+ assert.match(control,/auto_triggered=true/);
+ assert.match(migration,/container_build_settings/);
+ assert.match(migration,/container_builds_auto_run_unique/);
+});
