@@ -22,7 +22,10 @@ The deploy endpoint requires a successful Kestrel pipeline run with a commit SHA
 - **Vercel:** linked GitHub source and Vercel project; uses commit SHA.
 - **Netlify:** requires files from a build artifact (not an empty site build). Kestrel UI currently does not yet select/extract artifact files automatically; direct API payload can provide files.
 
-Provider-accepted deployments start in deploying status. Refresh calls query each provider's status API. A provider is marked live only when that API reports a ready/running state. Provider status polling, log streaming and rollback are not implemented yet.
+Provider-accepted deployments start in deploying status. Refresh calls query each provider's status API. A provider is marked live only when that API reports a ready/running state. Provider status polling is implemented. Provider log retrieval is available for Railway, Vercel, Heroku and Netlify where supported; other providers currently return an explicit unsupported response. Failed provider resources can be explicitly cleaned up; cleanup may delete the whole service/app. Retry and rollback workflows remain incomplete.
 
 ## Test scope
 CI includes mocked API contract tests for all ten credential verifications, deployment submissions and status refreshes. These do not prove a real provider deployment. Live testing requires user-connected accounts, valid credentials and the required provider-side projects/roles/images.
+
+
+Container image build and push details are documented in [container-image-builds.md](container-image-builds.md).

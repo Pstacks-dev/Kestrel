@@ -27,3 +27,17 @@ test('produces provider hostname candidates without claiming reservation', () =>
   assert.deepEqual(providerDomainCandidates('missing', 'sample-app'), []);
   assert.deepEqual(providerDomainCandidates('railway', '../bad'), []);
 });
+
+
+test('catalog application types match the current deployment adapters',()=>{
+ assert.deepEqual(getHostingProvider('render').appTypes,['docker']);
+ assert.deepEqual(getHostingProvider('flyio').appTypes,['docker']);
+ assert.deepEqual(getHostingProvider('cloud-run').appTypes,['docker']);
+ assert.deepEqual(getHostingProvider('aws-apprunner').appTypes,['docker']);
+ assert.deepEqual(getHostingProvider('azure-container-apps').appTypes,['docker']);
+ assert.deepEqual(getHostingProvider('digitalocean').appTypes,['docker']);
+ assert.deepEqual(getHostingProvider('heroku').appTypes,['node','python']);
+ assert.deepEqual(getHostingProvider('vercel').appTypes,['static','node']);
+ assert.deepEqual(getHostingProvider('netlify').appTypes,['static']);
+ assert.equal(getHostingProvider('heroku').supportsContainers,false);
+});

@@ -60,7 +60,7 @@ export async function verifyHostingProvider(providerId,credential,{fetchImpl=fet
 function validate(providerId,r){
  const image=r.image||r.containerImage;
  if(image&&!/@sha256:[a-fA-F0-9]{64}$/.test(image))throw new Error('Container image must be pinned to SHA-256 digest');
- if(!image&&!r.repoUrl&&!r.sourceTarball&&!r.gitSource)throw new Error('Validated source repository required');
+ if(!image&&!r.repoUrl&&!r.sourceTarball&&!r.gitSource&&!r.deployFiles)throw new Error('Validated source repository required');
  if(['render','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean'].includes(providerId)&&!image)throw new Error(providerId+' requires immutable image');
  if(providerId==='heroku'&&!r.sourceTarball)throw new Error('Heroku requires source archive');
  if(providerId==='vercel'&&!r.gitSource)throw new Error('Vercel requires Git source');
@@ -83,7 +83,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    case 'railway':{
     const projectId=required(c,'projectId'),environmentId=required(c,'environmentId');
     const create='mutation serviceCreate($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }';
-    const created=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:create,variables:{input:{projectId,name:slug,source:repoUrl?{repo:repoUrl}:{image},variables:env}}}});
+    const created=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:create,variables:{input:{projectId,name:slug,source:image?{image}:repoUrl?{repo:repoUrl}:undefined,variables:env}}}});
     if(created?.errors?.length)throw new Error('Railway service creation failed');const service=created?.data?.serviceCreate;if(!service?.id)throw new Error('Railway missing service id');
     const deploy='mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }';
     const deployed=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:deploy,variables:{serviceId:service.id,environmentId,commitSha:r.commitSha}}});
@@ -93,7 +93,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
     if(domain?.errors?.length)throw new Error('Railway public domain creation failed');url=domain?.data?.serviceDomainCreate?.domain?'https://'+domain.data.serviceDomainCreate.domain:null;metadata.serviceDomainId=domain?.data?.serviceDomainCreate?.id;break;
    }
    case 'flyio':{
-    const org=required(c,'orgSlug');const app=await api(fetchImpl,API.fly+'/v1/apps',{method:'POST',token:t,body:{app_name:slug,org_slug:org}});
+    const org=required(c,'orgSlug');const app=await api(fetchImpl,API.fly+'/v1/apps',{method:'POST',token:t,body:{app_name:slug,org_slug:org}});metadata={appName:slug};id=app?.id||slug;
     const allocate='mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { app { sharedIpAddress } } }';
     const ip4=await api(fetchImpl,API.flyGraph,{method:'POST',token:t,body:{query:allocate,variables:{input:{appId:slug,type:'shared_v4',region:''}}}});if(ip4?.errors?.length)throw new Error('Fly shared IPv4 allocation failed');
     const allocate6='mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { ipAddress { id address type region createdAt } } }';
@@ -127,7 +127,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    }
    case 'heroku':{
     let archive;try{archive=new URL(r.sourceTarball);}catch{}if(!archive||archive.protocol!=='https:'||!archive.pathname.includes(r.commitSha))throw new Error('Heroku archive must be HTTPS and include validated commit SHA');
-    const app=await api(fetchImpl,API.heroku+'/apps',{method:'POST',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{name:slug,region:c.region||'us'}});
+    const app=await api(fetchImpl,API.heroku+'/apps',{method:'POST',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{name:slug,region:c.region||'us'}});metadata={appId:app?.id,webUrl:app?.web_url};
     const build=await api(fetchImpl,API.heroku+'/apps/'+app.id+'/builds',{method:'POST',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{source:{url:r.sourceTarball,version:r.commitSha},buildpacks:r.buildpacks}});
     id=build?.id;metadata={appId:app?.id,webUrl:app?.web_url};url=app?.web_url;data={app,build};break;
    }
@@ -137,10 +137,10 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
     id=data?.id;metadata={teamId:c.teamId};url=data?.url?'https://'+data.url:null;break;
    }
    case 'netlify':{
-    const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');
-    const files={};for(const [path,content] of Object.entries(r.deployFiles)){if(typeof content!=='string'||!path.startsWith('/')||path.includes('..'))throw new Error('Unsafe Netlify file path or content');files[path]=crypto.createHash('sha256').update(content).digest('hex');}
-    data=await api(fetchImpl,API.netlify+'/sites/'+site+'/deploys',{method:'POST',token:t,body:{files}});id=data?.id;metadata={siteId:site};url=data?.deploy_url||data?.url;
-    for(const [path,content] of Object.entries(r.deployFiles)){const upload=await fetchImpl(API.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/octet-stream'},body:content,signal:AbortSignal.timeout(15000)});if(!upload.ok)throw new Error('Netlify file upload failed HTTP '+upload.status);}
+    const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');metadata={siteId:site};
+    const files={},uploadContents={};for(const [path,content] of Object.entries(r.deployFiles)){if(typeof content!=='string'||!path.startsWith('/')||path.includes('..'))throw new Error('Unsafe Netlify file path or content');const bytes=content.startsWith('base64:')?Buffer.from(content.slice(7),'base64'):Buffer.from(content,'utf8');if(content.startsWith('base64:')&&bytes.toString('base64')!==content.slice(7))throw new Error('Invalid base64 deploy file');files[path]=crypto.createHash('sha256').update(bytes).digest('hex');uploadContents[path]=bytes;}
+    data=await api(fetchImpl,API.netlify+'/sites/'+site+'/deploys',{method:'POST',token:t,body:{files}});id=data?.id;metadata={siteId:site,siteCreated:!c.siteId};url=data?.deploy_url||data?.url;
+    for(const [path,bytes] of Object.entries(uploadContents)){const upload=await fetchImpl(API.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/octet-stream'},body:bytes,signal:AbortSignal.timeout(15000)});if(!upload.ok)throw new Error('Netlify file upload failed HTTP '+upload.status);}
     break;
    }
    default:throw new Error('Unsupported provider');
@@ -167,5 +167,45 @@ export async function refreshHostingDeployment(providerId,credential,deployment,
    default:return {ok:false,error:'Unknown provider'};
   }
   return {ok:true,providerId,status,url,providerStatus:data?.status||data?.state||data?.readyState||data?.Service?.Status||null};
+ }catch(e){return {ok:false,providerId,error:safeErr(e)};}
+}
+
+
+// Retrieve provider-side logs where the provider exposes a documented deployment-log API.
+export async function getHostingDeploymentLogs(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
+ const c=parseCred(credential),t=token(c),id=deployment.providerResourceId,m=deployment.metadata||{};
+ try {
+  let data;
+  switch(providerId){
+   case 'heroku': data=await api(fetchImpl,API.heroku+'/apps/'+required(m,'appId')+'/builds/'+required({id},'id')+'/output',{token:t,headers:{Accept:'application/vnd.heroku+json; version=3'}});break;
+   case 'vercel': data=await api(fetchImpl,API.vercel+'/v2/deployments/'+required({id},'id')+'/events'+(c.teamId?'?teamId='+encodeURIComponent(c.teamId):''),{token:t});break;
+   case 'netlify': {const response=await fetchImpl(API.netlify+'/deploys/'+required({id},'id')+'/log',{headers:{Authorization:'Bearer '+t,Accept:'text/plain'},signal:AbortSignal.timeout(15000)});const text=await response.text();if(!response.ok)throw Object.assign(new Error('Provider API returned HTTP '+response.status),{provider:true,status:response.status});return {ok:true,logs:text.slice(-50000)};}
+   case 'railway': {const q='query deploymentLogs($deploymentId: String!) { deploymentLogs(deploymentId: $deploymentId) }';data=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:q,variables:{deploymentId:id}}});if(data?.errors?.length)throw new Error('Provider deployment logs unavailable');break;}
+   default:return {ok:false,error:'Provider log retrieval is not supported by this adapter yet'};
+  }
+  return {ok:true,logs:JSON.stringify(data).slice(-50000)};
+ }catch(e){return {ok:false,error:safeErr(e)};}
+}
+
+// Explicit cleanup is only invoked by a user action after the control plane verifies a failed deployment.
+// Some providers delete the entire service/app rather than only the individual deployment.
+export async function cleanupHostingDeployment(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
+ const c=parseCred(credential),t=token(c),id=deployment.providerResourceId,m=deployment.metadata||{};
+ try {
+  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn && !m.appName && !m.siteId) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
+  switch(providerId){
+   case 'render': await api(fetchImpl,API.render+'/services/'+required({id},'id'),{method:'DELETE',token:t});break;
+   case 'railway': {const q='mutation serviceDelete($id: String!) { serviceDelete(id: $id) }';const d=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:q,variables:{id:required(m,'serviceId')}}});if(d?.errors?.length)throw new Error('Provider service deletion failed');break;}
+   case 'flyio': await api(fetchImpl,API.fly+'/v1/apps/'+required(m,'appName'),{method:'DELETE',token:t});break;
+   case 'cloud-run': await api(fetchImpl,API.cloud+'/'+required({id},'id'),{method:'DELETE',token:required(c,'accessToken')});break;
+   case 'aws-apprunner': await awsApi(c,'/',{__target:'DeleteService',ServiceArn:required(m,'serviceArn')},fetchImpl);break;
+   case 'azure-container-apps': await api(fetchImpl,API.azure+required(m,'resourceId')+'?api-version=2024-03-01',{method:'DELETE',token:required(c,'accessToken')});break;
+   case 'digitalocean': await api(fetchImpl,API.do+'/apps/'+required(m,'appId'),{method:'DELETE',token:t});break;
+   case 'heroku': await api(fetchImpl,API.heroku+'/apps/'+required(m,'appId'),{method:'DELETE',token:t,headers:{Accept:'application/vnd.heroku+json; version=3'}});break;
+   case 'vercel': await api(fetchImpl,API.vercel+'/v13/deployments/'+required({id},'id')+(c.teamId?'?teamId='+encodeURIComponent(c.teamId):''),{method:'DELETE',token:t});break;
+   case 'netlify': if(id) await api(fetchImpl,API.netlify+'/deploys/'+id,{method:'DELETE',token:t}); else if(m.siteCreated) await api(fetchImpl,API.netlify+'/sites/'+required(m,'siteId'),{method:'DELETE',token:t}); else throw new Error('Netlify site is an existing connected site; cleanup will not delete it');break;
+   default:return {ok:false,error:'Provider cleanup is not supported'};
+  }
+  return {ok:true,providerId,deletedResourceId:id||m.appId||m.serviceId||m.serviceArn||m.resourceId||m.serviceName};
  }catch(e){return {ok:false,providerId,error:safeErr(e)};}
 }

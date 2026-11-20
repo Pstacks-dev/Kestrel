@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { redactSecrets } from '../server/lib/security.mjs';
 import { getDockerHostWorkspacePath } from './docker-paths.mjs';
+import { buildAndPushContainerImage } from './container-build.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
@@ -20,6 +21,10 @@ const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK === 'none' ? 'none' : 'bridge';
 const EXECUTOR = process.env.KESTREL_WORKER_EXECUTOR || 'docker'; // 'docker' | 'local' | 'mock'
+
+if (process.env.NODE_ENV === 'production' && (TOKEN === 'dev-worker-token-change-me' || TOKEN.length < 32)) {
+  throw new Error('Production workers require a separately provisioned KESTREL_WORKER_TOKEN of at least 32 characters');
+}
 
 if (process.env.NODE_ENV === 'production' && !/@sha256:[a-f0-9]{64}$/i.test(JOB_IMAGE) && EXECUTOR === 'docker') {
   throw new Error('Production workers require KESTREL_JOB_IMAGE pinned by immutable sha256 digest');
@@ -465,27 +470,39 @@ async function execute(job) {
 
     if (EXECUTOR === 'docker') await makeWorkspaceWritable(workspace);
 
-    const result = await runCommand(
-      job.command,
-      workspace,
-      (stream, message) => {
-        console.log(`[${job.name}:${stream}] ${message}`);
+    const onJobLine = (stream, message) => {
+        const safeMessage = redactSecrets(message, secretValues);
+        console.log(`[${job.name}:${stream}] ${safeMessage}`);
         if (logBytes < 10 * 1024 * 1024) {
-          logBuffer.push({ stream, message });
-          logBytes += Buffer.byteLength(message);
+          logBuffer.push({ stream, message: safeMessage });
+          logBytes += Buffer.byteLength(safeMessage);
         } else if (!logTruncated) {
           logTruncated = true;
           logBuffer.push({ stream: 'stderr', message: '[Kestrel] Log output truncated after 10 MiB limit.' });
         }
         if (logBuffer.length >= 50) flushLogs().catch(() => {});
-      },
-      job,
-      secretValues,
-      abortController.signal
-    );
+    };
+    let result;
+    if (job.jobType === 'container_build') {
+      const config=job.containerBuild||{};
+      result=await buildAndPushContainerImage(config,{
+        workspace,
+        hostWorkspace:getDockerHostWorkspacePath(ROOT,HOST_ROOT,workspace),
+        dockerBin:DOCKER,
+        username:job.secrets?.[config.usernameSecret],
+        password:job.secrets?.[config.passwordSecret],
+        timeoutSeconds:job.timeoutSeconds||1800,
+        onLine:onJobLine,
+        signal:abortController.signal,
+      });
+      if(result.imageRef)onJobLine('stdout','Published immutable image '+result.imageRef);
+      if(result.error)onJobLine('stderr',result.error);
+    } else {
+      result=await runCommand(job.command,workspace,onJobLine,job,secretValues,abortController.signal);
+    }
 
     // Collect any generated artifacts
-    if (result.exitCode === 0) {
+    if (result.exitCode === 0 && job.jobType !== 'container_build') {
       await collectArtifacts(job, workspace);
     }
 
@@ -498,6 +515,8 @@ async function execute(job) {
       leaseToken: job.leaseToken,
       status: abortController.signal.aborted ? 'canceled' : undefined,
       ...result,
+      ...(result.imageDigest ? { containerImageDigest: result.imageDigest } : {}),
+      ...(result.error ? { containerBuildError: result.error } : {}),
     });
   } finally {
     clearInterval(logTimer);

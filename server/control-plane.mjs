@@ -23,8 +23,17 @@ import { registerArtifactRoutes } from './routes/artifacts.mjs';
 import { registerDeploymentRoutes } from './routes/deployments.mjs';
 import { registerHostingProviderRoutes } from './routes/hosting-providers.mjs';
 import { registerHostingDeploymentRoutes } from './routes/hosting-deployments.mjs';
+import { registerContainerBuildRoutes } from './routes/container-builds.mjs';
+import { validateContainerBuildRequest } from './lib/container-build-validation.mjs';
 import { registerComputeRoutes } from './routes/compute.mjs';
 import { registerSandboxRoutes } from './routes/sandboxes.mjs';
+
+if (process.env.NODE_ENV === 'production') {
+  const missing = [];
+  if (!process.env.KESTREL_ENCRYPTION_KEY || process.env.KESTREL_ENCRYPTION_KEY.length < 32) missing.push('KESTREL_ENCRYPTION_KEY (at least 32 characters)');
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) missing.push('JWT_SECRET (at least 32 characters, separate from the encryption key)');
+  if (missing.length) throw new Error('Production security configuration is incomplete: ' + missing.join(', '));
+}
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1118,7 +1127,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       // Find candidate job where all dependencies succeeded
       const candidate = await c.query(
         `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id,
-                de.id as deployment_env_id, de.host_port as deployment_host_port,
+                j.container_build_config, de.id as deployment_env_id, de.host_port as deployment_host_port,
                 de.container_port as deployment_container_port, de.health_path as deployment_health_path,
                 de.health_timeout_seconds as deployment_health_timeout,
                 de.public_url as deployment_public_url, de.secret_names as deployment_secret_names,
@@ -1132,7 +1141,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          left join public.deployment_releases current_release on current_release.id = de.current_release_id
          left join public.deployment_releases new_release on new_release.id = j.deployment_release_id
          where p.organization_id = $1 and j.status = 'queued' and j.available_at <= now()
-           and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
+           and (j.job_type = 'build' or (j.job_type = 'container_build' and $3 = 'node') or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
            and not exists (
              select 1 from unnest(j.needs) d(id)
              join public.jobs dep on dep.run_id = j.run_id and dep.external_id = d.id
@@ -1162,6 +1171,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       );
 
       await c.query("update public.workers set state = 'busy', last_seen_at = now() where id = $1", [w.id]);
+      if (j.job_type === 'container_build') await c.query("update public.container_builds set status='running',updated_at=now() where job_id=$1", [j.id]);
       if (j.job_type === 'deployment' && j.deployment_release_id) {
         await c.query("update public.deployment_releases set status = 'deploying' where id = $1 and status = 'queued'", [j.deployment_release_id]);
       }
@@ -1194,6 +1204,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         timeoutSeconds: j.timeout_seconds,
         secrets,
         jobType: j.job_type || 'build',
+        containerBuild: j.job_type === 'container_build' ? j.container_build_config : null,
         deployment: j.job_type === 'deployment' ? {
           environmentId: j.deployment_env_id,
           releaseId: j.deployment_release_id,
@@ -1273,8 +1284,12 @@ app.get('/api/workers/jobs/:jobId/status', workerAuth, async (req, res) => {
 
 // Job Completion
 app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
-  const { leaseToken, exitCode, durationMs, status } = req.body || {};
-  const finalStatus = status === 'canceled' ? 'canceled' : Number(exitCode) === 0 ? 'succeeded' : 'failed';
+  const { leaseToken, exitCode, durationMs, status, containerImageDigest, containerBuildError } = req.body || {};
+  const buildJob = await query('select job_type,container_build_config from public.jobs where id=$1', [req.params.jobId]);
+  const isContainerBuild = buildJob.rowCount && buildJob.rows[0].job_type === 'container_build';
+  const digestValid = typeof containerImageDigest === 'string' && /^sha256:[a-f0-9]{64}$/i.test(containerImageDigest);
+  let finalStatus = status === 'canceled' ? 'canceled' : Number(exitCode) === 0 ? 'succeeded' : 'failed';
+  if (isContainerBuild && finalStatus === 'succeeded' && !digestValid) finalStatus = 'failed';
 
   const r = await query(
     `update public.jobs
@@ -1286,8 +1301,9 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
            when status <> 'canceled' and $3 = 'failed' and attempt <= max_retries
              then now() + make_interval(secs => (least(300, 10 * power(2, least(attempt - 1, 5))))::int)
            else available_at end,
-         exit_code = $4,
+         exit_code = case when $3 = 'failed' and $7 is null then 1 else $4 end,
          duration_ms = $5,
+         container_image_digest = case when $7 is not null then $7 else container_image_digest end,
          finished_at = case
            when status = 'canceled' then coalesce(finished_at, now())
            when $3 = 'failed' and attempt <= max_retries then null
@@ -1299,7 +1315,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
            else worker_id end
      where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled') and lease_expires_at > now()
      returning run_id, status`,
-    [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id]
+    [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id, digestValid ? containerImageDigest : null]
   );
 
   if (!r.rowCount) {
@@ -1310,6 +1326,14 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
 
   await transaction(async (c) => {
     const completedStatus = r.rows[0].status;
+    if (isContainerBuild) {
+      const buildConfig=buildJob.rows[0].container_build_config||{};
+      const imageRef=digestValid&&buildConfig.imageName?buildConfig.imageName+'@'+containerImageDigest:null;
+      await c.query(
+        `update public.container_builds set status=$2,image_digest=$3,image_ref=$4,error_message=$5,updated_at=now(),completed_at=case when $2 in ('succeeded','failed','cancelled') then now() else completed_at end where job_id=$1`,
+        [req.params.jobId,completedStatus,digestValid?containerImageDigest:null,imageRef,completedStatus==='succeeded'?null:(containerBuildError||'Container image build failed; inspect job logs')]
+      );
+    }
     const deploymentJob = await c.query(
       'select deployment_release_id from public.jobs where id = $1 and job_type = \'deployment\'',
       [req.params.jobId]
@@ -1374,6 +1398,29 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
       [runId]
     );
 
+    const sourceRun=await c.query('select r.status,r.project_id,r.commit_sha,r.branch,p.organization_id from public.pipeline_runs r join public.projects p on p.id=r.project_id where r.id=$1 for update',[runId]);
+    if (!isContainerBuild && buildJob.rows[0].job_type !== 'deployment' && sourceRun.rowCount && sourceRun.rows[0].status==='succeeded') {
+      const s=sourceRun.rows[0];
+      const settings=await c.query('select * from public.container_build_settings where project_id=$1 and auto_build_enabled=true',[s.project_id]);
+      if(settings.rowCount) {
+        const existingAuto=await c.query('select id from public.container_builds where source_pipeline_run_id=$1 and auto_triggered=true',[runId]);
+        if(!existingAuto.rowCount) {
+          const cfg=settings.rows[0];
+          const valid=validateContainerBuildRequest({...cfg,registryHost:cfg.registry_host,imageRepository:cfg.image_repository,dockerfilePath:cfg.dockerfile_path,contextPath:cfg.context_path,usernameSecret:cfg.username_secret,passwordSecret:cfg.password_secret,commitSha:s.commit_sha});
+          const registrySecrets=await c.query('select name from public.project_secrets where project_id=$1 and name=any($2)',[s.project_id,[cfg.username_secret,cfg.password_secret]]);
+          if(valid.ok&&registrySecrets.rowCount===2) {
+            const next=await c.query('select coalesce(max(run_number),0)+1 as n from public.pipeline_runs where project_id=$1',[s.project_id]);
+            const buildRun=await c.query(`insert into public.pipeline_runs(project_id,run_number,branch,commit_sha,commit_message,status,triggered_by)
+              values($1,$2,$3,$4,$5,'queued',$6) returning id,run_number`,[s.project_id,next.rows[0].n,s.branch,s.commit_sha,('Automatic container build: '+valid.config.imageRef).slice(0,300),null]);
+            const job=await c.query(`insert into public.jobs(run_id,external_id,name,stage,command,needs,memory_limit_mb,cpu_millicores,timeout_seconds,max_retries,job_type,container_build_config)
+              values($1,'container-image','Auto build and push container image','package','kestrel-container-build','{}',4096,2000,1800,0,'container_build',$2::jsonb) returning id`,[buildRun.rows[0].id,JSON.stringify(valid.config)]);
+            await c.query(`insert into public.container_builds(organization_id,project_id,source_pipeline_run_id,build_pipeline_run_id,job_id,registry_host,image_repository,image_tag,dockerfile_path,context_path,status,auto_triggered)
+              values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',true)`,[s.organization_id,s.project_id,runId,buildRun.rows[0].id,job.rows[0].id,valid.config.registryHost,valid.config.imageRepository,valid.config.imageTag,valid.config.dockerfilePath,valid.config.contextPath]);
+            await c.query('insert into public.audit_events(organization_id,action,target_type,target_id,metadata) values($1,$2,$3,$4,$5::jsonb)',[s.organization_id,'container_build.auto_queued','pipeline_run',runId,JSON.stringify({buildRunId:buildRun.rows[0].id,imageRef:valid.config.imageRef})]);
+          }
+        }
+      }
+    }
     const remaining = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [req.worker.id]);
     await c.query(
       "update public.workers set state = case when state in ('draining', 'offline') then state when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
@@ -1579,6 +1626,7 @@ registerArtifactRoutes(app, { userAuth, workerAuth, query });
 registerDeploymentRoutes(app, { userAuth, query, transaction });
 registerHostingProviderRoutes(app, { userAuth, query, transaction });
 registerHostingDeploymentRoutes(app, { userAuth, query });
+registerContainerBuildRoutes(app, { userAuth, query, transaction });
 registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerSandboxRoutes(app, { userAuth, platformAdmin, query, transaction });
 

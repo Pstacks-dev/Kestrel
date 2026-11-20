@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment } from '../server/deploy/providers/index.mjs';
+import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment, getHostingDeploymentLogs, cleanupHostingDeployment } from '../server/deploy/providers/index.mjs';
+import { prepareNetlifyArtifactFiles, validateNetlifyDeployFiles, prepareHerokuSourceArchive } from '../server/routes/hosting-deployments.mjs';
 
 const ids=['render','railway','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean','heroku','vercel','netlify'];
 const response=(payload,status=200)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
@@ -87,4 +88,124 @@ test('AWS App Runner SigV4 signature matches independently calculated canonical 
  const signingKey=hmac(hmac(hmac(hmac('AWS4'+credentials['aws-apprunner'].secretAccessKey,day),region),'apprunner'),'aws4_request');
  const expected=hmac(signingKey,stringToSign).toString('hex');
  assert.equal(auth.match(/Signature=([a-f0-9]{64})$/)?.[1],expected,'signature must use the canonical AWS request');
+});
+
+
+test('failed deployment cleanup calls provider deletion endpoint and never exposes credentials',async()=>{
+ const cases=[
+  ['render',{token:'r-token'},{providerResourceId:'srv-123'},'DELETE','/services/srv-123'],
+  ['railway',{token:'rw-token'},{metadata:{serviceId:'svc-123'}},'POST','graphql'],
+  ['flyio',{token:'fly-token'},{metadata:{appName:'demo'}},'DELETE','/apps/demo'],
+  ['cloud-run',{accessToken:'gcp-token'},{providerResourceId:'projects/p/locations/r/services/demo'},'DELETE','services/demo'],
+  ['aws-apprunner',{accessKeyId:'AKID',secretAccessKey:'secret',region:'us-east-1'},{metadata:{serviceArn:'arn:aws:apprunner:us-east-1:123:service/x/abc'}},'POST','apprunner'],
+  ['azure-container-apps',{accessToken:'azure-token'},{metadata:{resourceId:'/subscriptions/s/resourceGroups/g/providers/Microsoft.App/containerApps/demo'}},'DELETE','containerApps/demo'],
+  ['digitalocean',{token:'do-token'},{metadata:{appId:'app-123'}},'DELETE','/apps/app-123'],
+  ['heroku',{token:'hk-token'},{metadata:{appId:'app-123'}},'DELETE','/apps/app-123'],
+  ['vercel',{token:'vc-token'},{providerResourceId:'dep-123'},'DELETE','/deployments/dep-123'],
+  ['netlify',{token:'nt-token'},{providerResourceId:'deploy-123'},'DELETE','/deploys/deploy-123'],
+ ];
+ for(const [provider,cred,deploy,method,needle] of cases){
+  let hit=false;
+  const result=await cleanupHostingDeployment(provider,cred,deploy,{fetchImpl:async(url,init={})=>{
+   hit=true;assert.ok(String(url).includes(needle),provider+' endpoint');if(provider!=='railway')assert.equal(init.method,method);
+   if(provider==='railway')assert.match(init.body,/serviceDelete/);if(provider==='aws-apprunner')assert.equal(init.headers['x-amz-target'],'AmazonAppRunner.DeleteService');
+   return response({});
+  }});
+  assert.equal(result.ok,true,provider+': '+result.error);assert.equal(hit,true);
+ }
+});
+
+test('provider log retrieval is supported for selected providers and rejects unsupported providers',async()=>{
+ const netlify=await getHostingDeploymentLogs('netlify',{token:'nt-token'},{providerResourceId:'deploy-abc'},{fetchImpl:async(url,init)=>{assert.ok(String(url).includes('/deploys/deploy-abc/log'));assert.equal(init.headers.Authorization,'Bearer nt-token');return new Response('build output',{status:200});}});
+ assert.equal(netlify.ok,true);assert.equal(netlify.logs,'build output');
+ const vercel=await getHostingDeploymentLogs('vercel',{token:'vc-token'},{providerResourceId:'dep-abc'},{fetchImpl:async(url,init)=>{assert.ok(String(url).includes('/v2/deployments/dep-abc/events'));assert.equal(init.headers.Authorization,'Bearer vc-token');return response([{type:'stdout',text:'ok'}]);}});
+ assert.equal(vercel.ok,true);assert.match(vercel.logs,/stdout/);
+ const unsupported=await getHostingDeploymentLogs('render',{token:'r-token'},{providerResourceId:'srv'});
+ assert.equal(unsupported.ok,false);assert.match(unsupported.error,/not supported/);
+});
+
+
+test('Netlify automatically maps successful run artifacts to publish files and keeps binary bytes',async()=>{
+ const records=[{name:'dist/index.html',object_key:'org/run/index.html',size_bytes:16},{name:'dist/assets/icon.png',object_key:'org/run/icon.png',size_bytes:8}];
+ const calls=[];
+ const files=await prepareNetlifyArtifactFiles('run-1',{
+  query:async(sql,params)=>{assert.equal(params[0],'run-1');return {rowCount:records.length,rows:records};},
+  storageUrl:'https://storage.example.test/',
+  serviceKey:'service-key-test',
+  fetchImpl:async(url,init)=>{calls.push({url,init});return new Response(url.endsWith('icon.png')?Buffer.from([0,1,2,255]):Buffer.from('<html>ok</html>'),{status:200});}
+ });
+ assert.ok(files['/index.html'].startsWith('base64:'));
+ assert.equal(Buffer.from(files['/assets/icon.png'].slice(7),'base64').toString('hex'),'000102ff');
+ assert.equal(calls.length,2);
+ assert.ok(calls.every(c=>c.url.includes('/storage/v1/object/kestrel-artifacts/')));
+ assert.equal(calls[0].init.headers.Authorization,'Bearer service-key-test');
+});
+
+test('Netlify static deployment uploads base64 artifact contents as bytes and hashes bytes',async()=>{
+ const content=Buffer.from([0,1,2,255]);
+ const expected=crypto.createHash('sha256').update(content).digest('hex');
+ const uploads=[];let deployManifest=null;
+ const result=await deployToHostingProvider('netlify',{token:'nt-token',siteId:'site-123'},{projectSlug:'static-test',appType:'static',deployFiles:{'/assets/icon.png':'base64:'+content.toString('base64')}},{fetchImpl:async(url,init={})=>{
+  if(String(url).endsWith('/sites/site-123/deploys')){deployManifest=JSON.parse(init.body);return response({id:'deploy-123',deploy_url:'https://static-test.netlify.app'});}
+  if(String(url).includes('/deploys/deploy-123/files/')){uploads.push({url,init});return new Response('',{status:200});}
+  throw new Error('unexpected provider URL '+url);
+ }});
+ assert.equal(result.ok,true,result.error);
+ assert.equal(uploads.length,1);
+ assert.deepEqual(Buffer.from(uploads[0].init.body),content);
+ assert.equal(uploads[0].init.method,'PUT');
+ assert.equal(deployManifest.files['/assets/icon.png'],expected);
+});
+
+
+test('Netlify deploy payload validation rejects path traversal and oversized payloads',()=>{
+ assert.throws(()=>validateNetlifyDeployFiles({'/../secret':'x','/index.html':'ok'}),/Unsafe Netlify/);
+ assert.throws(()=>validateNetlifyDeployFiles({'/index.html':'x'.repeat(26*1024*1024)}),/25 MiB/);
+ assert.throws(()=>validateNetlifyDeployFiles({'/assets/a.txt':'ok'}),/index.html/);
+ assert.deepEqual(validateNetlifyDeployFiles({'/index.html':'<html></html>'}),{'/index.html':'<html></html>'});
+});
+
+test('Netlify cleanup removes only sites Kestrel created when deploy creation failed',async()=>{
+ const result=await cleanupHostingDeployment('netlify',{token:'nt-token'},{metadata:{siteId:'new-site',siteCreated:true}},{fetchImpl:async(url,init)=>{assert.ok(String(url).endsWith('/sites/new-site'));assert.equal(init.method,'DELETE');return response({});}});
+ assert.equal(result.ok,true);
+ const existing=await cleanupHostingDeployment('netlify',{token:'nt-token'},{metadata:{siteId:'linked-site',siteCreated:false}},{fetchImpl:async()=>{throw new Error('must not delete an existing site');}});
+ assert.equal(existing.ok,false);assert.match(existing.error,/existing connected site/);
+});
+
+
+test('Heroku source archive is commit-pinned, uploaded privately, signed and expires with artifacts',async()=>{
+ const sha='a'.repeat(40),archive=Buffer.from('test tarball bytes');const calls=[];let inserted=null;
+ const url=await prepareHerokuSourceArchive({repositoryUrl:'https://github.com/example/demo.git',commitSha:sha,organizationId:'org-1',runId:'run-1',storageUrl:'https://storage.example.test',serviceKey:'service-role-key',query:async(sql,args)=>{inserted={sql,args};return {rowCount:1};},fetchImpl:async(url,init={})=>{
+  calls.push({url,init});
+  if(String(url).startsWith('https://codeload.github.com/'))return new Response(archive,{status:200});
+  if(String(url).includes('/object/sign/'))return response({signedURL:'/object/sign/kestrel-artifacts/org-1/run-1/heroku-source-'+sha+'.tgz?token=signed'});
+  if(String(url).includes('/object/kestrel-artifacts/'))return new Response('',{status:200});
+  throw new Error('unexpected archive request '+url);
+ }});
+ assert.ok(url.includes(sha));assert.ok(url.includes('token=signed'));
+ assert.equal(calls.length,3);
+ assert.equal(calls[1].init.method,'POST');
+ assert.deepEqual(Buffer.from(calls[1].init.body),archive);
+ assert.match(inserted.sql,/expires_at/);
+ assert.equal(inserted.args[0],'run-1');
+ assert.equal(inserted.args[4],crypto.createHash('sha256').update(archive).digest('hex'));
+ assert.equal(inserted.args[5],'application/gzip');
+});
+
+test('Heroku automatic source archive refuses private repos and unsafe repository URLs',async()=>{
+ await assert.rejects(()=>prepareHerokuSourceArchive({repositoryUrl:'https://github.com/private/repo',commitSha:'b'.repeat(40),organizationId:'org',runId:'run',query:async()=>({rowCount:1}),storageUrl:'https://storage.example.test',serviceKey:'secret',fetchImpl:async()=>new Response('',{status:404})}),/Repository is private/);
+ await assert.rejects(()=>prepareHerokuSourceArchive({repositoryUrl:'https://evil.example/repo',commitSha:'b'.repeat(40),organizationId:'org',runId:'run',query:async()=>({rowCount:1}),storageUrl:'https://storage.example.test',serviceKey:'secret',fetchImpl:async()=>{throw new Error('should not fetch')}}),/public GitHub repository/);
+});
+
+
+test('Railway uses an immutable image when both source repository and image are supplied',async()=>{
+ const image='ghcr.io/team/app@sha256:'+'f'.repeat(64);let createPayload;
+ const result=await deployToHostingProvider('railway',{token:'railway-token',projectId:'project',environmentId:'environment'},{projectSlug:'demo',image,repoUrl:'https://github.com/team/app',commitSha:'c'.repeat(40)},{fetchImpl:async(url,init)=>{
+  if(String(url).includes('graphql')&&init.body.includes('serviceCreate')){createPayload=JSON.parse(init.body);return response({data:{serviceCreate:{id:'service-id'}}});}
+  if(String(url).includes('graphql')&&init.body.includes('serviceInstanceDeployV2'))return response({data:{serviceInstanceDeployV2:'deploy-id'}});
+  if(String(url).includes('graphql')&&init.body.includes('serviceDomainCreate'))return response({data:{serviceDomainCreate:{domain:'demo.up.railway.app'}}});
+  throw new Error('Unexpected Railway API call');
+ }});
+ assert.equal(result.ok,true,result.error);
+ assert.deepEqual(createPayload.variables.input.source,{image});
 });

@@ -78,9 +78,41 @@ test('hosting deployment route marks records failed on unexpected errors after r
   const routes = await readFile(new URL('../server/routes/hosting-deployments.mjs', import.meta.url), 'utf8');
   assert.match(routes, /let deploymentRecordId = null/);
   assert.match(routes, /deploymentRecordId = record\.rows\[0\]\.id/);
-  assert.match(routes, /status='failed',error_message='Deployment request failed before provider confirmation'/);
+  assert.match(routes, /status='failed',error_message=\$4,provider_resource_id=\$2/);
   assert.match(routes, /where id=\$1 and status in \('provisioning','building','deploying'\)/);
   assert.match(routes, /Port must be an integer between 1 and 65535/);
   assert.match(routes, /Deployment environment variables contain invalid keys or values/);
   assert.match(routes, /65536/);
+});
+
+
+test('hosting deployment operations require membership and restrict cleanup to failed deployments', async () => {
+  const routes = await readFile(new URL('../server/routes/hosting-deployments.mjs', import.meta.url), 'utf8');
+  assert.match(routes, /hosting-deployments\/:deploymentId\/logs/);
+  assert.match(routes, /hosting-deployments\/:deploymentId\/cleanup/);
+  assert.match(routes, /m\.user_id=\$2/);
+  assert.match(routes, /ADMIN_ROLES\.includes\(d\.role\)/);
+  assert.match(routes, /d\.status !== 'failed'/);
+  assert.match(routes, /status='cancelled'/);
+});
+
+
+test('container image build migration adds worker configuration and immutable digest fields',async()=>{
+ const migration=await readFile(new URL('../db/migrations/026_container_image_builds.sql',import.meta.url),'utf8');
+ assert.match(migration,/job_type in \('build','deployment','container_build'\)/);
+ assert.match(migration,/container_build_config jsonb/);
+ assert.match(migration,/container_image_digest text/);
+ assert.match(migration,/create table if not exists public\.container_builds/);
+ assert.match(migration,/enable row level security/);
+ assert.match(migration,/grant all on public\.container_builds to service_role/);
+});
+
+
+test('automatic container build settings enforce per-source-run idempotency',async()=>{
+ const migration=await readFile(new URL('../db/migrations/027_auto_container_build_settings.sql',import.meta.url),'utf8');
+ assert.match(migration,/auto_build_enabled boolean/);
+ assert.match(migration,/registry_host/);
+ assert.match(migration,/container_builds_auto_run_unique/);
+ assert.match(migration,/where auto_triggered/);
+ assert.match(migration,/enable row level security/);
 });
