@@ -128,6 +128,7 @@ export async function deployToHostingProvider(providerId, credential, request, {
         const projectId = requireValue(c, 'projectId'), environmentId = requireValue(c, 'environmentId');
         const query = 'mutation serviceCreate($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }';
         const created = await call(fetchImpl, PROVIDER_URLS.railway, { method:'POST', token, body:{ query, variables:{input:{projectId,name:slug,source:repoUrl ? {repo:repoUrl} : {image},variables:env}} } });
+        if (created?.errors?.length) throw new Error('Railway service creation failed');
         const service = created?.data?.serviceCreate; if (!service?.id) throw new Error('Railway did not return a service ID');
         const deployQuery = 'mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId) }';
         const deployed = await call(fetchImpl, PROVIDER_URLS.railway, { method:'POST', token, body:{query:deployQuery,variables:{serviceId:service.id,environmentId}} });

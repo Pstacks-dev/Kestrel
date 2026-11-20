@@ -1,5 +1,5 @@
 import { decryptSecret } from '../lib/security.mjs';
-import { deployToHostingProvider } from '../deploy/providers/index.mjs';
+import { deployToHostingProvider, refreshHostingDeployment } from '../deploy/providers/index.mjs';
 import { getHostingProvider, normalizeSubdomain, providerDomainCandidates } from '../deploy/providers/catalog.mjs';
 
 const ADMIN_ROLES = ['owner', 'admin'];
@@ -91,7 +91,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
          where id=$1 returning id,status,provider_id as "providerId",provider_resource_id as "providerResourceId",
           project_slug as "projectSlug",requested_hostname as "requestedHostname",live_url as "liveUrl",created_at as "createdAt"`,
         [record.rows[0].id,result.providerDeploymentId,result.url,result.providerStatus === 'live' ? 'live' : 'deploying',
-          { providerStatus: result.providerStatus, actualHostname: hostname, commitSha }]
+          { providerStatus: result.providerStatus, actualHostname: hostname, commitSha, ...(result.metadata || {}) }]
       );
       res.status(202).json({ deployment: updated.rows[0], providerStatus: result.providerStatus, providerUrl: result.url, note: 'Provider accepted deployment request; live status is not confirmed yet.' });
     } catch (error) {
@@ -113,6 +113,18 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     } catch { res.status(500).json({ error: 'Could not load hosting deployments' }); }
   });
 
+  app.post('/api/hosting-deployments/:deploymentId/refresh', userAuth, async (req, res) => {
+    try {
+      const row = await query(`select d.*, c.encrypted_credentials,c.credentials_iv,c.credentials_auth_tag,m.role from public.hosting_provider_deployments d join public.hosting_provider_connections c on c.id=d.connection_id join public.organization_members m on m.organization_id=d.organization_id where d.id=$1 and m.user_id=$2`, [req.params.deploymentId,req.user.id]);
+      if (!row.rowCount) return res.status(404).json({ error: 'Hosting deployment not found' });
+      const d=row.rows[0]; if (!ADMIN_ROLES.includes(d.role)) return res.status(403).json({ error: 'Workspace admin permission required to refresh deployment status' });
+      const credential=decryptSecret(d.encrypted_credentials,d.credentials_iv,d.credentials_auth_tag);
+      const refreshed=await refreshHostingDeployment(d.provider_id,credential,{providerResourceId:d.provider_resource_id,liveUrl:d.live_url,metadata:d.metadata||{}});
+      if (!refreshed.ok) return res.status(502).json({ error: refreshed.error });
+      const updated=await query(`update public.hosting_provider_deployments set status=$2,live_url=$3,metadata=metadata || $4::jsonb,updated_at=now(),completed_at=case when $2 in ('live','failed') then now() else completed_at end where id=$1 returning id,status,live_url as "liveUrl",provider_id as "providerId",project_slug as "projectSlug",updated_at as "updatedAt"`,[d.id,refreshed.status,refreshed.url,JSON.stringify({providerStatus:refreshed.providerStatus})]);
+      res.json({ deployment: updated.rows[0], providerStatus: refreshed.providerStatus });
+    } catch { res.status(500).json({ error: 'Could not refresh hosting deployment status' }); }
+  });
   app.get('/api/hosting-deployments/:deploymentId', userAuth, async (req, res) => {
     try {
       const row = await query(

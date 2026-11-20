@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyHostingProvider, deployToHostingProvider } from '../server/deploy/providers/index.mjs';
+import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment } from '../server/deploy/providers/index.mjs';
 
 const ids=['render','railway','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean','heroku','vercel','netlify'];
 const response=(payload,status=200)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
@@ -49,4 +49,20 @@ test('mocked provision API contract runs for all ten hosting providers',async()=
  netlify:{id:'netlify-deploy',deploy_url:'https://deploy-preview.netlify.app'},
  };
  for(const providerId of ids){let calls=0;const result=await deployToHostingProvider(providerId,credentials[providerId],deployInputs[providerId],{fetchImpl:mockFetch((url,init)=>{calls++;assert.ok(url.startsWith('https://'),providerId);if(providerId==='aws-apprunner')assert.match(init.headers.authorization,/AWS4-HMAC-SHA256/);if(providerId==='netlify'&&calls===1)return response({id:'site-id'});if(providerId==='railway'&&calls===1)return response({data:{serviceCreate:{id:'rail-service'}}});if(providerId==='railway')return response({data:{serviceInstanceDeployV2:'rail-deploy'}});if(providerId==='flyio'&&calls===1)return response({app_name:'demo'});return response(urlResponses[providerId]);})});assert.equal(result.ok,true,providerId+': '+result.error);assert.ok(calls>=1,providerId+' made no request');assert.ok(result.providerDeploymentId,providerId+' returned no resource ID');}
+});
+
+test('status refresh API adapters cover all ten providers with mocked live responses',async()=>{
+ const cases=[
+  {id:'render',cred:'token',deployment:{providerResourceId:'service',metadata:{}},url:'/services/service',payload:{status:'live',url:'https://live.onrender.com'}},
+  {id:'railway',cred:'token',deployment:{providerResourceId:'deploy',metadata:{}},payload:{data:{deployment:{status:'SUCCESS',url:'https://live.up.railway.app'}}}},
+  {id:'flyio',cred:{token:'token'},deployment:{providerResourceId:'machine',metadata:{appName:'demo'}},payload:{state:'started'}},
+  {id:'cloud-run',cred:{accessToken:'token'},deployment:{providerResourceId:'projects/p/locations/r/services/s',metadata:{}},payload:{uri:'https://run.app',conditions:[{type:'Ready',status:'True'}]}},
+  {id:'aws-apprunner',cred:{accessKeyId:'AKID',secretAccessKey:'secret',region:'us-east-1'},deployment:{providerResourceId:'id',metadata:{serviceArn:'arn:aws:apprunner:us-east-1:123:service/x'}},payload:{Service:{Status:'RUNNING',ServiceUrl:'service.awsapprunner.com'}}},
+  {id:'azure-container-apps',cred:{accessToken:'token'},deployment:{providerResourceId:'id',metadata:{resourceId:'/resource'}},payload:{properties:{provisioningState:'Succeeded',configuration:{ingress:{fqdn:'live.azurecontainerapps.io'}}}}},
+  {id:'digitalocean',cred:'token',deployment:{providerResourceId:'app',metadata:{}},payload:{app:{active_deployment:{phase:'ACTIVE'},default_ingress:'live.ondigitalocean.app'}}},
+  {id:'heroku',cred:'token',deployment:{providerResourceId:'build',metadata:{appId:'app',webUrl:'https://live.herokuapp.com'}},payload:{status:'succeeded'}},
+  {id:'vercel',cred:'token',deployment:{providerResourceId:'deploy',metadata:{}},payload:{readyState:'READY',url:'live.vercel.app'}},
+  {id:'netlify',cred:'token',deployment:{providerResourceId:'deploy',metadata:{}},payload:{state:'ready',deploy_url:'https://live.netlify.app'}}
+ ];
+ for(const item of cases){const result=await refreshHostingDeployment(item.id,item.cred,item.deployment,{fetchImpl:mockFetch((url,init)=>{assert.ok(url.startsWith('https://'),item.id);if(item.id==='railway')return response(item.payload);return response(item.payload);})});assert.equal(result.ok,true,item.id+': '+result.error);assert.equal(result.status,'live',item.id);assert.ok(result.url,item.id+' should return a deployment URL');}
 });
