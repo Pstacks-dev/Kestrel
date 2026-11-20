@@ -23,6 +23,7 @@ import { registerArtifactRoutes } from './routes/artifacts.mjs';
 import { registerDeploymentRoutes } from './routes/deployments.mjs';
 import { registerHostingProviderRoutes } from './routes/hosting-providers.mjs';
 import { registerHostingDeploymentRoutes } from './routes/hosting-deployments.mjs';
+import { registerContainerBuildRoutes } from './routes/container-builds.mjs';
 import { registerComputeRoutes } from './routes/compute.mjs';
 import { registerSandboxRoutes } from './routes/sandboxes.mjs';
 
@@ -1125,7 +1126,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       // Find candidate job where all dependencies succeeded
       const candidate = await c.query(
         `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id,
-                de.id as deployment_env_id, de.host_port as deployment_host_port,
+                j.container_build_config, de.id as deployment_env_id, de.host_port as deployment_host_port,
                 de.container_port as deployment_container_port, de.health_path as deployment_health_path,
                 de.health_timeout_seconds as deployment_health_timeout,
                 de.public_url as deployment_public_url, de.secret_names as deployment_secret_names,
@@ -1139,7 +1140,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
          left join public.deployment_releases current_release on current_release.id = de.current_release_id
          left join public.deployment_releases new_release on new_release.id = j.deployment_release_id
          where p.organization_id = $1 and j.status = 'queued' and j.available_at <= now()
-           and (j.job_type = 'build' or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
+           and (j.job_type = 'build' or (j.job_type = 'container_build' and $3 = 'node') or (j.job_type = 'deployment' and de.worker_id = $2 and $3 = 'rust'))
            and not exists (
              select 1 from unnest(j.needs) d(id)
              join public.jobs dep on dep.run_id = j.run_id and dep.external_id = d.id
@@ -1169,6 +1170,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       );
 
       await c.query("update public.workers set state = 'busy', last_seen_at = now() where id = $1", [w.id]);
+      if (j.job_type === 'container_build') await c.query("update public.container_builds set status='running',updated_at=now() where job_id=$1", [j.id]);
       if (j.job_type === 'deployment' && j.deployment_release_id) {
         await c.query("update public.deployment_releases set status = 'deploying' where id = $1 and status = 'queued'", [j.deployment_release_id]);
       }
@@ -1201,6 +1203,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         timeoutSeconds: j.timeout_seconds,
         secrets,
         jobType: j.job_type || 'build',
+        containerBuild: j.job_type === 'container_build' ? j.container_build_config : null,
         deployment: j.job_type === 'deployment' ? {
           environmentId: j.deployment_env_id,
           releaseId: j.deployment_release_id,
@@ -1280,8 +1283,12 @@ app.get('/api/workers/jobs/:jobId/status', workerAuth, async (req, res) => {
 
 // Job Completion
 app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
-  const { leaseToken, exitCode, durationMs, status } = req.body || {};
-  const finalStatus = status === 'canceled' ? 'canceled' : Number(exitCode) === 0 ? 'succeeded' : 'failed';
+  const { leaseToken, exitCode, durationMs, status, containerImageDigest, containerBuildError } = req.body || {};
+  const buildJob = await query('select job_type,container_build_config from public.jobs where id=$1', [req.params.jobId]);
+  const isContainerBuild = buildJob.rowCount && buildJob.rows[0].job_type === 'container_build';
+  const digestValid = typeof containerImageDigest === 'string' && /^sha256:[a-f0-9]{64}$/i.test(containerImageDigest);
+  let finalStatus = status === 'canceled' ? 'canceled' : Number(exitCode) === 0 ? 'succeeded' : 'failed';
+  if (isContainerBuild && finalStatus === 'succeeded' && !digestValid) finalStatus = 'failed';
 
   const r = await query(
     `update public.jobs
@@ -1293,8 +1300,9 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
            when status <> 'canceled' and $3 = 'failed' and attempt <= max_retries
              then now() + make_interval(secs => (least(300, 10 * power(2, least(attempt - 1, 5))))::int)
            else available_at end,
-         exit_code = $4,
+         exit_code = case when $3 = 'failed' and $7 is null then 1 else $4 end,
          duration_ms = $5,
+         container_image_digest = case when $7 is not null then $7 else container_image_digest end,
          finished_at = case
            when status = 'canceled' then coalesce(finished_at, now())
            when $3 = 'failed' and attempt <= max_retries then null
@@ -1306,7 +1314,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
            else worker_id end
      where id = $1 and lease_token = $2 and worker_id = $6 and status in ('running', 'canceled') and lease_expires_at > now()
      returning run_id, status`,
-    [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id]
+    [req.params.jobId, leaseToken, finalStatus, Number(exitCode), Math.max(0, Number(durationMs || 0)), req.worker.id, digestValid ? containerImageDigest : null]
   );
 
   if (!r.rowCount) {
@@ -1317,6 +1325,14 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
 
   await transaction(async (c) => {
     const completedStatus = r.rows[0].status;
+    if (isContainerBuild) {
+      const buildConfig=buildJob.rows[0].container_build_config||{};
+      const imageRef=digestValid&&buildConfig.imageName?buildConfig.imageName+'@'+containerImageDigest:null;
+      await c.query(
+        `update public.container_builds set status=$2,image_digest=$3,image_ref=$4,error_message=$5,updated_at=now(),completed_at=case when $2 in ('succeeded','failed','cancelled') then now() else completed_at end where job_id=$1`,
+        [req.params.jobId,completedStatus,digestValid?containerImageDigest:null,imageRef,completedStatus==='succeeded'?null:(containerBuildError||'Container image build failed; inspect job logs')]
+      );
+    }
     const deploymentJob = await c.query(
       'select deployment_release_id from public.jobs where id = $1 and job_type = \'deployment\'',
       [req.params.jobId]
@@ -1586,6 +1602,7 @@ registerArtifactRoutes(app, { userAuth, workerAuth, query });
 registerDeploymentRoutes(app, { userAuth, query, transaction });
 registerHostingProviderRoutes(app, { userAuth, query, transaction });
 registerHostingDeploymentRoutes(app, { userAuth, query });
+registerContainerBuildRoutes(app, { userAuth, query, transaction });
 registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerSandboxRoutes(app, { userAuth, platformAdmin, query, transaction });
 
