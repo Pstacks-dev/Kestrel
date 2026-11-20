@@ -120,3 +120,11 @@ test('container build process bounds captured stdout, stderr, and unterminated l
  assert.ok(lines.some(item=>item.stream==='stdout'&&item.line.length<=4096));
  assert.ok(lines.some(item=>item.stream==='stderr'&&item.line.length<=4096));
 });
+
+
+test('container build process terminates timed-out commands with exit code 124',async()=>{
+ const started=Date.now();
+ const result=await runProcess(process.execPath,['-e','setTimeout(()=>{},10000)'],{timeoutMs:80});
+ assert.equal(result.exitCode,124);
+ assert.ok(Date.now()-started<3000);
+});
