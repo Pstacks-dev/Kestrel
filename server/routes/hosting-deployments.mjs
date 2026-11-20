@@ -113,6 +113,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     let deploymentRecordId = null;
     let partialProviderResourceId = null;
     let partialProviderMetadata = {};
+    let sourceArchivePreparationError = null;
     try {
       const connectionResult = await query(
         `select c.*, m.role from public.hosting_provider_connections c
@@ -186,7 +187,8 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         imageTag: req.body?.imageTag, registryType: req.body?.registryType, instanceSize: req.body?.instanceSize, buildpacks: req.body?.buildpacks,
       };
       if (connection.provider_id === 'heroku' && !deploymentRequest.sourceTarball) {
-        deploymentRequest.sourceTarball = await prepareHerokuSourceArchive({ repositoryUrl: repoUrl, commitSha, organizationId: connection.organization_id, runId: pipelineRunId, query });
+        try { deploymentRequest.sourceTarball = await prepareHerokuSourceArchive({ repositoryUrl: repoUrl, commitSha, organizationId: connection.organization_id, runId: pipelineRunId, query }); }
+        catch (error) { sourceArchivePreparationError = String(error?.message || 'Could not prepare source archive').slice(0, 300); throw error; }
       }
       if (connection.provider_id === 'netlify' && !deploymentRequest.deployFiles) {
         deploymentRequest.deployFiles = await prepareNetlifyArtifactFiles(pipelineRunId, { query, publishDirectory: req.body?.publishDirectory || req.body?.outputDirectory });
@@ -211,10 +213,10 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     } catch (error) {
       if (deploymentRecordId) {
         try {
-          await query(`update public.hosting_provider_deployments set status='failed',error_message='Deployment request failed before provider confirmation',provider_resource_id=$2,metadata=metadata || $3::jsonb,updated_at=now(),completed_at=now() where id=$1 and status in ('provisioning','building','deploying')`, [deploymentRecordId,partialProviderResourceId,JSON.stringify(partialProviderMetadata)]);
+          await query(`update public.hosting_provider_deployments set status='failed',error_message=$4,provider_resource_id=$2,metadata=metadata || $3::jsonb,updated_at=now(),completed_at=now() where id=$1 and status in ('provisioning','building','deploying')`, [deploymentRecordId,partialProviderResourceId,JSON.stringify(partialProviderMetadata),sourceArchivePreparationError||'Deployment request failed before provider confirmation']);
         } catch { /* preserve the original failure response */ }
       }
-      res.status(500).json({ error: 'Could not initiate hosting-provider deployment' });
+      res.status(sourceArchivePreparationError ? 422 : 500).json({ error: sourceArchivePreparationError || 'Could not initiate hosting-provider deployment' });
     }
   });
 
