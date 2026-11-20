@@ -220,3 +220,20 @@ test('provider failures classify retry safety conservatively', async () => {
  const networkFailure=await deployToHostingProvider('render',{token:'r-token',ownerId:'owner'},input,{fetchImpl:async()=>{throw new Error('socket timeout');}});
  assert.equal(networkFailure.ok,false); assert.equal(networkFailure.retryable,false); assert.equal(networkFailure.ambiguous,true);
 });
+
+test('partial provider resources are returned for cleanup and cannot be retried',async()=>{
+ const digest='sha256:'+'c'.repeat(64),input={projectSlug:'partial-app',image:'registry.example/app@'+digest,commitSha:'abc123'};
+ let calls=0;
+ const result=await deployToHostingProvider('railway',credentials.railway,input,{fetchImpl:mockFetch((url,init)=>{
+  calls++;
+  if(calls===1)return response({data:{serviceCreate:{id:'rail-partial-service'}}});
+  return response({message:'rate limited'},429);
+ })});
+ assert.equal(result.ok,false);
+ assert.equal(result.providerDeploymentId,'rail-partial-service');
+ assert.equal(result.metadata.serviceId,'rail-partial-service');
+ assert.equal(result.metadata.cleanupRequired,true);
+ assert.equal(result.metadata.partialResourceCreated,true);
+ assert.equal(result.retryable,false);
+ assert.equal(result.ambiguous,true);
+});
