@@ -103,7 +103,6 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     const slug = normalizeSubdomain(projectSlug);
     if (!projectId || !pipelineRunId || !slug) return res.status(400).json({ error: 'Project, successful pipeline run and valid subdomain are required' });
     if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
-    if (!image && !sourceTarball && !gitSource && appType !== 'static') return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
     if (!env || typeof env !== 'object' || Array.isArray(env) || Object.keys(env).length > 100) return res.status(400).json({ error: 'Deployment environment variables are invalid' });
     const envEntries = Object.entries(env);
     if (envEntries.some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !['string', 'number', 'boolean'].includes(typeof value) || String(value).length > 8192) || envEntries.reduce((size, [key, value]) => size + key.length + String(value).length, 0) > 65536) {
@@ -128,8 +127,9 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       const provider = getHostingProvider(connection.provider_id);
       if (!provider) return res.status(400).json({ error: 'Provider is unsupported' });
       if (!provider.appTypes.includes(appType)) return res.status(400).json({ error: `${provider.name} does not support the selected application type` });
-      if (!image && !sourceTarball && !gitSource && connection.provider_id !== 'netlify') return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
+      if (!image && !sourceTarball && !gitSource && !['netlify','heroku'].includes(connection.provider_id)) return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
       if (connection.provider_id === 'netlify' && appType !== 'static') return res.status(400).json({ error: 'Netlify direct artifact deployments currently support static sites only' });
+      if (connection.provider_id === 'heroku' && appType === 'docker') return res.status(400).json({ error: 'Heroku source-build deployments support Node.js or Python buildpacks; container deployment is not implemented' });
       if (connection.provider_id === 'netlify' && req.body?.deployFiles) { try { validateNetlifyDeployFiles(req.body.deployFiles); } catch (error) { return res.status(400).json({ error: error.message }); } }
 
       const source = await query(
