@@ -84,3 +84,17 @@ test('hosting deployment route marks records failed on unexpected errors after r
   assert.match(routes, /Deployment environment variables contain invalid keys or values/);
   assert.match(routes, /65536/);
 });
+
+test('hosting deployment lifecycle events are stored and exposed through membership-checked API', async () => {
+  const migration = await readFile(new URL('../db/migrations/026_hosting_deployment_events.sql', import.meta.url), 'utf8');
+  const routes = await readFile(new URL('../server/routes/hosting-deployments.mjs', import.meta.url), 'utf8');
+  assert.match(migration, /hosting_deployment_events/);
+  assert.match(migration, /enable row level security/i);
+  assert.match(migration, /revoke all on public\.hosting_deployment_events from anon, authenticated/i);
+  assert.match(routes, /deployment\.created/);
+  assert.match(routes, /provider\.accepted/);
+  assert.match(routes, /deployment\.failed/);
+  assert.match(routes, /status\.refreshed/);
+  assert.match(routes, /\/api\/hosting-deployments\/:deploymentId\/events/);
+  assert.match(routes, /join public\.organization_members m on m\.organization_id=d\.organization_id/);
+});
