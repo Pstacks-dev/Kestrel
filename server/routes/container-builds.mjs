@@ -3,6 +3,51 @@ import { validateContainerBuildRequest } from '../lib/container-build-validation
 const BUILD_ROLES = ['owner','admin','developer'];
 
 export function registerContainerBuildRoutes(app, { userAuth, query, transaction }) {
+  app.get('/api/projects/:projectId/container-build-settings', userAuth, async (req,res) => {
+    try {
+      const result=await query(
+        `select auto_build_enabled as "autoBuildEnabled",registry_host as "registryHost",image_repository as "imageRepository",
+          dockerfile_path as "dockerfilePath",context_path as "contextPath",username_secret as "usernameSecret",
+          password_secret as "passwordSecret",updated_at as "updatedAt"
+         from public.container_build_settings s join public.organization_members m on m.organization_id=s.organization_id
+         where s.project_id=$1 and m.user_id=$2`,
+        [req.params.projectId,req.user.id]
+      );
+      res.json({settings:result.rows[0]||null});
+    }catch{res.status(500).json({error:'Could not load container build settings'});}
+  });
+
+  app.put('/api/projects/:projectId/container-build-settings', userAuth, async (req,res) => {
+    const body=req.body||{};
+    try {
+      const project=await query(
+        `select p.organization_id,m.role from public.projects p join public.organization_members m on m.organization_id=p.organization_id
+         where p.id=$1 and m.user_id=$2`,
+        [req.params.projectId,req.user.id]
+      );
+      if(!project.rowCount)return res.status(404).json({error:'Project not found'});
+      if(!BUILD_ROLES.includes(project.rows[0].role))return res.status(403).json({error:'Developer access required to configure auto-build'});
+      const validated=validateContainerBuildRequest({...body,commitSha:'a'.repeat(40)});
+      if(!validated.ok)return res.status(400).json({error:validated.error});
+      const secretNames=[validated.config.usernameSecret,validated.config.passwordSecret];
+      if(body.autoBuildEnabled){
+        const secrets=await query('select name from public.project_secrets where project_id=$1 and name=any($2)',[req.params.projectId,secretNames]);
+        if(secrets.rowCount!==2)return res.status(400).json({error:'Add the registry username and password secrets before enabling automatic builds'});
+      }
+      const saved=await query(
+        `insert into public.container_build_settings(project_id,organization_id,auto_build_enabled,registry_host,image_repository,dockerfile_path,context_path,username_secret,password_secret,created_by,updated_at)
+         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+         on conflict(project_id) do update set auto_build_enabled=excluded.auto_build_enabled,registry_host=excluded.registry_host,
+          image_repository=excluded.image_repository,dockerfile_path=excluded.dockerfile_path,context_path=excluded.context_path,
+          username_secret=excluded.username_secret,password_secret=excluded.password_secret,updated_at=now()
+         returning auto_build_enabled as "autoBuildEnabled",registry_host as "registryHost",image_repository as "imageRepository",
+          dockerfile_path as "dockerfilePath",context_path as "contextPath",username_secret as "usernameSecret",password_secret as "passwordSecret",updated_at as "updatedAt"`,
+        [req.params.projectId,project.rows[0].organization_id,Boolean(body.autoBuildEnabled),validated.config.registryHost,validated.config.imageRepository,validated.config.dockerfilePath,validated.config.contextPath,validated.config.usernameSecret,validated.config.passwordSecret,req.user.id]
+      );
+      res.json({settings:saved.rows[0]});
+    }catch{res.status(500).json({error:'Could not save container build settings'});}
+  });
+
   app.get('/api/projects/:projectId/container-builds', userAuth, async (req,res) => {
     try {
       const result=await query(
