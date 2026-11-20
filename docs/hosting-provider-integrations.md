@@ -1,33 +1,16 @@
-# Hosting provider integration roadmap
+# Hosting Provider Integrations
 
-Kestrel's provider catalog is metadata only. It does **not** reserve names, create provider resources, deploy applications, or imply that a provider account is connected.
+Kestrel includes credential verification and deployment API adapters for ten targets: Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, Azure Container Apps, DigitalOcean App Platform, Heroku, Vercel and Netlify.
 
-## Provider targets
+## Credential formats
+Most providers accept an API token string. Cloud Run and Azure use a JSON credential object with an OAuth access token and resource identifiers. AWS App Runner uses an AWS access key/secret pair, region and App Runner ECR access role ARN. Railway/Fly/Render/DO deployment calls need account/project/workspace fields.
 
-Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, Azure Container Apps, DigitalOcean App Platform, Heroku, Vercel, and Netlify.
+Credentials are encrypted at rest and never returned to clients. Use least-privileged provider tokens and revoke them if exposed.
 
-The catalog identifies broad app types. Real provider adapters must validate current provider APIs and account/region capability before creating a deployment. Pricing and free-tier availability are not guaranteed.
+## Deployment flow
+The deployment API requires a succeeded Kestrel pipeline run and a pinned commit SHA. Container image deployments require a SHA-256 digest. The API uses the validated repository/commit and stores provider resource ID, provider URL and deployment status. A provider-accepted request is not reported as live without a verified health/status check.
 
-## Target architecture
+Some providers need prerequisites beyond a token: linked Git source/project, Cloud Run project and region, App Runner ECR access role, Azure Container Apps environment, Railway project/environment, Fly organization, Render workspace, or Heroku source archive.
 
-- `catalog.mjs`: provider identity, supported app-type hints, and provider domains.
-- `adapters/<provider>.mjs`: provider API operations (future).
-- `connections`: OAuth or API-key credentials, encrypted at rest, scoped per workspace.
-- `deployments`: immutable deployment records, provider deployment ID, status, generated hostname, logs and timestamps.
-- Orchestrator: build artifact/image, validate provider compatibility, provision, wait for health, report URL and offer redeploy/rollback where supported.
-
-## Domain/subdomain handling
-
-Kestrel should request a project slug from the user, then submit it to the provider's supported API. The provider may reject it as taken, reserved, invalid, or unsupported. Kestrel must show the actual returned hostname and never fabricate availability or claim a URL is live before deployment verification.
-
-Provider URLs remain on provider domains (e.g. `project.onrender.com`, `project.vercel.app`); Kestrel is the control panel. Render credential verification is implemented against the Render API. It does not yet deploy services. The other nine provider integrations are catalog/roadmap entries only. This catalog does not add Kestrel-owned domains or proxy/redirect traffic.
-
-## Security requirements before adapters ship
-
-- Credentials are never returned to the client after save.
-- Encrypt tokens using the existing server secret encryption facility and rotate/revoke support.
-- Verify workspace membership and role for every provider connection/deployment action.
-- Redact credentials from logs; validate provider callback state and webhook signatures.
-- Use idempotency keys and provider resource cleanup on failed/abandoned deploys.
-- Treat provider quota, billing, region, and plan requirements as provider-specific; don't promise free hosting.
-- Provider-specific smoke tests must run against sandbox accounts before marking an adapter enabled.
+## Live testing
+CI uses mocked provider API responses to validate request contracts. A real deployment requires workspace-owned provider accounts, valid credentials, required resources and a validated Kestrel pipeline. No provider credentials are used in automated CI.

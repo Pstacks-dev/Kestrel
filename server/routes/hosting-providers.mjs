@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { encryptSecret, decryptSecret } from '../lib/security.mjs';
-import { verifyRenderCredential } from '../deploy/providers/render.mjs';
+import { verifyHostingProvider } from '../deploy/providers/index.mjs';
 import { HOSTING_PROVIDERS, getHostingProvider } from '../deploy/providers/catalog.mjs';
 
 const roles = ['owner', 'admin'];
@@ -79,18 +79,15 @@ export function registerHostingProviderRoutes(app, { userAuth, query, transactio
       if (!row.rowCount) return res.status(404).json({ error: 'Provider connection not found' });
       if (!roles.includes(row.rows[0].role)) return res.status(403).json({ error: 'Workspace owner or admin permission required' });
       const connection = row.rows[0];
-      if (connection.provider_id !== 'render') {
-        return res.status(501).json({ error: 'Credential verification is not implemented for this provider yet' });
-      }
-      const token = decryptSecret(connection.encrypted_credentials, connection.credentials_iv, connection.credentials_auth_tag);
-      const verification = await verifyRenderCredential(token);
+      const credential = decryptSecret(connection.encrypted_credentials, connection.credentials_iv, connection.credentials_auth_tag);
+      const verification = await verifyHostingProvider(connection.provider_id, credential);
       await query(
         `update public.hosting_provider_connections set status = $2, last_verified_at = case when $2 = 'connected' then now() else last_verified_at end,
            last_error = $3, updated_at = now() where id = $1`,
         [connection.id, verification.ok ? 'connected' : 'error', verification.ok ? null : verification.error]
       );
       if (!verification.ok) return res.status(422).json({ connectionId: connection.id, status: 'error', error: verification.error });
-      res.json({ connectionId: connection.id, status: 'connected', verifiedAt: new Date().toISOString(), provider: 'Render' });
+      res.json({ connectionId: connection.id, status: 'connected', verifiedAt: new Date().toISOString(), providerId: connection.provider_id });
     } catch {
       res.status(500).json({ error: 'Could not verify provider connection' });
     }
