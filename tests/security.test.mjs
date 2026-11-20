@@ -85,3 +85,20 @@ test('verifyGitHubSignature correctly validates HMAC-SHA256 signatures', () => {
   assert.equal(verifyGitHubSignature(payload, 'invalid-signature-header', webhookSecret), false);
   assert.equal(verifyGitHubSignature(payload, null, webhookSecret), false);
 });
+
+
+test('production control plane rejects missing or weak encryption and JWT secrets', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../server/control-plane.mjs', import.meta.url), 'utf8'));
+  assert.match(source, /NODE_ENV === 'production'/);
+  assert.match(source, /KESTREL_ENCRYPTION_KEY.*length < 32/);
+  assert.match(source, /JWT_SECRET.*length < 32/);
+  assert.match(source, /Production security configuration is incomplete/);
+});
+
+test('production worker rejects default or short worker tokens', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../worker/agent.mjs', import.meta.url), 'utf8'));
+  assert.match(source, /NODE_ENV === 'production'/);
+  assert.match(source, /dev-worker-token-change-me/);
+  assert.match(source, /TOKEN\.length < 32/);
+  assert.match(source, /Production workers require a separately provisioned KESTREL_WORKER_TOKEN/);
+});
