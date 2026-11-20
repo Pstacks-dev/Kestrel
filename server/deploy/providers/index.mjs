@@ -57,7 +57,7 @@ export async function verifyHostingProvider(providerId, credential, { fetchImpl 
         return { ok: true, providerId, accountLabel: 'Render account', sampleCount: Array.isArray(data) ? data.length : undefined };
       }
       case 'railway': {
-        const data = await call(fetchImpl, PROVIDER_URLS.railway, { method: 'POST', token, body: { query: 'query { projects { edges { node { id name } } } }' });
+        const data = await call(fetchImpl, PROVIDER_URLS.railway, { method: 'POST', token, body: { query: 'query { projects { edges { node { id name } } } }' } });
         if (data?.errors?.length) throw new Error('Railway rejected the token or GraphQL query');
         return { ok: true, providerId, accountLabel: 'Railway account' };
       }
@@ -138,8 +138,11 @@ export async function deployToHostingProvider(providerId, credential, request, {
       }
       case 'cloud-run': {
         const projectId=requireValue(c,'projectId'), region=c.region||'us-central1', access=requireValue(c,'accessToken');
-        const serviceBody={template:{containers:[{image,ports:[{containerPort:port}],env:Object.entries(env).map(([name,value])=>({name,value:String(value)}))}]},ingress:'INGRESS_TRAFFIC_ALL'};
-        data=await call(fetchImpl,`${PROVIDER_URLS.cloudRun}/v2/projects/${projectId}/locations/${region}/services?serviceId=${slug}`,{method:'POST',token:access,body:serviceBody});
+        const serviceBody = {
+          template: { containers: [{ image, ports: [{ containerPort: port }], env: Object.entries(env).map(([name, value]) => ({ name, value: String(value) })) }] },
+          ingress: 'INGRESS_TRAFFIC_ALL',
+        };
+        data = await call(fetchImpl, `${PROVIDER_URLS.cloudRun}/v2/projects/${projectId}/locations/${region}/services?serviceId=${slug}`, { method: 'POST', token: access, body: serviceBody });
         id=data?.name; url=data?.uri; break;
       }
       case 'aws-apprunner': {
@@ -150,7 +153,8 @@ export async function deployToHostingProvider(providerId, credential, request, {
       case 'azure-container-apps': {
         const subscription=requireValue(c,'subscriptionId'), group=requireValue(c,'resourceGroup'), location=requireValue(c,'location'), environmentId=requireValue(c,'containerAppEnvironmentId'), access=requireValue(c,'accessToken');
         const arm=`${PROVIDER_URLS.azure}/subscriptions/${subscription}/resourceGroups/${group}/providers/Microsoft.App/containerApps/${slug}?api-version=2024-03-01`;
-        data=await call(fetchImpl,arm,{method:'PUT',token:access,body:{location,properties:{managedEnvironmentId:environmentId,configuration:{ingress:{external:true,targetPort:port,transport:'auto'}},template:{containers:[{name:slug,image,env:Object.entries(env).map(([name,value])=>({name,value:String(value)}))}],scale:{minReplicas:0,maxReplicas:1}}}});
+        const body = { location, properties: { managedEnvironmentId: environmentId, configuration: { ingress: { external: true, targetPort: port, transport: 'auto' } }, template: { containers: [{ name: slug, image, env: Object.entries(env).map(([name, value]) => ({ name, value: String(value) })) }], scale: { minReplicas: 0, maxReplicas: 1 } } } };
+        data = await call(fetchImpl, arm, { method: 'PUT', token: access, body });
         id=data?.id; url=data?.properties?.configuration?.ingress?.fqdn ? `https://${data.properties.configuration.ingress.fqdn}` : null; break;
       }
       case 'digitalocean': {
