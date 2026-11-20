@@ -1199,7 +1199,7 @@ function AppShell({ page }: { page: Page }) {
       `KESTREL_CONCURRENCY=${nodeWorkerConcurrency}`,
       'KESTREL_JOB_IMAGE=node:22-bookworm-slim',
       'KESTREL_JOB_NETWORK=bridge',
-    ].join('\\n');
+    ].join('\n');
     navigator.clipboard?.writeText(content);
   }
 
