@@ -7,18 +7,27 @@ export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,si
   const started=Date.now();
   return new Promise((resolve)=>{
     const child=spawnImpl(command,args,{cwd,env,shell:false,stdio:['pipe','pipe','pipe']});
-    let stdout='',stderr='',tail={stdout:'',stderr:''},captured={stdout:0,stderr:0},truncated={stdout:false,stderr:false},timedOut=false;\n    const capture=(stream,text)=>{const remaining=Math.max(0,maxCaptureBytes-captured[stream]);if(remaining>0){const kept=text.slice(0,remaining);if(stream==='stdout')stdout+=kept;else stderr+=kept;captured[stream]+=kept.length;}if(text.length>remaining)truncated[stream]=true;};
+    let stdout='',stderr='',tail={stdout:'',stderr:''},captured={stdout:0,stderr:0},truncated={stdout:false,stderr:false},timedOut=false;
+    const capture=(stream,text)=>{
+      const remaining=Math.max(0,maxCaptureBytes-captured[stream]);
+      if(remaining>0){const kept=text.slice(0,remaining);if(stream==='stdout')stdout+=kept;else stderr+=kept;captured[stream]+=kept.length;}
+      if(text.length>remaining)truncated[stream]=true;
+    };
     const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),3000).unref?.();},timeoutMs||1800000);
     const abort=()=>{timedOut=true;child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),3000).unref?.();};
     signal?.addEventListener('abort',abort,{once:true});
     for(const [stream,pipe] of [['stdout',child.stdout],['stderr',child.stderr]])pipe.on('data',(buf)=>{
-      const text=buf.toString();if(stream==='stdout')stdout+=text;else stderr+=text;
-      const chunks=(tail[stream]+text).split(/\r?\n/);tail[stream]=chunks.pop()||'';
+      const text=buf.toString();capture(stream,text);
+      const chunks=(tail[stream]+text).split(/\\r?\\n/);tail[stream]=chunks.pop()||'';
       for(const line of chunks)if(line)onLine?.(stream,line);
+      while(tail[stream].length>maxLineBytes){onLine?.(stream,tail[stream].slice(0,maxLineBytes));tail[stream]=tail[stream].slice(maxLineBytes);}
     });
     child.on('close',(code)=>{
       clearTimeout(timer);signal?.removeEventListener('abort',abort);
-      for(const stream of ['stdout','stderr'])if(tail[stream])onLine?.(stream,tail[stream]);
+      for(const stream of ['stdout','stderr']){
+        if(tail[stream])onLine?.(stream,tail[stream]);
+        if(truncated[stream]){const marker='\\n[output truncated; capture limit reached]';if(stream==='stdout')stdout+=marker;else stderr+=marker;}
+      }
       resolve({exitCode:timedOut?124:code??1,stdout,stderr,durationMs:Date.now()-started});
     });
     child.on('error',(error)=>{clearTimeout(timer);onLine?.('stderr',error.message);capture('stderr',error.message);resolve({exitCode:1,stdout,stderr,durationMs:Date.now()-started});});
@@ -26,7 +35,6 @@ export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,si
     child.stdin.end();
   });
 }
-
 function safePath(value,{allowDot=false}={}) {
   return typeof value==='string'&&value.length<=512&&(allowDot&&value==='.'||!value.startsWith('/')&&!value.includes('\\')&&! /^[A-Za-z]:/.test(value)&&value.split('/').every(part=>part&&part!=='.'&&part!=='..'));
 }
