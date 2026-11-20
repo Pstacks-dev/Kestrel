@@ -192,7 +192,7 @@ export async function getHostingDeploymentLogs(providerId, credential, deploymen
 export async function cleanupHostingDeployment(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
  const c=parseCred(credential),t=token(c),id=deployment.providerResourceId,m=deployment.metadata||{};
  try {
-  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
+  if(!id && !m.serviceId && !m.appId && !m.serviceName && !m.resourceId && !m.serviceArn && !m.appName) return {ok:false,error:'No provider resource identifier was saved; automatic cleanup cannot safely identify the resource'};
   switch(providerId){
    case 'render': await api(fetchImpl,API.render+'/services/'+required({id},'id'),{method:'DELETE',token:t});break;
    case 'railway': {const q='mutation serviceDelete($id: String!) { serviceDelete(id: $id) }';const d=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:q,variables:{id:required(m,'serviceId')}}});if(d?.errors?.length)throw new Error('Provider service deletion failed');break;}
