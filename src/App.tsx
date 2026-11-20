@@ -623,6 +623,8 @@ function AppShell({ page }: { page: Page }) {
   };
   const [hostingBusy, setHostingBusy] = useState(false);
   const [hostingMessage, setHostingMessage] = useState('');
+  const [hostingEventDeploymentId, setHostingEventDeploymentId] = useState('');
+  const [hostingDeploymentEvents, setHostingDeploymentEvents] = useState<any[]>([]);
   const [hostingDeployProject, setHostingDeployProject] = useState('');
   const [hostingDeployRun, setHostingDeployRun] = useState('');
   const [hostingDeploySlug, setHostingDeploySlug] = useState('');
@@ -806,6 +808,23 @@ function AppShell({ page }: { page: Page }) {
       await loadContainerBuilds(project.id);
     } catch(error:any){setHostingMessage(error.message||'Container image build failed to queue');}
     finally{setHostingBusy(false);}
+  }
+
+  async function viewHostingDeploymentEvents(deploymentId: string) {
+    if (!accessToken) return;
+    setHostingBusy(true);
+    setHostingMessage('');
+    try {
+      const response = await fetch(`${api}/hosting-deployments/${deploymentId}/events`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load deployment timeline');
+      setHostingEventDeploymentId(deploymentId);
+      setHostingDeploymentEvents(data.events || []);
+    } catch (error: any) {
+      setHostingMessage(error.message || 'Could not load deployment timeline');
+    } finally {
+      setHostingBusy(false);
+    }
   }
 
   async function retryProviderDeployment(deploymentId: string) {
@@ -2631,7 +2650,8 @@ function AppShell({ page }: { page: Page }) {
                 <Button type="submit" disabled={hostingBusy || !hostingConnections.some((c) => c.providerId === hostingProviderId && c.status === 'connected')}>{hostingBusy ? 'Deploying…' : 'Deploy validated run'}</Button>
               </form>
               {hostingDeployResult?.providerUrl && <p className="action-message mt-3">Provider accepted: <a href={hostingDeployResult.providerUrl} target="_blank" rel="noreferrer">{hostingDeployResult.providerUrl}</a></p>}
-              {hostingDeployments.slice(0,5).map((deployment: any) => <div className="table-row" key={deployment.id}><b>{deployment.projectSlug}</b><span>{deployment.providerId} · {deployment.status}</span>{deployment.liveUrl && <a href={deployment.liveUrl} target="_blank" rel="noreferrer">{deployment.liveUrl}</a>}{deployment.errorMessage && <small className="text-red-500">{deployment.errorMessage}</small>}<div className="flex flex-wrap gap-2"><Button kind="light" disabled={hostingBusy} onClick={() => refreshProviderDeployment(deployment.id)}>Refresh status</Button><Button kind="light" disabled={hostingBusy} onClick={() => viewProviderDeploymentLogs(deployment.id)}>Provider logs</Button>{deployment.status === 'failed' && deployment.metadata?.retryable === true && <Button kind="light" disabled={hostingBusy} onClick={() => retryProviderDeployment(deployment.id)}>Retry deployment</Button>{deployment.status === 'failed' && <Button kind="light" disabled={hostingBusy} onClick={() => cleanupFailedProviderDeployment(deployment.id)}>Cleanup failed resource</Button>}</div></div>)}
+              {hostingDeployments.slice(0,5).map((deployment: any) => <div className="table-row" key={deployment.id}><b>{deployment.projectSlug}</b><span>{deployment.providerId} · {deployment.status}</span>{deployment.liveUrl && <a href={deployment.liveUrl} target="_blank" rel="noreferrer">{deployment.liveUrl}</a>}{deployment.errorMessage && <small className="text-red-500">{deployment.errorMessage}</small>}<div className="flex flex-wrap gap-2"><Button kind="light" disabled={hostingBusy} onClick={() => refreshProviderDeployment(deployment.id)}>Refresh status</Button><Button kind="light" disabled={hostingBusy} onClick={() => viewProviderDeploymentLogs(deployment.id)}>Provider logs</Button><Button kind="light" disabled={hostingBusy} onClick={() => viewHostingDeploymentEvents(deployment.id)}>Timeline</Button>{deployment.status === 'failed' && deployment.metadata?.retryable === true && <Button kind="light" disabled={hostingBusy} onClick={() => retryProviderDeployment(deployment.id)}>Retry deployment</Button>{deployment.status === 'failed' && <Button kind="light" disabled={hostingBusy} onClick={() => cleanupFailedProviderDeployment(deployment.id)}>Cleanup failed resource</Button>}</div></div>)}
+            {hostingEventDeploymentId && <div className="border rounded-lg p-3 mt-3"><div className="flex items-center justify-between"><b>Deployment event timeline</b><Button kind="light" onClick={() => { setHostingEventDeploymentId(''); setHostingDeploymentEvents([]); }}>Close</Button></div>{hostingDeploymentEvents.length ? hostingDeploymentEvents.map((event:any) => <div className="py-2 border-b last:border-b-0" key={event.id}><b>{event.eventType}</b><span className="block text-sm">{event.message}</span><small className="text-neutral-500">{event.createdAt ? new Date(event.createdAt).toLocaleString() : ''}</small></div>) : <p className="text-sm text-neutral-500">No recorded events for this deployment.</p>}</div>}
             </div>
             <div className="panel settings-panel">
               <h3>Connection Status</h3>
