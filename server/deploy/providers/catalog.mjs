@@ -6,7 +6,7 @@ export const HOSTING_PROVIDERS = Object.freeze([
   { id: 'aws-apprunner', name: 'AWS App Runner', domains: ['awsapprunner.com'], appTypes: ['docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
   { id: 'azure-container-apps', name: 'Azure Container Apps', domains: ['azurecontainerapps.io'], appTypes: ['docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
   { id: 'digitalocean', name: 'DigitalOcean App Platform', domains: ['ondigitalocean.app'], appTypes: ['docker'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
-  { id: 'heroku', name: 'Heroku', domains: ['herokuapp.com'], appTypes: ['node','python'], supportsContainers: true, supportsPersistentServices: true, adapterStatus: 'api-integration' },
+  { id: 'heroku', name: 'Heroku', domains: ['herokuapp.com'], appTypes: ['node','python'], supportsContainers: false, supportsPersistentServices: true, adapterStatus: 'api-integration' },
   { id: 'vercel', name: 'Vercel', domains: ['vercel.app'], appTypes: ['static','node'], supportsContainers: false, supportsPersistentServices: false, adapterStatus: 'api-integration' },
   { id: 'netlify', name: 'Netlify', domains: ['netlify.app'], appTypes: ['static'], supportsContainers: false, supportsPersistentServices: false, adapterStatus: 'api-integration' },
 ]);
