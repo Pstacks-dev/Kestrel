@@ -26,3 +26,6 @@ Provider-accepted deployments start in deploying status. Refresh calls query eac
 
 ## Test scope
 CI includes mocked API contract tests for all ten credential verifications, deployment submissions and status refreshes. These do not prove a real provider deployment. Live testing requires user-connected accounts, valid credentials and the required provider-side projects/roles/images.
+
+
+Container image build and push details are documented in [container-image-builds.md](container-image-builds.md).
