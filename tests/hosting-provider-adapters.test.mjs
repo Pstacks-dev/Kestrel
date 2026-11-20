@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { verifyHostingProvider, deployToHostingProvider, refreshHostingDeployment, getHostingDeploymentLogs, cleanupHostingDeployment } from '../server/deploy/providers/index.mjs';
-import { prepareNetlifyArtifactFiles, validateNetlifyDeployFiles } from '../server/routes/hosting-deployments.mjs';
+import { prepareNetlifyArtifactFiles, validateNetlifyDeployFiles, prepareHerokuSourceArchive } from '../server/routes/hosting-deployments.mjs';
 
 const ids=['render','railway','flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean','heroku','vercel','netlify'];
 const response=(payload,status=200)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json'}});
@@ -170,4 +170,29 @@ test('Netlify cleanup removes only sites Kestrel created when deploy creation fa
  assert.equal(result.ok,true);
  const existing=await cleanupHostingDeployment('netlify',{token:'nt-token'},{metadata:{siteId:'linked-site',siteCreated:false}},{fetchImpl:async()=>{throw new Error('must not delete an existing site');}});
  assert.equal(existing.ok,false);assert.match(existing.error,/existing connected site/);
+});
+
+
+test('Heroku source archive is commit-pinned, uploaded privately, signed and expires with artifacts',async()=>{
+ const sha='a'.repeat(40),archive=Buffer.from('test tarball bytes');const calls=[];let inserted=null;
+ const url=await prepareHerokuSourceArchive({repositoryUrl:'https://github.com/example/demo.git',commitSha:sha,organizationId:'org-1',runId:'run-1',storageUrl:'https://storage.example.test',serviceKey:'service-role-key',query:async(sql,args)=>{inserted={sql,args};return {rowCount:1};},fetchImpl:async(url,init={})=>{
+  calls.push({url,init});
+  if(String(url).startsWith('https://codeload.github.com/'))return new Response(archive,{status:200});
+  if(String(url).includes('/object/sign/'))return response({signedURL:'/object/sign/kestrel-artifacts/org-1/run-1/heroku-source-'+sha+'.tgz?token=signed'});
+  if(String(url).includes('/object/kestrel-artifacts/'))return new Response('',{status:200});
+  throw new Error('unexpected archive request '+url);
+ }});
+ assert.ok(url.includes(sha));assert.ok(url.includes('token=signed'));
+ assert.equal(calls.length,3);
+ assert.equal(calls[1].init.method,'POST');
+ assert.deepEqual(Buffer.from(calls[1].init.body),archive);
+ assert.match(inserted.sql,/expires_at/);
+ assert.equal(inserted.args[0],'run-1');
+ assert.equal(inserted.args[4],crypto.createHash('sha256').update(archive).digest('hex'));
+ assert.equal(inserted.args[5],'application/gzip');
+});
+
+test('Heroku automatic source archive refuses private repos and unsafe repository URLs',async()=>{
+ await assert.rejects(()=>prepareHerokuSourceArchive({repositoryUrl:'https://github.com/private/repo',commitSha:'b'.repeat(40),organizationId:'org',runId:'run',query:async()=>({rowCount:1}),storageUrl:'https://storage.example.test',serviceKey:'secret',fetchImpl:async()=>new Response('',{status:404})}),/Repository is private/);
+ await assert.rejects(()=>prepareHerokuSourceArchive({repositoryUrl:'https://evil.example/repo',commitSha:'b'.repeat(40),organizationId:'org',runId:'run',query:async()=>({rowCount:1}),storageUrl:'https://storage.example.test',serviceKey:'secret',fetchImpl:async()=>{throw new Error('should not fetch')}}),/public GitHub repository/);
 });
