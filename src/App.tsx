@@ -641,6 +641,7 @@ function AppShell({ page }: { page: Page }) {
   const [hostingBuildContext, setHostingBuildContext] = useState('.');
   const [hostingBuildUsernameSecret, setHostingBuildUsernameSecret] = useState('REGISTRY_USERNAME');
   const [hostingBuildPasswordSecret, setHostingBuildPasswordSecret] = useState('REGISTRY_PASSWORD');
+  const [hostingBuildAutoEnabled, setHostingBuildAutoEnabled] = useState(false);
   const [hostingDeployContainerBuildId, setHostingDeployContainerBuildId] = useState('');
   const [hostingDeployments, setHostingDeployments] = useState<any[]>([]);
   const [hostingDeployResult, setHostingDeployResult] = useState<any>(null);
@@ -768,6 +769,28 @@ function AppShell({ page }: { page: Page }) {
       if(!response.ok)throw new Error('Could not load container image builds');
       const data=await response.json();setHostingContainerBuilds(data.builds||[]);
     } catch(error:any){setHostingMessage(error.message||'Could not load image builds');}
+  }
+
+  async function loadContainerBuildSettings(projectId: string) {
+    if(!accessToken||!projectId)return;
+    try {
+      const response=await fetch(`${api}/projects/${projectId}/container-build-settings`,{headers:{Authorization:`Bearer ${accessToken}`}});
+      if(!response.ok)throw new Error('Could not load automatic build settings');
+      const data=await response.json();const s=data.settings;
+      if(s){setHostingBuildAutoEnabled(Boolean(s.autoBuildEnabled));setHostingBuildRegistryHost(s.registryHost||'ghcr.io');setHostingBuildRepository(s.imageRepository||'');setHostingBuildDockerfile(s.dockerfilePath||'Dockerfile');setHostingBuildContext(s.contextPath||'.');setHostingBuildUsernameSecret(s.usernameSecret||'REGISTRY_USERNAME');setHostingBuildPasswordSecret(s.passwordSecret||'REGISTRY_PASSWORD');}
+      else setHostingBuildAutoEnabled(false);
+    }catch(error:any){setHostingMessage(error.message||'Could not load auto-build settings');}
+  }
+
+  async function saveContainerBuildSettings() {
+    if(!accessToken||!hostingDeployProject)return;
+    setHostingBusy(true);setHostingMessage('');
+    try {
+      const response=await fetch(`${api}/projects/${hostingDeployProject}/container-build-settings`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${accessToken}`},body:JSON.stringify({autoBuildEnabled:hostingBuildAutoEnabled,registryHost:hostingBuildRegistryHost,imageRepository:hostingBuildRepository,dockerfilePath:hostingBuildDockerfile,contextPath:hostingBuildContext,usernameSecret:hostingBuildUsernameSecret,passwordSecret:hostingBuildPasswordSecret})});
+      const data=await response.json();if(!response.ok)throw new Error(data.error||'Could not save automatic build settings');
+      setHostingMessage(data.settings.autoBuildEnabled?'Automatic container builds enabled for future successful pipeline runs.':'Automatic container builds disabled.');
+    }catch(error:any){setHostingMessage(error.message||'Could not save auto-build settings');}
+    finally{setHostingBusy(false);}
   }
 
   async function queueContainerBuild(event: FormEvent) {
@@ -2575,7 +2598,7 @@ function AppShell({ page }: { page: Page }) {
               </div>
               <form className="project-form" onSubmit={deployHostingProvider}>
                 <label>Provider<select value={hostingProviderId} onChange={(e) => { const nextId=e.target.value; setHostingProviderId(nextId); const supported=hostingProviders.find((provider) => provider.id === nextId)?.appTypes || []; if (supported.length && !supported.includes(hostingDeployAppType)) setHostingDeployAppType(supported[0]); }}>{hostingProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-                <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); setHostingDeployContainerBuildId(''); setHostingDeployImage(''); const selected=snapshot?.projects?.find((p:any)=>p.id===e.target.value); const repoUrl=selected?.repo||selected?.repository_url||''; try { const parsed=new URL(repoUrl); const parts=parsed.pathname.split('/').filter(Boolean); if(parsed.hostname==='github.com'&&parts.length>=2)setHostingBuildRepository(parts[0]+'/'+(parts[1].endsWith('.git')?parts[1].slice(0,-4):parts[1])); } catch {} loadContainerBuilds(e.target.value); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+                <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); setHostingDeployContainerBuildId(''); setHostingDeployImage(''); const selected=snapshot?.projects?.find((p:any)=>p.id===e.target.value); const repoUrl=selected?.repo||selected?.repository_url||''; try { const parsed=new URL(repoUrl); const parts=parsed.pathname.split('/').filter(Boolean); if(parsed.hostname==='github.com'&&parts.length>=2)setHostingBuildRepository(parts[0]+'/'+(parts[1].endsWith('.git')?parts[1].slice(0,-4):parts[1])); } catch {} loadContainerBuilds(e.target.value); loadContainerBuildSettings(e.target.value); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
                 <label>Successful run<select value={hostingDeployRun} onChange={(e) => { setHostingDeployRun(e.target.value); setHostingDeployContainerBuildId(''); setHostingDeployImage(''); }}><option value="">Select successful run</option>{(snapshot?.runs || []).filter((run: any) => run.projectId === hostingDeployProject && run.status === 'succeeded').map((run: any) => <option key={run.id} value={run.id}>#{run.runNumber} · {run.branch} · {String(run.commitSha || '').slice(0,8)}</option>)}</select></label>
                 <label>Requested subdomain<input value={hostingDeploySlug} onChange={(e) => setHostingDeploySlug(e.target.value)} placeholder="my-project" required minLength={2} maxLength={63} /></label>
                 <label>Completed container build<select value={hostingDeployContainerBuildId} onChange={(e) => { const build=hostingContainerBuilds.find((b:any)=>b.id===e.target.value); setHostingDeployContainerBuildId(e.target.value); setHostingDeployImage(build?.imageRef||''); if(build)setHostingDeployAppType('docker'); }}><option value="">Manual image / provider source build</option>{hostingContainerBuilds.filter((b:any)=>b.sourcePipelineRunId===hostingDeployRun&&b.status==='succeeded').map((b:any)=><option key={b.id} value={b.id}>{b.imageRef} · {b.status}</option>)}</select></label><label>Immutable image reference<input value={hostingDeployImage} onChange={(e) => { setHostingDeployImage(e.target.value); setHostingDeployContainerBuildId(''); }} placeholder="registry/app@sha256:…" /></label>
