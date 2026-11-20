@@ -76,6 +76,8 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     const portNumber = Number(port);
     if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) return res.status(400).json({ error: 'Port must be an integer between 1 and 65535' });
     let deploymentRecordId = null;
+    let partialProviderResourceId = null;
+    let partialProviderMetadata = {};
     try {
       const connectionResult = await query(
         `select c.*, m.role from public.hosting_provider_connections c
@@ -151,6 +153,8 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         deploymentRequest.deployFiles = await prepareNetlifyArtifactFiles(pipelineRunId, { query, publishDirectory: req.body?.publishDirectory || req.body?.outputDirectory });
       }
       const result = await deployToHostingProvider(connection.provider_id, credential, deploymentRequest);
+      partialProviderResourceId = result.providerDeploymentId || null;
+      partialProviderMetadata = result.metadata || {};
       if (!result.ok) {
         await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,provider_resource_id=$3,metadata=metadata || $4::jsonb,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,result.error,result.providerDeploymentId||null,JSON.stringify(result.metadata||{})]);
         return res.status(502).json({ deployment: { ...record.rows[0], status: 'failed' }, error: result.error });
@@ -168,7 +172,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     } catch (error) {
       if (deploymentRecordId) {
         try {
-          await query(`update public.hosting_provider_deployments set status='failed',error_message='Deployment request failed before provider confirmation',updated_at=now(),completed_at=now() where id=$1 and status in ('provisioning','building','deploying')`, [deploymentRecordId]);
+          await query(`update public.hosting_provider_deployments set status='failed',error_message='Deployment request failed before provider confirmation',provider_resource_id=$2,metadata=metadata || $3::jsonb,updated_at=now(),completed_at=now() where id=$1 and status in ('provisioning','building','deploying')`, [deploymentRecordId,partialProviderResourceId,JSON.stringify(partialProviderMetadata)]);
         } catch { /* preserve the original failure response */ }
       }
       res.status(500).json({ error: 'Could not initiate hosting-provider deployment' });
