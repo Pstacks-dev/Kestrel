@@ -237,3 +237,13 @@ test('partial provider resources are returned for cleanup and cannot be retried'
  assert.equal(result.retryable,false);
  assert.equal(result.ambiguous,true);
 });
+
+test('rate-limited deploy on an existing Netlify site is safe to retry',async()=>{
+ const result=await deployToHostingProvider('netlify',{token:'nt-token',siteId:'existing-site'},{projectSlug:'existing-site',deployFiles:{'/index.html':'hello'}},{fetchImpl:async()=>response({message:'rate limited'},429)});
+ assert.equal(result.ok,false);
+ assert.equal(result.metadata.siteId,'existing-site');
+ assert.equal(result.metadata.siteCreated,false);
+ assert.equal(result.metadata.cleanupRequired,false);
+ assert.equal(result.retryable,true);
+ assert.equal(result.ambiguous,false);
+});
