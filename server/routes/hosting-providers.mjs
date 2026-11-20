@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { encryptSecret } from '../lib/security.mjs';
+import { encryptSecret, decryptSecret } from '../lib/security.mjs';
+import { verifyRenderCredential } from '../deploy/providers/render.mjs';
 import { HOSTING_PROVIDERS, getHostingProvider } from '../deploy/providers/catalog.mjs';
 
 const roles = ['owner', 'admin'];
@@ -58,9 +59,40 @@ export function registerHostingProviderRoutes(app, { userAuth, query, transactio
          returning id, provider_id as "providerId", display_name as "displayName", status, created_at as "createdAt"`,
         [req.params.organizationId, providerId, displayName.trim(), secret.encryptedValue, secret.iv, secret.authTag, req.user.id]
       );
-      res.status(201).json({ connection: result.rows[0], note: 'Credential encrypted and stored. Provider verification is not yet implemented; this connection remains unverified.' });
+      res.status(201).json({ connection: result.rows[0], note: 'Credential encrypted and stored. Verify it before using it for deployments.' });
     } catch (error) {
       res.status(error.status || 500).json(safeError(error));
+    }
+  });
+
+
+  app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/verify', userAuth, async (req, res) => {
+    try {
+      const row = await query(
+        `select c.id, c.provider_id, c.encrypted_credentials, c.credentials_iv, c.credentials_auth_tag,
+                m.role
+         from public.hosting_provider_connections c
+         join public.organization_members m on m.organization_id = c.organization_id
+         where c.id = $1 and c.organization_id = $2 and m.user_id = $3`,
+        [req.params.connectionId, req.params.organizationId, req.user.id]
+      );
+      if (!row.rowCount) return res.status(404).json({ error: 'Provider connection not found' });
+      if (!roles.includes(row.rows[0].role)) return res.status(403).json({ error: 'Workspace owner or admin permission required' });
+      const connection = row.rows[0];
+      if (connection.provider_id !== 'render') {
+        return res.status(501).json({ error: 'Credential verification is not implemented for this provider yet' });
+      }
+      const token = decryptSecret(connection.encrypted_credentials, connection.credentials_iv, connection.credentials_auth_tag);
+      const verification = await verifyRenderCredential(token);
+      await query(
+        `update public.hosting_provider_connections set status = $2, last_verified_at = case when $2 = 'connected' then now() else last_verified_at end,
+           last_error = $3, updated_at = now() where id = $1`,
+        [connection.id, verification.ok ? 'connected' : 'error', verification.ok ? null : verification.error]
+      );
+      if (!verification.ok) return res.status(422).json({ connectionId: connection.id, status: 'error', error: verification.error });
+      res.json({ connectionId: connection.id, status: 'connected', verifiedAt: new Date().toISOString(), provider: 'Render' });
+    } catch {
+      res.status(500).json({ error: 'Could not verify provider connection' });
     }
   });
 
