@@ -97,7 +97,7 @@ test('failed deployment cleanup calls provider deletion endpoint and never expos
   ['railway',{token:'rw-token'},{metadata:{serviceId:'svc-123'}},'POST','graphql'],
   ['flyio',{token:'fly-token'},{metadata:{appName:'demo'}},'DELETE','/apps/demo'],
   ['cloud-run',{accessToken:'gcp-token'},{providerResourceId:'projects/p/locations/r/services/demo'},'DELETE','services/demo'],
-  ['aws-apprunner',{accessKeyId:'AKID',secretAccessKey:'secret',region:'us-east-1'},{metadata:{serviceArn:'arn:aws:apprunner:us-east-1:123:service/x/abc'}},'POST','DeleteService'],
+  ['aws-apprunner',{accessKeyId:'AKID',secretAccessKey:'secret',region:'us-east-1'},{metadata:{serviceArn:'arn:aws:apprunner:us-east-1:123:service/x/abc'}},'POST','apprunner'],
   ['azure-container-apps',{accessToken:'azure-token'},{metadata:{resourceId:'/subscriptions/s/resourceGroups/g/providers/Microsoft.App/containerApps/demo'}},'DELETE','containerApps/demo'],
   ['digitalocean',{token:'do-token'},{metadata:{appId:'app-123'}},'DELETE','/apps/app-123'],
   ['heroku',{token:'hk-token'},{metadata:{appId:'app-123'}},'DELETE','/apps/app-123'],
@@ -108,7 +108,7 @@ test('failed deployment cleanup calls provider deletion endpoint and never expos
   let hit=false;
   const result=await cleanupHostingDeployment(provider,cred,deploy,{fetchImpl:async(url,init={})=>{
    hit=true;assert.ok(String(url).includes(needle),provider+' endpoint');if(provider!=='railway')assert.equal(init.method,method);
-   if(provider==='railway')assert.match(init.body,/serviceDelete/);
+   if(provider==='railway')assert.match(init.body,/serviceDelete/);if(provider==='aws-apprunner')assert.equal(init.headers['x-amz-target'],'AmazonAppRunner.DeleteService');
    return response({});
   }});
   assert.equal(result.ok,true,provider+': '+result.error);assert.equal(hit,true);
