@@ -4,6 +4,18 @@ import { getHostingProvider, normalizeSubdomain, providerDomainCandidates } from
 
 const ADMIN_ROLES = ['owner', 'admin'];
 
+async function writeDeploymentEvent(query, deploymentId, eventType, message, metadata = {}, actorId = null) {
+  try {
+    await query(
+      `insert into public.hosting_deployment_events(deployment_id,event_type,message,metadata,created_by)
+       values($1,$2,$3,$4::jsonb,$5)`,
+      [deploymentId,eventType,String(message).slice(0,500),JSON.stringify(metadata),actorId]
+    );
+  } catch (error) {
+    console.error('Hosting deployment event could not be recorded:', error.message);
+  }
+}
+
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
     const { projectId, pipelineRunId, projectSlug, image, imageRepository, imageTag, registryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
@@ -79,6 +91,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         [connection.organization_id,projectId,connection.id,pipelineRunId,connection.provider_id,slug,requestedHostname,req.user.id]
       );
       deploymentRecordId = record.rows[0].id;
+      await writeDeploymentEvent(query, deploymentRecordId, 'deployment.created', 'Deployment request accepted by Kestrel', { providerId: connection.provider_id, pipelineRunId }, req.user.id);
       const credential = decryptSecret(connection.encrypted_credentials, connection.credentials_iv, connection.credentials_auth_tag);
       const deploymentRequest = {
         projectSlug: slug, appType, image, repoUrl, branch: run.branch || run.default_branch,
@@ -89,8 +102,10 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       };
       const result = await deployToHostingProvider(connection.provider_id, credential, deploymentRequest);
       if (!result.ok) {
-        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,result.error]);
-        return res.status(502).json({ deployment: { ...record.rows[0], status: 'failed' }, error: result.error });
+        const safeError = String(result.error || 'Provider deployment failed').slice(0, 500);
+        await query(`update public.hosting_provider_deployments set status='failed',error_message=$2,updated_at=now(),completed_at=now() where id=$1`, [record.rows[0].id,safeError]);
+        await writeDeploymentEvent(query, deploymentRecordId, 'provider.failed', 'Hosting provider rejected or failed the deployment', { error: safeError, providerId: connection.provider_id, cleanupRequired: Boolean(result.cleanupRequired), cleanupStatus: result.cleanupStatus || 'unknown' }, req.user.id);
+        return res.status(502).json({ deployment: { ...record.rows[0], status: 'failed' }, error: safeError });
       }
       const hostname = result.hostname || requestedHostname;
       const updated = await query(
@@ -101,9 +116,11 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
         [record.rows[0].id,result.providerDeploymentId,result.url,result.providerStatus === 'live' ? 'live' : 'deploying',
           { providerStatus: result.providerStatus, actualHostname: hostname, commitSha, ...(result.metadata || {}) }]
       );
+      await writeDeploymentEvent(query, deploymentRecordId, 'provider.accepted', 'Hosting provider accepted the deployment request', { providerStatus: result.providerStatus, providerResourceId: result.id || null }, req.user.id);
       res.status(202).json({ deployment: updated.rows[0], providerStatus: result.providerStatus, providerUrl: result.url, note: 'Provider accepted deployment request; live status is not confirmed yet.' });
     } catch (error) {
       if (deploymentRecordId) {
+        await writeDeploymentEvent(query, deploymentRecordId, 'deployment.failed', 'Deployment request failed before provider confirmation', {}, req.user.id);
         try {
           await query(`update public.hosting_provider_deployments set status='failed',error_message='Deployment request failed before provider confirmation',updated_at=now(),completed_at=now() where id=$1 and status in ('provisioning','building','deploying')`, [deploymentRecordId]);
         } catch { /* preserve the original failure response */ }
@@ -134,10 +151,32 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       const credential=decryptSecret(d.encrypted_credentials,d.credentials_iv,d.credentials_auth_tag);
       const refreshed=await refreshHostingDeployment(d.provider_id,credential,{providerResourceId:d.provider_resource_id,liveUrl:d.live_url,metadata:d.metadata||{}});
       if (!refreshed.ok) return res.status(502).json({ error: refreshed.error });
+      await writeDeploymentEvent(query, d.id, 'status.refreshed', 'Provider deployment status was refreshed', { providerStatus: refreshed.providerStatus, status: refreshed.status }, req.user.id);
       const updated=await query(`update public.hosting_provider_deployments set status=$2,live_url=$3,metadata=metadata || $4::jsonb,updated_at=now(),completed_at=case when $2 in ('live','failed') then now() else completed_at end where id=$1 returning id,status,live_url as "liveUrl",provider_id as "providerId",project_slug as "projectSlug",updated_at as "updatedAt"`,[d.id,refreshed.status,refreshed.url,JSON.stringify({providerStatus:refreshed.providerStatus})]);
       res.json({ deployment: updated.rows[0], providerStatus: refreshed.providerStatus });
     } catch { res.status(500).json({ error: 'Could not refresh hosting deployment status' }); }
   });
+  app.get('/api/hosting-deployments/:deploymentId/events', userAuth, async (req, res) => {
+    try {
+      const access = await query(
+        `select d.id from public.hosting_provider_deployments d
+         join public.organization_members m on m.organization_id=d.organization_id
+         where d.id=$1 and m.user_id=$2`,
+        [req.params.deploymentId, req.user.id]
+      );
+      if (!access.rowCount) return res.status(404).json({ error: 'Hosting deployment not found' });
+      const events = await query(
+        `select id,event_type as "eventType",message,metadata,created_at as "createdAt"
+         from public.hosting_deployment_events where deployment_id=$1
+         order by created_at asc limit 200`,
+        [req.params.deploymentId]
+      );
+      res.json({ events: events.rows });
+    } catch {
+      res.status(500).json({ error: 'Could not load hosting deployment events' });
+    }
+  });
+
   app.get('/api/hosting-deployments/:deploymentId', userAuth, async (req, res) => {
     try {
       const row = await query(
