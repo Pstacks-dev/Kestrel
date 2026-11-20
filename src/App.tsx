@@ -150,7 +150,7 @@ function Landing() {
         <div className="hero-visual">
           <div className="visual-top">
             <span>
-              <i className="live-dot" /> EXAMPLE PIPELINE
+              EXAMPLE PIPELINE
             </span>
             <span>sample-run</span>
           </div>
@@ -200,7 +200,7 @@ function Landing() {
               </span>
             </div>
             <div className="worker-state">
-              <i className="live-dot" /> SAMPLE STATE
+              SAMPLE STATE
             </div>
           </div>
           <div className="log-lines">
