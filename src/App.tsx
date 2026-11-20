@@ -630,7 +630,7 @@ function AppShell({ page }: { page: Page }) {
   const [hostingDeployImageRepository, setHostingDeployImageRepository] = useState('');
   const [hostingDeployImageTag, setHostingDeployImageTag] = useState('');
   const [hostingDeployRegistryType, setHostingDeployRegistryType] = useState('DOCR');
-  const [hostingDeployAppType, setHostingDeployAppType] = useState('node');
+  const [hostingDeployAppType, setHostingDeployAppType] = useState('docker');
   const [hostingSourceArchive, setHostingSourceArchive] = useState('');
   const [hostingDeployPort, setHostingDeployPort] = useState('3000');
   const [hostingDeployments, setHostingDeployments] = useState<any[]>([]);
@@ -2499,7 +2499,7 @@ function AppShell({ page }: { page: Page }) {
                 <label>
                   Provider
                   <select value={hostingProviderId} onChange={(e) => { setHostingProviderId(e.target.value); setHostingCredential(''); setHostingConnectionName(`${hostingProviders.find((provider) => provider.id === e.target.value)?.name || e.target.value} account`); }}>
-                    {hostingProviders.map((provider) => <option value={provider.id} key={provider.id}>{provider.name}{provider.adapterStatus === 'api-integration' ? ' · API ready' : ' · unavailable'}</option>)}
+                    {hostingProviders.map((provider) => <option value={provider.id} key={provider.id}>{provider.name}{provider.adapterStatus === 'api-integration' ? ' · API integration' : ' · unavailable'}</option>)}
                   </select>
                 </label>
                 <label>
@@ -2519,12 +2519,12 @@ function AppShell({ page }: { page: Page }) {
               <h3>Deploy a validated pipeline</h3>
               <p>Only successful pipeline runs can deploy. Container image input must be pinned to a SHA-256 digest. Netlify static deploys automatically package the run's stored build artifacts (including binary assets); include a root index.html.</p>
               <form className="project-form" onSubmit={deployHostingProvider}>
-                <label>Provider<select value={hostingProviderId} onChange={(e) => setHostingProviderId(e.target.value)}>{hostingProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+                <label>Provider<select value={hostingProviderId} onChange={(e) => { const nextId=e.target.value; setHostingProviderId(nextId); const supported=hostingProviders.find((provider) => provider.id === nextId)?.appTypes || []; if (supported.length && !supported.includes(hostingDeployAppType)) setHostingDeployAppType(supported[0]); }}>{hostingProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
                 <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
                 <label>Successful run<select value={hostingDeployRun} onChange={(e) => setHostingDeployRun(e.target.value)}><option value="">Select successful run</option>{(snapshot?.runs || []).filter((run: any) => run.projectId === hostingDeployProject && run.status === 'succeeded').map((run: any) => <option key={run.id} value={run.id}>#{run.runNumber} · {run.branch} · {String(run.commitSha || '').slice(0,8)}</option>)}</select></label>
                 <label>Requested subdomain<input value={hostingDeploySlug} onChange={(e) => setHostingDeploySlug(e.target.value)} placeholder="my-project" required minLength={2} maxLength={63} /></label>
                 <label>Immutable image reference<input value={hostingDeployImage} onChange={(e) => setHostingDeployImage(e.target.value)} placeholder="registry/app@sha256:…" /></label>
-                <label>Application type<select value={hostingDeployAppType} onChange={(e) => setHostingDeployAppType(e.target.value)}><option value="node">Node.js</option><option value="python">Python</option><option value="static">Static site</option><option value="docker">Container</option></select></label>
+                <label>Application type<select value={hostingDeployAppType} onChange={(e) => setHostingDeployAppType(e.target.value)}>{(hostingProviders.find((provider) => provider.id === hostingProviderId)?.appTypes || ['node','python','static','docker']).map((type: string) => <option key={type} value={type}>{type === 'node' ? 'Node.js' : type === 'python' ? 'Python' : type === 'static' ? 'Static site' : 'Container'}</option>)}</select></label>
                 {hostingProviderId === 'digitalocean' && <><label>Registry<select value={hostingDeployRegistryType} onChange={(e) => setHostingDeployRegistryType(e.target.value)}><option value="DOCR">DOCR</option><option value="GHCR">GHCR</option><option value="DockerHub">Docker Hub</option><option value="ECR">ECR</option><option value="GCR">GCR</option></select></label><label>Image repository<input value={hostingDeployImageRepository} onChange={(e) => setHostingDeployImageRepository(e.target.value)} placeholder="namespace/repository" /></label><label>Immutable image tag<input value={hostingDeployImageTag} onChange={(e) => setHostingDeployImageTag(e.target.value)} placeholder="sha-commit" /></label></>}
                 <label>Port<input type="number" value={hostingDeployPort} onChange={(e) => setHostingDeployPort(e.target.value)} min="1" max="65535" /></label>
                 {hostingProviderId === 'heroku' && <label>Commit-pinned archive URL<input type="url" value={hostingSourceArchive} onChange={(e) => setHostingSourceArchive(e.target.value)} placeholder="HTTPS archive containing the commit SHA" /></label>}
