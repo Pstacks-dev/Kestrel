@@ -100,7 +100,7 @@ export async function verifyHostingProvider(providerId, credential, { fetchImpl 
   } catch (error) { return { ok: false, providerId, error: safeError(error) }; }
 }
 
-function validateRequest(request) {
+function validateRequest(providerId, request) {
   const image = request.image || request.containerImage;
   if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) throw new Error('Container image must use an immutable SHA-256 digest');
   if (!image && !request.repoUrl && !request.sourceTarball && !request.gitSource) throw new Error('Validated project source repository URL is required');
@@ -116,7 +116,7 @@ function validateRequest(request) {
 export async function deployToHostingProvider(providerId, credential, request, { fetchImpl = fetch } = {}) {
   const c = parseCredential(credential);
   try {
-    const { image, slug } = validateRequest(request), token = tokenOf(c), repoUrl = request.repoUrl, branch = request.branch || 'main';
+    const { image, slug } = validateRequest(providerId, request), token = tokenOf(c), repoUrl = request.repoUrl, branch = request.branch || 'main';
     const port = Number(request.port || 3000), env = request.env || {}; let data, id, url;
     switch (providerId) {
       case 'render': {

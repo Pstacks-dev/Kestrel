@@ -67,7 +67,7 @@ test('hosting provider connection routes require encrypted credentials and works
   assert.ok(routes.includes('/api/organizations/:organizationId/hosting-connections'));
   assert.ok(routes.includes('KESTREL_ENCRYPTION_KEY'));
   assert.ok(routes.includes('/verify'));
-  assert.ok(routes.includes('verifyRenderCredential'));
+  assert.ok(routes.includes('verifyHostingProvider'));
   assert.ok(routes.includes('encrypted_credentials'));
   assert.ok(routes.includes("roles = ['owner', 'admin']"));
   assert.ok(!routes.includes('select c.encrypted_credentials'));
