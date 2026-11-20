@@ -7,8 +7,9 @@ export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,si
   const started=Date.now();
   const captureLimit=Math.max(0,Number.isFinite(maxCaptureBytes)?maxCaptureBytes:256*1024);
   const lineLimit=Math.max(256,Number.isFinite(maxLineBytes)?maxLineBytes:16*1024);
+  if(signal?.aborted)return {exitCode:124,stdout:'',stderr:'',durationMs:0};
   return new Promise((resolve)=>{
-    let settled=false, timedOut=false, killTimer=null;
+    let settled=false, timedOut=false, killTimer=null, stopRequested=false;
     let stdout='',stderr='',tail={stdout:'',stderr:''},captured={stdout:0,stderr:0},truncated={stdout:false,stderr:false};
     const safeLine=(stream,line)=>{try{onLine?.(stream,line);}catch{/* Logging must not break build execution. */}};
     const capture=(stream,text)=>{
@@ -20,8 +21,8 @@ export async function runProcess(command,args,{cwd,env,input,timeoutMs,onLine,si
     try{child=spawnImpl(command,args,{cwd,env,shell:false,stdio:['pipe','pipe','pipe']});}
     catch(error){return resolve({exitCode:1,stdout,stderr:String(error?.message||error).slice(0,lineLimit),durationMs:Date.now()-started});}
     const stop=()=>{
-      if(settled)return;
-      timedOut=true;
+      if(settled||stopRequested)return;
+      stopRequested=true;timedOut=true;
       try{child.kill('SIGTERM');}catch{}
       killTimer=setTimeout(()=>{try{child.kill('SIGKILL');}catch{}},3000);
       killTimer.unref?.();
