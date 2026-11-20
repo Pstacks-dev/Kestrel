@@ -471,10 +471,11 @@ async function execute(job) {
     if (EXECUTOR === 'docker') await makeWorkspaceWritable(workspace);
 
     const onJobLine = (stream, message) => {
-        console.log(`[${job.name}:${stream}] ${message}`);
+        const safeMessage = redactSecrets(message, secretValues);
+        console.log(`[${job.name}:${stream}] ${safeMessage}`);
         if (logBytes < 10 * 1024 * 1024) {
-          logBuffer.push({ stream, message });
-          logBytes += Buffer.byteLength(message);
+          logBuffer.push({ stream, message: safeMessage });
+          logBytes += Buffer.byteLength(safeMessage);
         } else if (!logTruncated) {
           logTruncated = true;
           logBuffer.push({ stream: 'stderr', message: '[Kestrel] Log output truncated after 10 MiB limit.' });
