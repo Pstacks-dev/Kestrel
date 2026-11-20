@@ -95,3 +95,14 @@ test('hosting deployment operations require membership and restrict cleanup to f
   assert.match(routes, /d\.status !== 'failed'/);
   assert.match(routes, /status='cancelled'/);
 });
+
+
+test('container image build migration adds worker configuration and immutable digest fields',async()=>{
+ const migration=await readFile(new URL('../db/migrations/026_container_image_builds.sql',import.meta.url),'utf8');
+ assert.match(migration,/job_type in \('build','deployment','container_build'\)/);
+ assert.match(migration,/container_build_config jsonb/);
+ assert.match(migration,/container_image_digest text/);
+ assert.match(migration,/create table if not exists public\.container_builds/);
+ assert.match(migration,/enable row level security/);
+ assert.match(migration,/grant all on public\.container_builds to service_role/);
+});
