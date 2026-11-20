@@ -142,3 +142,16 @@ test('hosting deployment retry migration is bounded and request payload encrypti
  assert.ok(routes.includes("metadata->>'retryable'='true'"));
  assert.ok(routes.includes('provider_resource_id is null'));
 });
+
+test('hosting and container build foreign keys have covering indexes',async()=>{
+ const migration=await readFile(new URL('../db/migrations/030_hosting_build_fk_indexes.sql',import.meta.url),'utf8');
+ for(const index of [
+  'container_build_settings_created_by_idx',
+  'container_builds_build_pipeline_run_idx',
+  'container_builds_created_by_idx',
+  'hosting_deployment_events_created_by_idx',
+  'hosting_provider_connections_created_by_idx',
+  'hosting_provider_deployments_created_by_idx',
+  'hosting_provider_deployments_pipeline_run_idx'
+ ]) assert.ok(migration.includes(index),`missing index: ${index}`);
+});
