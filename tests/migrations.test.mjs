@@ -84,3 +84,14 @@ test('hosting deployment route marks records failed on unexpected errors after r
   assert.match(routes, /Deployment environment variables contain invalid keys or values/);
   assert.match(routes, /65536/);
 });
+
+
+test('hosting deployment operations require membership and restrict cleanup to failed deployments', async () => {
+  const routes = await readFile(new URL('../server/routes/hosting-deployments.mjs', import.meta.url), 'utf8');
+  assert.match(routes, /hosting-deployments\/:deploymentId\/logs/);
+  assert.match(routes, /hosting-deployments\/:deploymentId\/cleanup/);
+  assert.match(routes, /m\.user_id=\$2/);
+  assert.match(routes, /ADMIN_ROLES\.includes\(d\.role\)/);
+  assert.match(routes, /d\.status !== 'failed'/);
+  assert.match(routes, /status='cancelled'/);
+});
