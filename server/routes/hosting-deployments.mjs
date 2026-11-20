@@ -6,7 +6,7 @@ const ADMIN_ROLES = ['owner', 'admin'];
 
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
-    const { projectId, pipelineRunId, projectSlug, image, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
+    const { projectId, pipelineRunId, projectSlug, image, imageRepository, imageTag, registryType, appType = 'docker', port = 3000, buildCommand, startCommand, sourceTarball, gitSource, env = {} } = req.body || {};
     const slug = normalizeSubdomain(projectSlug);
     if (!projectId || !pipelineRunId || !slug) return res.status(400).json({ error: 'Project, successful pipeline run and valid subdomain are required' });
     if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
@@ -43,6 +43,20 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       if (gitSource?.sha && gitSource.sha !== commitSha) return res.status(400).json({ error: 'Git source SHA must match the validated pipeline commit' });
       const repoUrl = run.repository_url;
       if (gitSource && gitSource.repoUrl && gitSource.repoUrl !== repoUrl) return res.status(400).json({ error: 'Git source repository must match the Kestrel project source' });
+      let pinnedGitSource;
+      if (connection.provider_id === 'vercel') {
+        let githubParts = [];
+        try { const parsed = new URL(repoUrl); githubParts = parsed.hostname === 'github.com' ? parsed.pathname.split('/').filter(Boolean) : []; } catch {}
+        if (githubParts.length < 2) return res.status(400).json({ error: 'Vercel requires a GitHub repository connected to the provider account' });
+        const org = githubParts[0], repoName = githubParts[1].endsWith('.git') ? githubParts[1].slice(0, -4) : githubParts[1];
+        if (gitSource && (gitSource.org !== org || gitSource.repo !== repoName)) return res.status(400).json({ error: 'Git source must match the Kestrel project repository' });
+        pinnedGitSource = { org, repo: repoName, ref: run.branch, sha: commitSha };
+      }
+      if (connection.provider_id === 'heroku') {
+        let archive;
+        try { archive = new URL(sourceTarball); } catch {}
+        if (!archive || archive.protocol !== 'https:' || !archive.pathname.includes(commitSha)) return res.status(400).json({ error: 'Heroku source archive must be HTTPS and pinned to the validated commit SHA' });
+      }
 
       const existing = await query('select id,status,live_url as "liveUrl" from public.hosting_provider_deployments where connection_id=$1 and pipeline_run_id=$2', [connection.id,pipelineRunId]);
       if (existing.rowCount && existing.rows[0].status === 'live') return res.status(200).json({ deployment: existing.rows[0], reused: true });
@@ -60,7 +74,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       const credential = decryptSecret(connection.encrypted_credentials, connection.credentials_iv, connection.credentials_auth_tag);
       const deploymentRequest = {
         projectSlug: slug, appType, image, repoUrl, branch: run.branch || run.default_branch,
-        commitSha, port, buildCommand, startCommand, sourceTarball, gitSource: gitSource ? { ...gitSource, sha: commitSha } : undefined,
+        commitSha, port, buildCommand, startCommand, sourceTarball, gitSource: pinnedGitSource, imageRepository, imageTag, registryType,
         env, healthPath: req.body?.healthPath, target: req.body?.target, outputDirectory: req.body?.outputDirectory,
         deployFiles: req.body?.deployFiles, publishDirectory: req.body?.publishDirectory, imageRepository: req.body?.imageRepository,
         imageTag: req.body?.imageTag, registryType: req.body?.registryType, instanceSize: req.body?.instanceSize, buildpacks: req.body?.buildpacks,

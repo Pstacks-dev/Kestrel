@@ -103,7 +103,10 @@ export async function verifyHostingProvider(providerId, credential, { fetchImpl 
 function validateRequest(request) {
   const image = request.image || request.containerImage;
   if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) throw new Error('Container image must use an immutable SHA-256 digest');
-  if (!image && !request.repoUrl) throw new Error('Validated project source repository URL is required');
+  if (!image && !request.repoUrl && !request.sourceTarball && !request.gitSource) throw new Error('Validated project source repository URL is required');
+  if (['flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean'].includes(providerId) && !image) throw new Error(`${providerId} requires a pinned container image`);
+  if (providerId === 'heroku' && !request.sourceTarball) throw new Error('Heroku deployment requires a source archive URL');
+  if (providerId === 'vercel' && !request.gitSource) throw new Error('Vercel deployment requires a connected Git source');
   const slug = String(request.projectSlug || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   if (slug.length < 2 || slug.length > 63) throw new Error('Project slug must be 2-63 characters');
   return { image, slug };
@@ -159,7 +162,8 @@ export async function deployToHostingProvider(providerId, credential, request, {
       }
       case 'digitalocean': {
         const region=c.region||'nyc', registryType=request.registryType||'DOCR';
-        data=await call(fetchImpl,`${PROVIDER_URLS.digitalocean}/apps`,{method:'POST',token,body:{spec:{name:slug,region,services:[{name:slug,image:{registry_type:registryType,repository:request.imageRepository||slug,tag:request.imageTag||'latest'},http_port:port,instance_count:1,instance_size_slug:request.instanceSize||'basic-xxs',envs:Object.entries(env).map(([key,value])=>({key,value:String(value),type:'GENERAL'}))}]}}});
+        const imageRepository=requireValue(request,'imageRepository'), imageTag=requireValue(request,'imageTag');
+        data=await call(fetchImpl,`${PROVIDER_URLS.digitalocean}/apps`,{method:'POST',token,body:{spec:{name:slug,region,services:[{name:slug,image:{registry_type:registryType,repository:imageRepository,tag:imageTag},http_port:port,instance_count:1,instance_size_slug:request.instanceSize||'basic-xxs',envs:Object.entries(env).map(([key,value])=>({key,value:String(value),type:'GENERAL'}))}]}}});
         id=data?.app?.id; url=data?.app?.default_ingress ? `https://${data.app.default_ingress}` : null; break;
       }
       case 'heroku': {
