@@ -56,7 +56,8 @@ test('container build route, worker claim and completion are wired to image buil
  const migration=await fs.readFile(new URL('../db/migrations/026_container_image_builds.sql',import.meta.url),'utf8');
  assert.match(route,/successful pipeline run/);
  assert.match(route,/project_secrets/);
- assert.match(route,/container_build_config/);\n assert.match(route,/select id from public\\.projects where id=\\$1 for update/);
+ assert.match(route,/container_build_config/);
+ assert.match(route,/select id from public\\.projects where id=\\$1 for update/);
  assert.match(control,/j\.job_type = 'container_build'/);
  assert.match(control,/containerImageDigest/);
  assert.match(control,/container_builds set status/);
