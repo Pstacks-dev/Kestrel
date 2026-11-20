@@ -30,7 +30,7 @@ async function awsApi(c,path,body,fetcher,method='POST'){
  const headers={host,'content-type':'application/x-amz-json-1.1','x-amz-date':now,'x-amz-target':'AmazonAppRunner.'+target};
  if(c.sessionToken)headers['x-amz-security-token']=c.sessionToken;
  const keys=Object.keys(headers).map(k=>k.toLowerCase()).sort(),canonicalHeaders=keys.map(k=>k+':'+headers[k].trim()+'\n').join(''),signed=keys.join(';');
- const digest=crypto.createHash('sha256').update(payload).digest('hex'),canonical=[method,path,'',canonicalHeaders,signed,digest].join('\n'),scope=day+'/'+region+'/apprunner/aws4_request';
+ const digest=crypto.createHash('sha256').update(payload).digest('hex'),canonical=[method,path,'',canonicalHeaders+signed,digest].join('\n'),scope=day+'/'+region+'/apprunner/aws4_request';
  const stringToSign=['AWS4-HMAC-SHA256',now,scope,crypto.createHash('sha256').update(canonical).digest('hex')].join('\n');
  const hmac=(key,val)=>crypto.createHmac('sha256',key).update(val).digest();
  const signKey=hmac(hmac(hmac(hmac('AWS4'+secret,day),region),'apprunner'),'aws4_request');
