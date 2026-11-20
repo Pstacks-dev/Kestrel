@@ -7,34 +7,29 @@ const ADMIN_ROLES = ['owner', 'admin'];
 
 const NETLIFY_MAX_FILES = 50;
 const NETLIFY_MAX_BYTES = 25 * 1024 * 1024;
-const safeRelativeArtifact = (name) => typeof name === 'string' && name.length <= 512 && !name.startsWith('/') && !name.includes('\\') && !/^[A-Za-z]:/.test(name) && name.split('/').every(part => part && part !== '.' && part !== '..' && !/[\\u0000-\\u001f]/.test(part));
+const safeRelativeArtifact = (name) => typeof name === 'string' && name.length <= 512 && !name.startsWith('/') && !name.includes('\\') && !/^[A-Za-z]:/.test(name) && name.split('/').every(part => part && part !== '.' && part !== '..' && !/[\\x00-\\x1f]/.test(part));
 
 export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fetch, publishDirectory = '', storageUrl = process.env.SUPABASE_URL, serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY } = {}) {
   if (!storageUrl || !serviceKey) throw new Error('Artifact storage is not configured for automatic static deployments');
-  const prefix = String(publishDirectory || '').trim().replace(/^\\/+|\\/+$/g, '');
+  const prefix = String(publishDirectory || '').trim().split('/').filter(Boolean).join('/');
   if (prefix && !safeRelativeArtifact(prefix)) throw new Error('Publish directory must be a safe relative path');
-  const artifacts = await query(
-    'select name,object_key,size_bytes from public.artifacts where run_id=$1 and deleted_at is null and (expires_at is null or expires_at > now()) order by name',
-    [runId]
-  );
+  const artifacts = await query('select name,object_key,size_bytes from public.artifacts where run_id=$1 and deleted_at is null and (expires_at is null or expires_at > now()) order by name', [runId]);
   if (!artifacts.rowCount) throw new Error('Successful pipeline run has no build artifacts. Add an artifact-producing build job first.');
   if (artifacts.rowCount > NETLIFY_MAX_FILES) throw new Error('Static deployment exceeds the 50-file limit; reduce build artifacts.');
   const files = {};
   let total = 0;
   for (const artifact of artifacts.rows) {
-    let name = String(artifact.name || '').replace(/^\\/+/, '');
-    if (prefix) {
-      if (!name.startsWith(prefix + '/')) continue;
-      name = name.slice(prefix.length + 1);
-    } else {
-      name = name.replace(/^(dist|build|artifacts)\\//, '');
-    }
+    let name = String(artifact.name || '');
+    while (name.startsWith('/')) name = name.slice(1);
+    if (prefix) { if (!name.startsWith(prefix + '/')) continue; name = name.slice(prefix.length + 1); }
+    else if (name.startsWith('dist/')) name = name.slice(5);
+    else if (name.startsWith('build/')) name = name.slice(6);
+    else if (name.startsWith('artifacts/')) name = name.slice(10);
     if (!safeRelativeArtifact(name)) throw new Error('Build artifact contains an unsafe path');
-    const objectPath = String(artifact.object_key || '').split('/').map(encodeURIComponent).join('/');
-    const response = await fetchImpl(storageUrl.replace(/\\/$/, '') + '/storage/v1/object/kestrel-artifacts/' + objectPath, {
-      headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey },
-      signal: AbortSignal.timeout(20000),
-    });
+    const key = String(artifact.object_key || '');
+    if (!safeRelativeArtifact(key)) throw new Error('Stored artifact key is invalid');
+    const objectPath = key.split('/').map(encodeURIComponent).join('/');
+    const response = await fetchImpl(storageUrl.replace(/\\/$/, '') + '/storage/v1/object/kestrel-artifacts/' + objectPath, { headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey }, signal: AbortSignal.timeout(20000) });
     if (!response.ok) throw new Error('Could not retrieve a pipeline build artifact from private storage');
     const bytes = Buffer.from(await response.arrayBuffer());
     if (!bytes.length || bytes.length > 10 * 1024 * 1024 || total + bytes.length > NETLIFY_MAX_BYTES) throw new Error('Static build artifacts exceed the 25 MiB automatic deploy limit');
@@ -45,8 +40,6 @@ export async function prepareNetlifyArtifactFiles(runId, { query, fetchImpl = fe
   if (!Object.keys(files).length) throw new Error('No build artifacts matched the configured publish directory');
   if (!files['/index.html']) throw new Error('Static deployment artifacts must include index.html at the publish root');
   return files;
-}
-
 
 export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
   app.post('/api/organizations/:organizationId/hosting-connections/:connectionId/deploy', userAuth, async (req, res) => {
