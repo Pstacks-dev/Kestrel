@@ -36,10 +36,9 @@ export async function buildAndPushContainerImage(config,{workspace,hostWorkspace
   if(!username||!password)return {exitCode:1,error:'Registry username or password secret is missing'};
   const context=path.resolve(workspace,config.contextPath==='.'?'':config.contextPath);
   if(context!==path.resolve(workspace)&&!context.startsWith(path.resolve(workspace)+path.sep))return {exitCode:1,error:'Build context escapes the checked-out workspace'};
-  const hostContext=path.resolve(hostWorkspace,config.contextPath==='.'?'':config.contextPath);
-  const dockerfile=path.resolve(context,config.dockerfilePath);
-  if(dockerfile!==context&&!dockerfile.startsWith(context+path.sep))return {exitCode:1,error:'Dockerfile escapes the build context'};
-  try {const [ctxStat,fileStat]=await Promise.all([fs.stat(hostContext),fs.stat(path.resolve(hostContext,config.dockerfilePath))]);if(!ctxStat.isDirectory()||!fileStat.isFile())return {exitCode:1,error:'Build context or Dockerfile is missing'};}catch{return {exitCode:1,error:'Build context or Dockerfile is missing'};}
+  const dockerContext=path.resolve(context,config.dockerfilePath);
+  if(dockerContext!==context&&!dockerContext.startsWith(context+path.sep))return {exitCode:1,error:'Dockerfile escapes the build context'};
+  try {const [workspaceReal,contextReal,dockerfileReal,ctxStat,fileStat]=await Promise.all([fs.realpath(workspace),fs.realpath(context),fs.realpath(dockerContext),fs.stat(context),fs.stat(dockerContext)]);if(!ctxStat.isDirectory()||!fileStat.isFile()||!contextReal.startsWith(workspaceReal+path.sep)&&contextReal!==workspaceReal||!dockerfileReal.startsWith(contextReal+path.sep)&&dockerfileReal!==contextReal)return {exitCode:1,error:'Build context or Dockerfile escapes the workspace'};}catch{return {exitCode:1,error:'Build context or Dockerfile is missing'};}
   const imageName=config.registryHost+'/'+config.imageRepository,imageTag=imageName+':'+config.imageTag;
   const configDir=await fs.mkdtemp(path.join(os.tmpdir(),'kestrel-registry-auth-'));
   const env={...process.env,DOCKER_CONFIG:configDir};
@@ -48,7 +47,7 @@ export async function buildAndPushContainerImage(config,{workspace,hostWorkspace
   try {
     result=await commandRunner(dockerBin,['login',config.registryHost,'--username',username,'--password-stdin'],{env,input:password+'\n',timeoutMs:30000,onLine});
     if(result.exitCode!==0)return {exitCode:1,error:'Container registry login failed',durationMs:result.durationMs};
-    result=await commandRunner(dockerBin,['build','--pull','--file',path.resolve(hostContext,config.dockerfilePath),'--tag',imageTag,hostContext],{env,timeoutMs,onLine,signal});
+    result=await commandRunner(dockerBin,['build','--pull','--file',dockerContext,'--tag',imageTag,context],{env,timeoutMs,onLine,signal});
     if(result.exitCode!==0)return {exitCode:result.exitCode,error:'Container image build failed',durationMs:result.durationMs};
     result=await commandRunner(dockerBin,['push',imageTag],{env,timeoutMs,onLine,signal});
     if(result.exitCode!==0)return {exitCode:result.exitCode,error:'Container image push failed',durationMs:result.durationMs};
