@@ -12,6 +12,12 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
     if (!image && !sourceTarball && !gitSource) return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
     if (!env || typeof env !== 'object' || Array.isArray(env) || Object.keys(env).length > 100) return res.status(400).json({ error: 'Deployment environment variables are invalid' });
+    const envEntries = Object.entries(env);
+    if (envEntries.some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !['string', 'number', 'boolean'].includes(typeof value) || String(value).length > 8192) || envEntries.reduce((size, [key, value]) => size + key.length + String(value).length, 0) > 65536) {
+      return res.status(400).json({ error: 'Deployment environment variables contain invalid keys or values' });
+    }
+    const portNumber = Number(port);
+    if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) return res.status(400).json({ error: 'Port must be an integer between 1 and 65535' });
     let deploymentRecordId = null;
     try {
       const connectionResult = await query(
@@ -76,7 +82,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       const credential = decryptSecret(connection.encrypted_credentials, connection.credentials_iv, connection.credentials_auth_tag);
       const deploymentRequest = {
         projectSlug: slug, appType, image, repoUrl, branch: run.branch || run.default_branch,
-        commitSha, port, buildCommand, startCommand, sourceTarball, gitSource: pinnedGitSource, imageRepository, imageTag, registryType,
+        commitSha, port: portNumber, buildCommand, startCommand, sourceTarball, gitSource: pinnedGitSource, imageRepository, imageTag, registryType,
         env, healthPath: req.body?.healthPath, target: req.body?.target, outputDirectory: req.body?.outputDirectory,
         deployFiles: req.body?.deployFiles, publishDirectory: req.body?.publishDirectory, imageRepository: req.body?.imageRepository,
         imageTag: req.body?.imageTag, registryType: req.body?.registryType, instanceSize: req.body?.instanceSize, buildpacks: req.body?.buildpacks,
