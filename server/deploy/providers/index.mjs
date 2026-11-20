@@ -71,20 +71,20 @@ function validate(providerId,r){
 }
 export async function deployToHostingProvider(providerId,credential,r,{fetchImpl=fetch}={}){
  const c=parseCred(credential);
+ let data,id,url,metadata={};
  try{
   const {image,slug}=validate(providerId,r),t=token(c),repoUrl=r.repoUrl,branch=r.branch||'main',port=Number(r.port||3000),env=r.env||{};
-  let data,id,url,metadata={};
   switch(providerId){
    case 'render':{
     const ownerId=required(c,'ownerId');
     data=await api(fetchImpl,API.render+'/services',{method:'POST',token:t,body:{type:'web_service',name:slug,ownerId,autoDeployTrigger:'off',image:{url:image},envVars:Object.entries(env).map(([key,value])=>({key,value:String(value)}))}});
-    id=data?.service?.id||data?.id;url=data?.service?.serviceDetails?.url||data?.service?.url||data?.url;break;
+    id=data?.service?.id||data?.id;metadata={serviceId:id};url=data?.service?.serviceDetails?.url||data?.service?.url||data?.url;break;
    }
    case 'railway':{
     const projectId=required(c,'projectId'),environmentId=required(c,'environmentId');
     const create='mutation serviceCreate($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }';
     const created=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:create,variables:{input:{projectId,name:slug,source:image?{image}:repoUrl?{repo:repoUrl}:undefined,variables:env}}}});
-    if(created?.errors?.length)throw new Error('Railway service creation failed');const service=created?.data?.serviceCreate;if(!service?.id)throw new Error('Railway missing service id');
+    if(created?.errors?.length)throw new Error('Railway service creation failed');const service=created?.data?.serviceCreate;if(!service?.id)throw new Error('Railway missing service id');id=service.id;metadata={serviceId:service.id};
     const deploy='mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }';
     const deployed=await api(fetchImpl,API.railway,{method:'POST',token:t,body:{query:deploy,variables:{serviceId:service.id,environmentId,commitSha:r.commitSha}}});
     if(deployed?.errors?.length)throw new Error('Railway deployment trigger failed');id=deployed?.data?.serviceInstanceDeployV2||service.id;metadata={serviceId:service.id};data={service,deploymentId:id};
@@ -137,7 +137,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
     id=data?.id;metadata={teamId:c.teamId};url=data?.url?'https://'+data.url:null;break;
    }
    case 'netlify':{
-    const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');metadata={siteId:site};
+    const site=c.siteId||(await api(fetchImpl,API.netlify+'/sites',{method:'POST',token:t,body:{name:slug}}))?.id;if(!site)throw new Error('Netlify site create failed');metadata={siteId:site,siteCreated:!c.siteId};
     const files={},uploadContents={};for(const [path,content] of Object.entries(r.deployFiles)){if(typeof content!=='string'||!path.startsWith('/')||path.includes('..'))throw new Error('Unsafe Netlify file path or content');const bytes=content.startsWith('base64:')?Buffer.from(content.slice(7),'base64'):Buffer.from(content,'utf8');if(content.startsWith('base64:')&&bytes.toString('base64')!==content.slice(7))throw new Error('Invalid base64 deploy file');files[path]=crypto.createHash('sha256').update(bytes).digest('hex');uploadContents[path]=bytes;}
     data=await api(fetchImpl,API.netlify+'/sites/'+site+'/deploys',{method:'POST',token:t,body:{files}});id=data?.id;metadata={siteId:site,siteCreated:!c.siteId};url=data?.deploy_url||data?.url;
     for(const [path,bytes] of Object.entries(uploadContents)){const upload=await fetchImpl(API.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+t,'Content-Type':'application/octet-stream'},body:bytes,signal:AbortSignal.timeout(15000)});if(!upload.ok)throw new Error('Netlify file upload failed HTTP '+upload.status);}
@@ -146,7 +146,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    default:throw new Error('Unsupported provider');
   }
   return {ok:true,providerId,providerDeploymentId:id||null,providerStatus:data?.status||data?.state||'provisioning',url,hostname:url?new URL(url).hostname:null,metadata};
- }catch(e){return {ok:false,providerId,error:safeErr(e),retryable:Boolean(e?.provider&&e?.status===429),ambiguous:Boolean(!e?.provider||e?.status>=500)};}
+ }catch(e){const partial=Boolean(id||metadata.serviceId||metadata.appName||metadata.serviceArn||metadata.resourceId||metadata.appId||metadata.siteId);return {ok:false,providerId,error:safeErr(e),providerDeploymentId:id||null,metadata:{...metadata,partialResourceCreated:partial,cleanupRequired:partial},retryable:Boolean(e?.provider&&e?.status===429&&!partial),ambiguous:Boolean(!e?.provider||e?.status>=500||partial)};}
 }
 export function hostingProviderApiBase(providerId){return API[providerId]||null;}
 export async function refreshHostingDeployment(providerId,credential,deployment,{fetchImpl=fetch}={}){
