@@ -603,7 +603,96 @@ function AppShell({ page }: { page: Page }) {
   const [sandboxCommands, setSandboxCommands] = useState<Record<string, string>>({});
   const [sandboxResults, setSandboxResults] = useState<Record<string, any>>({});
 
+  // External hosting provider account connections
+  const [hostingProviders, setHostingProviders] = useState<any[]>([]);
+  const [hostingConnections, setHostingConnections] = useState<any[]>([]);
+  const [hostingProviderId, setHostingProviderId] = useState('render');
+  const [hostingConnectionName, setHostingConnectionName] = useState('Render account');
+  const [hostingCredential, setHostingCredential] = useState('');
+  const [hostingBusy, setHostingBusy] = useState(false);
+  const [hostingMessage, setHostingMessage] = useState('');
+
   const active = nav.find((n) => n.id === page) || nav[0];
+
+  async function loadHostingConnections() {
+    if (!organizationId || !accessToken) return;
+    try {
+      const [providerRes, connectionRes] = await Promise.all([
+        fetch(`${api}/hosting/providers`, { headers: { Authorization: `Bearer ${accessToken}` } }),
+        fetch(`${api}/organizations/${organizationId}/hosting-connections`, { headers: { Authorization: `Bearer ${accessToken}` } }),
+      ]);
+      if (!providerRes.ok || !connectionRes.ok) throw new Error('Could not load provider connection data');
+      const providerData = await providerRes.json();
+      const connectionData = await connectionRes.json();
+      setHostingProviders(providerData.providers || []);
+      setHostingConnections(connectionData.connections || []);
+    } catch (error: any) {
+      setHostingMessage(error.message || 'Unable to load hosting providers');
+    }
+  }
+
+  async function saveHostingConnection(event: React.FormEvent) {
+    event.preventDefault();
+    if (!organizationId || !accessToken || !hostingCredential.trim()) return;
+    setHostingBusy(true);
+    setHostingMessage('');
+    try {
+      const response = await fetch(`${api}/organizations/${organizationId}/hosting-connections`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ providerId: hostingProviderId, displayName: hostingConnectionName, credential: hostingCredential }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not save provider credential');
+      setHostingCredential('');
+      setHostingMessage(data.note || 'Provider credential saved.');
+      await loadHostingConnections();
+    } catch (error: any) {
+      setHostingMessage(error.message || 'Could not save provider credential');
+    } finally {
+      setHostingBusy(false);
+    }
+  }
+
+  async function verifyHostingConnection(connectionId: string) {
+    if (!organizationId || !accessToken) return;
+    setHostingBusy(true);
+    setHostingMessage('');
+    try {
+      const response = await fetch(`${api}/organizations/${organizationId}/hosting-connections/${connectionId}/verify`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Provider verification failed');
+      setHostingMessage(`${data.provider} credentials verified.`);
+      await loadHostingConnections();
+    } catch (error: any) {
+      setHostingMessage(error.message || 'Provider verification failed');
+      await loadHostingConnections();
+    } finally {
+      setHostingBusy(false);
+    }
+  }
+
+  async function removeHostingConnection(connectionId: string) {
+    if (!organizationId || !accessToken) return;
+    setHostingBusy(true);
+    try {
+      const response = await fetch(`${api}/organizations/${organizationId}/hosting-connections/${connectionId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not remove connection');
+      setHostingMessage('Provider credential removed.');
+      await loadHostingConnections();
+    } catch (error: any) {
+      setHostingMessage(error.message || 'Could not remove connection');
+    } finally {
+      setHostingBusy(false);
+    }
+  }
 
   async function connect() {
     setLoading(true);
@@ -660,6 +749,10 @@ function AppShell({ page }: { page: Page }) {
   useEffect(() => {
     connect();
   }, []);
+
+  useEffect(() => {
+    if (page === 'settings' && organizationId && accessToken) loadHostingConnections();
+  }, [page, organizationId, accessToken]);
 
   // Periodic polling for active runs
   useEffect(() => {
@@ -2306,6 +2399,48 @@ function AppShell({ page }: { page: Page }) {
               title="Workspace Settings"
               desc="Connection parameters and platform authentication details."
             />
+            <div className="panel settings-panel mb-6">
+              <h3>Hosting provider accounts</h3>
+              <p>Connect provider credentials here. Tokens are encrypted at rest and never returned to the browser after saving. Actual deployment integrations are being enabled provider-by-provider.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                {hostingProviders.map((provider) => {
+                  const connection = hostingConnections.find((item) => item.providerId === provider.id);
+                  const supported = provider.id === 'render';
+                  return (
+                    <div key={provider.id} className="border rounded-xl p-3 flex items-start justify-between gap-3">
+                      <div>
+                        <b>{provider.name}</b>
+                        <small className="block text-neutral-500 mt-1">{provider.domains?.[0] || 'Provider'}</small>
+                        <small className="block mt-1">{supported ? 'Credential verification supported' : 'Integration planned'}</small>
+                        {connection && <small className="block mt-1">Connection: {connection.status}</small>}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {connection && supported && <Button kind="light" disabled={hostingBusy} onClick={() => verifyHostingConnection(connection.id)}>Verify</Button>}
+                        {connection && <Button kind="light" disabled={hostingBusy} onClick={() => removeHostingConnection(connection.id)}>Remove</Button>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <form className="project-form" onSubmit={saveHostingConnection}>
+                <label>
+                  Provider
+                  <select value={hostingProviderId} onChange={(e) => { setHostingProviderId(e.target.value); setHostingConnectionName(`${hostingProviders.find((provider) => provider.id === e.target.value)?.name || e.target.value} account`); }}>
+                    {hostingProviders.map((provider) => <option value={provider.id} key={provider.id}>{provider.name}{provider.id === 'render' ? ' · verification supported' : ' · planned'}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Connection label
+                  <input value={hostingConnectionName} onChange={(e) => setHostingConnectionName(e.target.value)} required maxLength={100} />
+                </label>
+                <label>
+                  API token / access key
+                  <input type="password" autoComplete="off" value={hostingCredential} onChange={(e) => setHostingCredential(e.target.value)} placeholder="Paste provider token" required />
+                </label>
+                <Button type="submit" disabled={hostingBusy || !hostingCredential.trim()}>{hostingBusy ? 'Saving…' : 'Save encrypted credential'}</Button>
+              </form>
+              {hostingMessage && <div className="action-message mt-3">{hostingMessage}</div>}
+            </div>
             <div className="panel settings-panel">
               <h3>Connection Status</h3>
               <p>Authentication is handled via Supabase Auth tokens; worker communication is signed.</p>
