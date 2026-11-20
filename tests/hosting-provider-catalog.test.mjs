@@ -6,7 +6,7 @@ test('hosting catalog includes ten providers with unique ids', () => {
   assert.equal(HOSTING_PROVIDERS.length, 10);
   assert.equal(new Set(HOSTING_PROVIDERS.map((p) => p.id)).size, 10);
   assert.equal(getHostingProvider('render').adapterStatus, 'credential-verification');
-  assert.ok(HOSTING_PROVIDERS.filter((p) => p.id !== 'render').every((p) => p.adapterStatus === 'planned');
+  assert.ok(HOSTING_PROVIDERS.filter((p) => p.id !== 'render').every((p) => p.adapterStatus === 'planned'));
 });
 
 test('provider lookup is explicit and unknown ids return null', () => {
