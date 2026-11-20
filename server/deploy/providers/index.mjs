@@ -146,7 +146,7 @@ export async function deployToHostingProvider(providerId,credential,r,{fetchImpl
    default:throw new Error('Unsupported provider');
   }
   return {ok:true,providerId,providerDeploymentId:id||null,providerStatus:data?.status||data?.state||'provisioning',url,hostname:url?new URL(url).hostname:null,metadata};
- }catch(e){return {ok:false,providerId,error:safeErr(e)};}
+ }catch(e){return {ok:false,providerId,error:safeErr(e),retryable:Boolean(e?.provider&&e?.status===429),ambiguous:Boolean(!e?.provider||e?.status>=500)};}
 }
 export function hostingProviderApiBase(providerId){return API[providerId]||null;}
 export async function refreshHostingDeployment(providerId,credential,deployment,{fetchImpl=fetch}={}){
