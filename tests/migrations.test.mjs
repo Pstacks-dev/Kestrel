@@ -120,25 +120,25 @@ test('automatic container build settings enforce per-source-run idempotency',asy
 test('hosting deployment lifecycle event timeline uses the next migration and membership-checked route',async()=>{
  const migration=await readFile(new URL('../db/migrations/028_hosting_deployment_events.sql',import.meta.url),'utf8');
  const routes=await readFile(new URL('../server/routes/hosting-deployments.mjs',import.meta.url),'utf8');
- assert.match(migration,/hosting_deployment_events/);
- assert.match(migration,/enable row level security/i);
- assert.match(migration,/revoke all on public\\.hosting_deployment_events from anon, authenticated/i);
- assert.match(routes,/deployment\\.created/);
- assert.match(routes,/provider\\.accepted/);
- assert.match(routes,/deployment\\.failed/);
- assert.match(routes,/provider\\.failed/);
- assert.match(routes,/status\\.refreshed/);
- assert.match(routes,/hosting-deployments\\/:deploymentId\\/events/);
- assert.match(routes,/retry_payload_ciphertext/);
+ assert.ok(migration.includes('hosting_deployment_events'));
+ assert.ok(migration.includes('enable row level security'));
+ assert.ok(migration.includes('revoke all on public.hosting_deployment_events from anon, authenticated'));
+ assert.ok(routes.includes('deployment.created'));
+ assert.ok(routes.includes('provider.accepted'));
+ assert.ok(routes.includes('deployment.failed'));
+ assert.ok(routes.includes('provider.failed'));
+ assert.ok(routes.includes('status.refreshed'));
+ assert.ok(routes.includes('/api/hosting-deployments/:deploymentId/events'));
+ assert.ok(routes.includes('retry_payload_ciphertext'));
 });
 
 test('hosting deployment retry migration is bounded and request payload encryption is required',async()=>{
  const migration=await readFile(new URL('../db/migrations/029_hosting_deployment_retries.sql',import.meta.url),'utf8');
  const routes=await readFile(new URL('../server/routes/hosting-deployments.mjs',import.meta.url),'utf8');
- assert.match(migration,/retry_count between 0 and 3/i);
- assert.match(migration,/retry_payload_ciphertext/);
- assert.match(routes,/encryptSecret\\(JSON\\.stringify\\(deploymentRequest\\)\\)/);
- assert.match(routes,/retry_count<3/);
- assert.match(routes,/metadata->>'retryable'='true'/);
- assert.match(routes,/provider_resource_id is null/);
+ assert.ok(migration.includes('retry_count between 0 and 3'));
+ assert.ok(migration.includes('retry_payload_ciphertext'));
+ assert.ok(routes.includes('encryptSecret(JSON.stringify(deploymentRequest))'));
+ assert.ok(routes.includes('retry_count<3'));
+ assert.ok(routes.includes("metadata->>'retryable'='true'"));
+ assert.ok(routes.includes('provider_resource_id is null'));
 });
