@@ -13,23 +13,9 @@ does not need to connect inbound to your PC.
 
 ## 1. Provision a worker credential
 
-In Kestrel, sign in as a platform administrator and call:
+Sign in to Kestrel as a workspace owner, admin, or developer. From **Workspace / Overview**, use **Build workers → Provision build worker**, select the Node runtime (the pipeline/image-build worker), and generate the one-time credential. Copy the worker ID and token immediately; the token is shown only once. Never commit it or paste it into source control.
 
-`POST /api/admin/workers`
-
-JSON body:
-
-```json
-{
-  "organizationId": "YOUR_ORGANIZATION_ID",
-  "name": "PStacks Docker Worker",
-  "region": "local",
-  "maxConcurrency": 1
-}
-```
-
-The response contains `workerId` and a one-time `token`. Copy both immediately.
-The token is shown only once. Never commit it or paste it into source control.
+The authenticated workspace API is also available at `POST /api/workspaces/:orgId/workers` with `{ "name": "PStacks Docker Worker", "region": "local", "maxConcurrency": 1, "runtime": "node" }`.
 
 ## 2. Configure the worker
 
