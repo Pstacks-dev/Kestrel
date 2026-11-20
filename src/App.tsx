@@ -2551,6 +2551,21 @@ function AppShell({ page }: { page: Page }) {
             <div className="panel settings-panel mt-6">
               <h3>Deploy a validated pipeline</h3>
               <p>Only successful pipeline runs can deploy. Container image input must be pinned to a SHA-256 digest. Netlify static deploys automatically package the run's stored build artifacts (including binary assets); include a root index.html.</p>
+              <div className="panel settings-panel mb-4">
+                <h4>Build and publish a container image</h4>
+                <p>Choose the project and successful run above, then build from its pinned commit. Registry credentials must be stored in Project → Secrets; Kestrel never asks you to paste tokens into this form.</p>
+                <form className="project-form" onSubmit={queueContainerBuild}>
+                  <label>Container registry<select value={hostingBuildRegistryHost} onChange={(e)=>setHostingBuildRegistryHost(e.target.value)}><option value="ghcr.io">GitHub Container Registry</option><option value="docker.io">Docker Hub</option></select></label>
+                  <label>Image repository<input value={hostingBuildRepository} onChange={(e)=>setHostingBuildRepository(e.target.value)} placeholder="organization/project or username/project" required /></label>
+                  <label>Image tag (optional)<input value={hostingBuildTag} onChange={(e)=>setHostingBuildTag(e.target.value)} placeholder="Automatically uses source commit SHA" /></label>
+                  <label>Dockerfile path<input value={hostingBuildDockerfile} onChange={(e)=>setHostingBuildDockerfile(e.target.value)} placeholder="Dockerfile" required /></label>
+                  <label>Build context<input value={hostingBuildContext} onChange={(e)=>setHostingBuildContext(e.target.value)} placeholder="." required /></label>
+                  <label>Registry username secret name<input value={hostingBuildUsernameSecret} onChange={(e)=>setHostingBuildUsernameSecret(e.target.value)} required /></label>
+                  <label>Registry password/token secret name<input value={hostingBuildPasswordSecret} onChange={(e)=>setHostingBuildPasswordSecret(e.target.value)} required /></label>
+                  <Button type="submit" disabled={hostingBusy||!hostingDeployProject||!hostingDeployRun}>{hostingBusy?'Queueing build…':'Build and push image'}</Button>
+                </form>
+                <div className="mt-3">{hostingContainerBuilds.slice(0,5).map((build:any)=><div className="table-row" key={build.id}><b>{build.imageRef||build.imageRepository+':'+build.imageTag}</b><span>{build.status} · {String(build.commitSha||'').slice(0,8)}</span>{build.errorMessage&&<small className="text-red-500">{build.errorMessage}</small>}</div>)}</div>
+              </div>
               <form className="project-form" onSubmit={deployHostingProvider}>
                 <label>Provider<select value={hostingProviderId} onChange={(e) => { const nextId=e.target.value; setHostingProviderId(nextId); const supported=hostingProviders.find((provider) => provider.id === nextId)?.appTypes || []; if (supported.length && !supported.includes(hostingDeployAppType)) setHostingDeployAppType(supported[0]); }}>{hostingProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
                 <label>Project<select value={hostingDeployProject} onChange={(e) => { setHostingDeployProject(e.target.value); setHostingDeployRun(''); setHostingDeployContainerBuildId(''); setHostingDeployImage(''); loadContainerBuilds(e.target.value); }}><option value="">Select project</option>{(snapshot?.projects || []).map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
