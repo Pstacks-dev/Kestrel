@@ -12,6 +12,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
     if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) return res.status(400).json({ error: 'Deployments must use immutable container image digests' });
     if (!image && !sourceTarball && !gitSource) return res.status(400).json({ error: 'A verified image, source archive or connected Git source is required' });
     if (!env || typeof env !== 'object' || Array.isArray(env) || Object.keys(env).length > 100) return res.status(400).json({ error: 'Deployment environment variables are invalid' });
+    let deploymentRecordId = null;
     try {
       const connectionResult = await query(
         `select c.*, m.role from public.hosting_provider_connections c
@@ -71,6 +72,7 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
          returning id,status,provider_id as "providerId",project_slug as "projectSlug",requested_hostname as "requestedHostname",created_at as "createdAt"`,
         [connection.organization_id,projectId,connection.id,pipelineRunId,connection.provider_id,slug,requestedHostname,req.user.id]
       );
+      deploymentRecordId = record.rows[0].id;
       const credential = decryptSecret(connection.encrypted_credentials, connection.credentials_iv, connection.credentials_auth_tag);
       const deploymentRequest = {
         projectSlug: slug, appType, image, repoUrl, branch: run.branch || run.default_branch,
@@ -95,6 +97,11 @@ export function registerHostingDeploymentRoutes(app, { userAuth, query }) {
       );
       res.status(202).json({ deployment: updated.rows[0], providerStatus: result.providerStatus, providerUrl: result.url, note: 'Provider accepted deployment request; live status is not confirmed yet.' });
     } catch (error) {
+      if (deploymentRecordId) {
+        try {
+          await query(`update public.hosting_provider_deployments set status='failed',error_message='Deployment request failed before provider confirmation',updated_at=now(),completed_at=now() where id=$1 and status in ('provisioning','building','deploying')`, [deploymentRecordId]);
+        } catch { /* preserve the original failure response */ }
+      }
       res.status(500).json({ error: 'Could not initiate hosting-provider deployment' });
     }
   });
