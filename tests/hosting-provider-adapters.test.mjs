@@ -164,3 +164,10 @@ test('Netlify deploy payload validation rejects path traversal and oversized pay
  assert.throws(()=>validateNetlifyDeployFiles({'/assets/a.txt':'ok'}),/index.html/);
  assert.deepEqual(validateNetlifyDeployFiles({'/index.html':'<html></html>'}),{'/index.html':'<html></html>'});
 });
+
+test('Netlify cleanup removes only sites Kestrel created when deploy creation failed',async()=>{
+ const result=await cleanupHostingDeployment('netlify',{token:'nt-token'},{metadata:{siteId:'new-site',siteCreated:true}},{fetchImpl:async(url,init)=>{assert.ok(String(url).endsWith('/sites/new-site'));assert.equal(init.method,'DELETE');return response({});}});
+ assert.equal(result.ok,true);
+ const existing=await cleanupHostingDeployment('netlify',{token:'nt-token'},{metadata:{siteId:'linked-site',siteCreated:false}},{fetchImpl:async()=>{throw new Error('must not delete an existing site');}});
+ assert.equal(existing.ok,false);assert.match(existing.error,/existing connected site/);
+});
