@@ -1,7 +1,7 @@
 import Admin from './Admin';
 import { ProjectFiles } from './components/ProjectFiles';
 import { requireSupabase } from './lib-supabase';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Activity,
   ArrowDownRight,
@@ -631,7 +631,7 @@ function AppShell({ page }: { page: Page }) {
     }
   }
 
-  async function saveHostingConnection(event: React.FormEvent) {
+  async function saveHostingConnection(event: FormEvent) {
     event.preventDefault();
     if (!organizationId || !accessToken || !hostingCredential.trim()) return;
     setHostingBusy(true);
