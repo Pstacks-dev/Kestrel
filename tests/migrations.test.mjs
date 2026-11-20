@@ -94,6 +94,8 @@ test('hosting deployment lifecycle events are stored and exposed through members
   assert.match(routes, /deployment\.created/);
   assert.match(routes, /provider\.accepted/);
   assert.match(routes, /deployment\.failed/);
+  assert.match(routes, /provider\.failed/);
+  assert.match(routes, /cleanupRequired/);
   assert.match(routes, /status\.refreshed/);
   assert.match(routes, /\/api\/hosting-deployments\/:deploymentId\/events/);
   assert.match(routes, /join public\.organization_members m on m\.organization_id=d\.organization_id/);
