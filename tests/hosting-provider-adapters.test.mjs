@@ -19,7 +19,7 @@ test('credential verification safely reports rejected credentials',async()=>{
 test('deployment request rejects mutable image tags and malformed slug before API call',async()=>{
  const fetchImpl=async()=>{throw new Error('should not call network');};
  const mutable=await deployToHostingProvider('flyio','token',{projectSlug:'sample',image:'registry/app:latest'},{fetchImpl});assert.equal(mutable.ok,false);assert.match(mutable.error,/SHA-256 digest/);
- const badSlug=await deployToHostingProvider('render','token',{projectSlug:'x',repoUrl:'https://github.com/org/repo'},{fetchImpl});assert.equal(badSlug.ok,false);assert.match(badSlug.error,/2-63 characters/);
+ const badSlug=await deployToHostingProvider('render','token',{projectSlug:'x',image:'registry/app@sha256:'+'b'.repeat(64)},{fetchImpl});assert.equal(badSlug.ok,false);assert.match(badSlug.error,/2-63 characters/);
 });
 
 test('mocked provision API contract runs for all ten hosting providers',async()=>{

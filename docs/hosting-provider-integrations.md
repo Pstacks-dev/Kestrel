@@ -1,16 +1,28 @@
 # Hosting Provider Integrations
 
-Kestrel includes credential verification and deployment API adapters for ten targets: Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, Azure Container Apps, DigitalOcean App Platform, Heroku, Vercel and Netlify.
+Kestrel's provider catalog has API adapters for Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, Azure Container Apps, DigitalOcean App Platform, Heroku, Vercel and Netlify.
 
-## Credential formats
-Most providers accept an API token string. Cloud Run and Azure use a JSON credential object with an OAuth access token and resource identifiers. AWS App Runner uses an AWS access key/secret pair, region and App Runner ECR access role ARN. Railway/Fly/Render/DO deployment calls need account/project/workspace fields.
+## Credential fields
+Most providers accept a provider API token as a string. Cloud Run and Azure use JSON configuration with an OAuth access token and project/resource identifiers. AWS App Runner needs AWS access keys, region, and an ECR access role ARN. Railway needs project and environment IDs; Fly.io needs an organization slug; Render needs an owner/workspace ID; DigitalOcean needs registry information; Vercel needs a project ID; Netlify can use a site ID.
 
-Credentials are encrypted at rest and never returned to clients. Use least-privileged provider tokens and revoke them if exposed.
+Credentials are encrypted at rest and never returned to clients. Use least-privileged credentials. OAuth access tokens for Google Cloud and Azure are currently supplied by the user and are not refreshed by Kestrel.
 
-## Deployment flow
-The deployment API requires a succeeded Kestrel pipeline run and a pinned commit SHA. Container image deployments require a SHA-256 digest. The API uses the validated repository/commit and stores provider resource ID, provider URL and deployment status. A provider-accepted request is not reported as live without a verified health/status check.
+## Deployment workflow
+The deploy endpoint requires a successful Kestrel pipeline run with a commit SHA and workspace admin permission. It creates a provider deployment record, then submits the provider API call. Container image references must be SHA-256 digests. Railway/Vercel receive a pinned commit SHA; Heroku requires an HTTPS archive URL containing the validated commit SHA; Netlify direct deployment requires the built files and uploads them individually.
 
-Some providers need prerequisites beyond a token: linked Git source/project, Cloud Run project and region, App Runner ECR access role, Azure Container Apps environment, Railway project/environment, Fly organization, Render workspace, or Heroku source archive.
+## Provider-specific limitations
+- **Render:** container-image deployment only, with a workspace/owner ID.
+- **Railway:** source repo/service creation and deployment trigger; project/environment IDs required.
+- **Fly.io:** creates app and machine from immutable image; org slug required.
+- **Cloud Run:** image-based; Google project and region required.
+- **AWS App Runner:** ECR image; access role ARN and signed AWS credentials required.
+- **Azure Container Apps:** image; existing Container Apps environment and subscription/resource group required.
+- **DigitalOcean:** image must already exist in the configured registry, tagged using the validated commit SHA; repository/tag fields required.
+- **Heroku:** source archive build; archive URL must include the run commit SHA. Container image release isn't implemented.
+- **Vercel:** linked GitHub source and Vercel project; uses commit SHA.
+- **Netlify:** requires files from a build artifact (not an empty site build). Kestrel UI currently does not yet select/extract artifact files automatically; direct API payload can provide files.
 
-## Live testing
-CI uses mocked provider API responses to validate request contracts. A real deployment requires workspace-owned provider accounts, valid credentials, required resources and a validated Kestrel pipeline. No provider credentials are used in automated CI.
+Provider-accepted deployments start in deploying status. Refresh calls query each provider's status API. A provider is marked live only when that API reports a ready/running state. Provider status polling, log streaming and rollback are not implemented yet.
+
+## Test scope
+CI includes mocked API contract tests for all ten credential verifications, deployment submissions and status refreshes. These do not prove a real provider deployment. Live testing requires user-connected accounts, valid credentials and the required provider-side projects/roles/images.

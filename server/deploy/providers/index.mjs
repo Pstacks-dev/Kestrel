@@ -92,103 +92,39 @@ export async function verifyHostingProvider(providerId, credential, { fetchImpl 
         return { ok: true, providerId, accountLabel: 'Vercel account', sampleCount: data?.projects?.length };
       }
       case 'netlify': {
-        const data = await call(fetchImpl, `${PROVIDER_URLS.netlify}/sites?per_page=1`, { token });
-        return { ok: true, providerId, accountLabel: 'Netlify account', sampleCount: Array.isArray(data) ? data.length : undefined };
-      }
-      default: return { ok: false, providerId, error: 'Unknown provider' };
-    }
-  } catch (error) { return { ok: false, providerId, error: safeError(error) }; }
-}
-
-function validateRequest(providerId, request) {
-  const image = request.image || request.containerImage;
-  if (image && !/@sha256:[a-fA-F0-9]{64}$/.test(image)) throw new Error('Container image must use an immutable SHA-256 digest');
-  if (!image && !request.repoUrl && !request.sourceTarball && !request.gitSource) throw new Error('Validated project source repository URL is required');
-  if (['flyio','cloud-run','aws-apprunner','azure-container-apps','digitalocean'].includes(providerId) && !image) throw new Error(`${providerId} requires a pinned container image`);
-  if (providerId === 'heroku' && !request.sourceTarball) throw new Error('Heroku deployment requires a source archive URL');
-  if (providerId === 'vercel' && !request.gitSource) throw new Error('Vercel deployment requires a connected Git source');
-  const slug = String(request.projectSlug || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  if (slug.length < 2 || slug.length > 63) throw new Error('Project slug must be 2-63 characters');
-  return { image, slug };
-}
-
-/** Provision a hosting resource. This API is only called after Kestrel confirms the source pipeline succeeded. */
-export async function deployToHostingProvider(providerId, credential, request, { fetchImpl = fetch } = {}) {
-  const c = parseCredential(credential);
-  try {
-    const { image, slug } = validateRequest(providerId, request), token = tokenOf(c), repoUrl = request.repoUrl, branch = request.branch || 'main';
-    const port = Number(request.port || 3000), env = request.env || {}; let data, id, url;
-    switch (providerId) {
-      case 'render': {
-        const ownerId = requireValue(c, 'ownerId');
-        data = await call(fetchImpl, `${PROVIDER_URLS.render}/services`, { method: 'POST', token, body: { type: request.appType === 'static' ? 'static_site' : 'web_service', name: slug, ownerId, autoDeployTrigger: 'off', ...(repoUrl ? { repo: repoUrl, branch, buildCommand: request.buildCommand, startCommand: request.startCommand } : {}), ...(image ? { image: { url: image } } : {}), envVars: Object.entries(env).map(([key,value])=>({key,value:String(value)})) } });
-        id = data?.service?.id || data?.id; url = data?.service?.serviceDetails?.url || data?.service?.url || data?.url; break;
-      }
-      case 'railway': {
-        const projectId = requireValue(c, 'projectId'), environmentId = requireValue(c, 'environmentId');
-        const query = 'mutation serviceCreate($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }';
-        const created = await call(fetchImpl, PROVIDER_URLS.railway, { method:'POST', token, body:{ query, variables:{input:{projectId,name:slug,source:repoUrl ? {repo:repoUrl} : {image},variables:env}} } });
-        if (created?.errors?.length) throw new Error('Railway service creation failed');
-        const service = created?.data?.serviceCreate; if (!service?.id) throw new Error('Railway did not return a service ID');
-        const deployQuery = 'mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId) }';
-        const deployed = await call(fetchImpl, PROVIDER_URLS.railway, { method:'POST', token, body:{query:deployQuery,variables:{serviceId:service.id,environmentId}} });
-        id = deployed?.data?.serviceInstanceDeployV2 || service.id; data = { service, deploymentId:id }; break;
-      }
-      case 'flyio': {
-        const orgSlug = requireValue(c, 'orgSlug');
-        const app = await call(fetchImpl, `${PROVIDER_URLS.flyio}/v1/apps`, { method:'POST',token,body:{app_name:slug,org_slug:orgSlug} });
-        const machine = await call(fetchImpl, `${PROVIDER_URLS.flyio}/v1/apps/${slug}/machines`, { method:'POST',token,body:{config:{image,env,services:[{ports:[{port:80,handlers:['http']},{port:443,handlers:['tls','http']}],protocol:'tcp',internal_port:port}]}} });
-        id = machine?.id || app?.id || slug; url = `https://${slug}.fly.dev`; data = { app, machine }; break;
-      }
-      case 'cloud-run': {
-        const projectId=requireValue(c,'projectId'), region=c.region||'us-central1', access=requireValue(c,'accessToken');
-        const serviceBody = {
-          template: { containers: [{ image, ports: [{ containerPort: port }], env: Object.entries(env).map(([name, value]) => ({ name, value: String(value) })) }] },
-          ingress: 'INGRESS_TRAFFIC_ALL',
-        };
-        data = await call(fetchImpl, `${PROVIDER_URLS.cloudRun}/v2/projects/${projectId}/locations/${region}/services?serviceId=${slug}`, { method: 'POST', token: access, body: serviceBody });
-        id=data?.name; url=data?.uri; break;
-      }
-      case 'aws-apprunner': {
-        const roleArn=requireValue(c,'accessRoleArn');
-        data=await awsRequest(c,'/',{__target:'CreateService',ServiceName:slug,SourceConfiguration:{ImageRepository:{ImageIdentifier:image,ImageRepositoryType:'ECR',ImageConfiguration:{Port:String(port),RuntimeEnvironmentVariables:env},AutoDeploymentsEnabled:false},AuthenticationConfiguration:{AccessRoleArn:roleArn}},HealthCheckConfiguration:{Protocol:'HTTP',Path:request.healthPath||'/',Interval:10,Timeout:5,HealthyThreshold:1,UnhealthyThreshold:5}},fetchImpl);
-        id=data?.Service?.ServiceId; url=data?.Service?.ServiceUrl ? `https://${data.Service.ServiceUrl}` : null; break;
-      }
-      case 'azure-container-apps': {
-        const subscription=requireValue(c,'subscriptionId'), group=requireValue(c,'resourceGroup'), location=requireValue(c,'location'), environmentId=requireValue(c,'containerAppEnvironmentId'), access=requireValue(c,'accessToken');
-        const arm=`${PROVIDER_URLS.azure}/subscriptions/${subscription}/resourceGroups/${group}/providers/Microsoft.App/containerApps/${slug}?api-version=2024-03-01`;
-        const body = { location, properties: { managedEnvironmentId: environmentId, configuration: { ingress: { external: true, targetPort: port, transport: 'auto' } }, template: { containers: [{ name: slug, image, env: Object.entries(env).map(([name, value]) => ({ name, value: String(value) })) }], scale: { minReplicas: 0, maxReplicas: 1 } } } };
-        data = await call(fetchImpl, arm, { method: 'PUT', token: access, body });
-        id=data?.id; url=data?.properties?.configuration?.ingress?.fqdn ? `https://${data.properties.configuration.ingress.fqdn}` : null; break;
-      }
-      case 'digitalocean': {
-        const region=c.region||'nyc', registryType=request.registryType||'DOCR';
-        const imageRepository=requireValue(request,'imageRepository'), imageTag=requireValue(request,'imageTag');
-        data=await call(fetchImpl,`${PROVIDER_URLS.digitalocean}/apps`,{method:'POST',token,body:{spec:{name:slug,region,services:[{name:slug,image:{registry_type:registryType,repository:imageRepository,tag:imageTag},http_port:port,instance_count:1,instance_size_slug:request.instanceSize||'basic-xxs',envs:Object.entries(env).map(([key,value])=>({key,value:String(value),type:'GENERAL'}))}]}}});
-        id=data?.app?.id; url=data?.app?.default_ingress ? `https://${data.app.default_ingress}` : null; break;
-      }
-      case 'heroku': {
-        if (!request.sourceTarball) throw new Error('Heroku deployments require a public source archive URL; container-image releases are not implemented in this adapter');
-        const app=await call(fetchImpl,`${PROVIDER_URLS.heroku}/apps`,{method:'POST',token,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{name:slug,region:c.region||'us'}});
-        const build=await call(fetchImpl,`${PROVIDER_URLS.heroku}/apps/${app.id}/builds`,{method:'POST',token,headers:{Accept:'application/vnd.heroku+json; version=3'},body:{source:{url:request.sourceTarball,version:request.commitSha},buildpacks:request.buildpacks}});
-        id=build?.id; url=app?.web_url; data={app,build}; break;
-      }
-      case 'vercel': {
-        const projectId=requireValue(c,'projectId'), git=request.gitSource;
-        if (!git || !git.org || !git.repo || !git.ref) throw new Error('Vercel deployment requires a linked Git repository (gitSource.org, repo, ref)');
-        data=await call(fetchImpl,`${PROVIDER_URLS.vercel}/v13/deployments`,{method:'POST',token,body:{name:slug,project:projectId,target:request.target||'production',gitSource:{type:'github',org:git.org,repo:git.repo,ref:git.ref,...(git.sha?{sha:git.sha}:{})},...(request.buildCommand?{buildCommand:request.buildCommand}:{}),...(request.outputDirectory?{outputDirectory:request.outputDirectory}:{})}});
-        id=data?.id; url=data?.url ? `https://${data.url}` : null; break;
-      }
-      case 'netlify': {
+        if (!request.deployFiles || typeof request.deployFiles !== 'object' || Array.isArray(request.deployFiles) || !Object.keys(request.deployFiles).length) throw new Error('Netlify direct deploy requires build artifact files from the validated pipeline');
         let siteId=c.siteId;
-        if (!siteId) { const site=await call(fetchImpl,`${PROVIDER_URLS.netlify}/sites`,{method:'POST',token,body:{name:slug,...(repoUrl?{repo:{provider:'github',repo_path:repoUrl,repo_branch:branch,deploy_key_id:c.deployKeyId}}:{})}}); siteId=site?.id; }
+        if (!siteId) { const site=await call(fetchImpl,PROVIDER_URLS.netlify+'/sites',{method:'POST',token,body:{name:slug}}); siteId=site?.id; }
         if (!siteId) throw new Error('Netlify did not return a site ID');
-        data=await call(fetchImpl,`${PROVIDER_URLS.netlify}/sites/${siteId}/deploys`,{method:'POST',token,body:{...(request.deployFiles?{files:request.deployFiles}:{}),...(request.buildCommand?{build_command:request.buildCommand}:{}),...(request.publishDirectory?{dir:request.publishDirectory}:{})}});
-        id=data?.id; url=data?.deploy_url||data?.url; break;
-      }
-      default: throw new Error('Unsupported provider');
+        const fileHashes={};
+        for (const [path,content] of Object.entries(request.deployFiles)) { if (typeof content !== 'string' || !path.startsWith('/') || path.includes('..')) throw new Error('Deploy file map must contain safe absolute paths and text contents'); fileHashes[path]=crypto.createHash('sha256').update(content).digest('hex'); }
+        data=await call(fetchImpl,PROVIDER_URLS.netlify+'/sites/'+siteId+'/deploys',{method:'POST',token,body:{files:fileHashes}});
+        id=data?.id; metadata={siteId}; url=data?.deploy_url||data?.url;
+        for (const [path,content] of Object.entries(request.deployFiles)) { const upload=await fetchImpl(PROVIDER_URLS.netlify+'/deploys/'+id+'/files/'+encodeURIComponent(path),{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/octet-stream'},body:content,signal:AbortSignal.timeout(15000)}); if(!upload.ok)throw new Error('Netlify file upload failed (HTTP '+upload.status+')'); }
+        break;
+      }      default: throw new Error('Unsupported provider');
     }
-    return { ok:true, providerId, providerDeploymentId:id||null, providerStatus:data?.status||data?.state||'provisioning', url, hostname:url?new URL(url).hostname:null, response:data };
+    return { ok:true, providerId, providerDeploymentId:id||null, providerStatus:data?.status||data?.state||'provisioning', url, hostname:url?new URL(url).hostname:null, metadata, response:data };
   } catch (error) { return { ok:false, providerId, error:safeError(error) }; }
 }
 export function hostingProviderApiBase(providerId) { const key=PROVIDER_KEYS[providerId]; return key ? PROVIDER_URLS[key] : null; }
+
+export async function refreshHostingDeployment(providerId, credential, deployment, { fetchImpl = fetch } = {}) {
+  const c=parseCredential(credential),token=tokenOf(c),id=deployment.providerResourceId,metadata=deployment.metadata||{};
+  try { let data,status='unknown',url=deployment.liveUrl||null;
+    switch(providerId){
+      case 'render': data=await call(fetchImpl,PROVIDER_URLS.render+'/services/'+id,{token});status=/live/i.test(data?.service?.status||data?.status||'')?'live':/failed|suspended/i.test(data?.service?.status||data?.status||'')?'failed':'deploying';url=data?.service?.url||data?.url||url;break;
+      case 'railway': {const q='query deployment($id: String!) { deployment(id: $id) { id status url staticUrl } }';data=await call(fetchImpl,PROVIDER_URLS.railway,{method:'POST',token,body:{query:q,variables:{id}}});const d=data?.data?.deployment;status=String(d?.status||'').toUpperCase()==='SUCCESS'?'live':String(d?.status||'').toUpperCase()==='FAILED'?'failed':'deploying';url=d?.url||d?.staticUrl||url;break;}
+      case 'flyio': data=await call(fetchImpl,PROVIDER_URLS.flyio+'/v1/apps/'+metadata.appName+'/machines/'+id,{token});status=data?.state==='started'?'live':data?.state==='stopped'?'failed':'deploying';url=metadata.appName?'https://'+metadata.appName+'.fly.dev':url;break;
+      case 'cloud-run': data=await call(fetchImpl,PROVIDER_URLS.cloudRun+'/'+id,{token:requireValue(c,'accessToken')});status=data?.conditions?.some(x=>x.type==='Ready'&&x.status==='True')?'live':data?.conditions?.some(x=>x.type==='Ready'&&x.status==='False')?'failed':'deploying';url=data?.uri||url;break;
+      case 'aws-apprunner': data=await awsRequest(c,'/',{__target:'DescribeService',ServiceArn:metadata.serviceArn},fetchImpl);status=data?.Service?.Status==='RUNNING'?'live':/FAILED/.test(data?.Service?.Status||'')?'failed':'deploying';url=data?.Service?.ServiceUrl?'https://'+data.Service.ServiceUrl:url;break;
+      case 'azure-container-apps': data=await call(fetchImpl,PROVIDER_URLS.azure+metadata.resourceId+'?api-version=2024-03-01',{token:requireValue(c,'accessToken')});status=data?.properties?.provisioningState==='Succeeded'?'live':data?.properties?.provisioningState==='Failed'?'failed':'deploying';url=data?.properties?.configuration?.ingress?.fqdn?'https://'+data.properties.configuration.ingress.fqdn:url;break;
+      case 'digitalocean': data=await call(fetchImpl,PROVIDER_URLS.digitalocean+'/apps/'+id,{token});status=data?.app?.active_deployment?.phase==='ACTIVE'?'live':data?.app?.active_deployment?.phase==='ERROR'?'failed':'deploying';url=data?.app?.default_ingress?'https://'+data.app.default_ingress:url;break;
+      case 'heroku': data=await call(fetchImpl,PROVIDER_URLS.heroku+'/apps/'+metadata.appId+'/builds/'+id,{token,headers:{Accept:'application/vnd.heroku+json; version=3'}});status=data?.status==='succeeded'?'live':data?.status==='failed'?'failed':'deploying';url=metadata.webUrl||url;break;
+      case 'vercel': data=await call(fetchImpl,PROVIDER_URLS.vercel+'/v13/deployments/'+id+(c.teamId?'?teamId='+encodeURIComponent(c.teamId):''),{token});status=data?.readyState==='READY'?'live':data?.readyState==='ERROR'?'failed':'deploying';url=data?.url?'https://'+data.url:url;break;
+      case 'netlify': data=await call(fetchImpl,PROVIDER_URLS.netlify+'/deploys/'+id,{token});status=data?.state==='ready'?'live':data?.state==='error'?'failed':'deploying';url=data?.deploy_url||data?.url||url;break;
+      default:return {ok:false,error:'Unknown hosting provider'};
+    }
+    return {ok:true,providerId,status,url,providerStatus:data?.status||data?.state||data?.readyState||data?.Service?.Status||null};
+  }catch(error){return {ok:false,providerId,error:safeError(error)};}
+}
