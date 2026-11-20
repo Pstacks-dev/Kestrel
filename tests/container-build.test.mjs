@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, stat } from 'node:fs/promises';
+cimport=undefined;
 import os from 'node:os';
 import path from 'node:path';
 import { validateContainerBuildRequest } from '../server/lib/container-build-validation.mjs';
@@ -45,5 +46,36 @@ test('container build runner does not push after build failure and cleans auth c
     commands.push(args[0]);if(args[0]==='build')return {exitCode:1,stdout:'',durationMs:1};return {exitCode:0,stdout:'',durationMs:1};
   }});
   assert.equal(result.exitCode,1);assert.equal(result.error,'Container image build failed');assert.deepEqual(commands,['login','build','logout','image']);
+ }finally{await rm(workspace,{recursive:true,force:true});}
+});
+
+
+test('container build route, worker claim and completion are wired to image build metadata',async()=>{
+ const fs=await import('node:fs/promises');
+ const route=await fs.readFile(new URL('../server/routes/container-builds.mjs',import.meta.url),'utf8');
+ const control=await fs.readFile(new URL('../server/control-plane.mjs',import.meta.url),'utf8');
+ const migration=await fs.readFile(new URL('../db/migrations/026_container_image_builds.sql',import.meta.url),'utf8');
+ assert.match(route,/successful pipeline run/);
+ assert.match(route,/project_secrets/);
+ assert.match(route,/container_build_config/);
+ assert.match(control,/j\.job_type = 'container_build'/);
+ assert.match(control,/containerImageDigest/);
+ assert.match(control,/container_builds set status/);
+ assert.match(migration,/container_build/);
+ assert.match(migration,/container_image_digest/);
+});
+
+test('registry login auth config is temporary and removed after push',async()=>{
+ const workspace=await mkdtemp(path.join(os.tmpdir(),'kestrel-auth-cleanup-'));
+ try{
+  await writeFile(path.join(workspace,'Dockerfile'),'FROM scratch');
+  let configDir;
+  const result=await buildAndPushContainerImage({registryHost:'ghcr.io',imageRepository:'org/repo',imageTag:'sha-clean',dockerfilePath:'Dockerfile',contextPath:'.'},{workspace,hostWorkspace:workspace,username:'u',password:'p',commandRunner:async(cmd,args,opts)=>{
+   configDir=opts.env.DOCKER_CONFIG;
+   if(args[0]==='image'&&args[1]==='inspect')return {exitCode:0,stdout:'ghcr.io/org/repo@sha256:'+'e'.repeat(64),durationMs:1};
+   return {exitCode:0,stdout:'',durationMs:1};
+  }});
+  assert.equal(result.exitCode,0);
+  await assert.rejects(()=>stat(configDir));
  }finally{await rm(workspace,{recursive:true,force:true});}
 });
