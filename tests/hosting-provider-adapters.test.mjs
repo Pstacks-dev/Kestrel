@@ -144,9 +144,9 @@ test('Netlify automatically maps successful run artifacts to publish files and k
 test('Netlify static deployment uploads base64 artifact contents as bytes and hashes bytes',async()=>{
  const content=Buffer.from([0,1,2,255]);
  const expected=crypto.createHash('sha256').update(content).digest('hex');
- const uploads=[];
+ const uploads=[];let deployManifest=null;
  const result=await deployToHostingProvider('netlify',{token:'nt-token',siteId:'site-123'},{projectSlug:'static-test',appType:'static',deployFiles:{'/assets/icon.png':'base64:'+content.toString('base64')}},{fetchImpl:async(url,init={})=>{
-  if(String(url).endsWith('/sites/site-123/deploys'))return response({id:'deploy-123',deploy_url:'https://static-test.netlify.app'});
+  if(String(url).endsWith('/sites/site-123/deploys')){deployManifest=JSON.parse(init.body);return response({id:'deploy-123',deploy_url:'https://static-test.netlify.app'});}
   if(String(url).includes('/deploys/deploy-123/files/')){uploads.push({url,init});return new Response('',{status:200});}
   throw new Error('unexpected provider URL '+url);
  }});
@@ -154,5 +154,5 @@ test('Netlify static deployment uploads base64 artifact contents as bytes and ha
  assert.equal(uploads.length,1);
  assert.deepEqual(Buffer.from(uploads[0].init.body),content);
  assert.equal(uploads[0].init.method,'PUT');
- assert.equal(expected.length,64);
+ assert.equal(deployManifest.files['/assets/icon.png'],expected);
 });
