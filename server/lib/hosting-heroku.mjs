@@ -112,7 +112,7 @@ export async function rollbackHerokuDeployment({ apiKey, appId, deploymentId }, 
   const releaseId = build.release?.id;
   if (!releaseId) throw new Error('The selected Heroku build has no successful release to roll back to');
   const release = await request(apiKey, `/apps/${encodeURIComponent(appId)}/releases`, {
-    method: 'POST', fetchImpl, body: { rollback: { release: releaseId } },
+    method: 'POST', fetchImpl, body: { release: releaseId },
   });
   if (!release.id) throw new Error('Heroku did not return a rollback release identifier');
   return { provider: 'heroku', deploymentId: release.id, status: 'deploying' };
