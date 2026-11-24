@@ -156,9 +156,15 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const providerId = selected.id;
       const projectEnv = await loadProjectEnvironment(query, project.id);
       const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix, commitSha) : null;
-      const containerImage = String(req.body?.containerImage || '').trim();
-      if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
-        return fail(res, 422, 'This provider requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
+      let containerImage = String(req.body?.containerImage || '').trim();
+      if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId)) {
+        if (!containerImage) return fail(res, 422, 'This provider requires a successful Kestrel OCI image build for the selected commit.');
+        const builtImage = await query(
+          "select image_digest_ref from public.managed_hosting_image_builds where project_id = $1 and commit_sha = $2 and image_digest_ref = $3 and status = 'succeeded'",
+          [project.id, commitSha, containerImage],
+        );
+        if (!builtImage.rowCount) return fail(res, 409, 'The requested image is not a successfully published Kestrel image for this commit.');
+        containerImage = builtImage.rows[0].image_digest_ref;
       }
       const connection = verified.get(providerId);
       let credentials;
