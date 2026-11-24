@@ -146,7 +146,7 @@ fi
 
 $DOCKER push "$IMAGE_REF"
 echo "KESTREL_IMAGE_REF=$IMAGE_REF"
-`;
+` .replaceAll('\\${', '${');
 }
 
 export async function startManagedOciBuild({
