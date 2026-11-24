@@ -89,6 +89,9 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       }
 
       const providerId = selected.id;
+      if (providerId === 'flyio' && !String(req.body?.containerImage || '').trim()) {
+        return fail(res, 422, 'Fly.io requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
+      }
       const connection = verified.get(providerId);
       let credentials;
       try {
@@ -106,9 +109,12 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const providerInput = {
         repositoryUrl: project.repository_url, branch, commitSha, profile,
         projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
+        containerImage: req.body?.containerImage || null,
+        port: req.body?.port || 3000,
+        env: req.body?.env || {},
       };
       const providerDeployment = resource
-        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName })
+        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env })
         : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
       const saved = await transaction(async (client) => {
