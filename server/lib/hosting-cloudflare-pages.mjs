@@ -48,6 +48,19 @@ function projectPath(accountId, name) {
   return `/accounts/${encodeURIComponent(accountId)}/pages/projects/${encodeURIComponent(name)}`;
 }
 
+function buildConfig({ buildCommand, destinationDir, rootDir }) {
+  const command = String(buildCommand || 'npm run build');
+  const destination = String(destinationDir || 'dist');
+  const root = String(rootDir || '/');
+  if (!command || command.length > 500 || /[\r\n\0]/.test(command)) throw new Error('Invalid Cloudflare Pages build command');
+  for (const path of [destination, root]) {
+    if (!path || path.length > 200 || path.includes('\\') || path.split('/').some((part) => part === '..')) {
+      throw new Error('Invalid Cloudflare Pages build directory');
+    }
+  }
+  return { build_command: command, destination_dir: destination, root_dir: root, build_caching: true };
+}
+
 async function ensureProject({ apiToken, accountId, projectName: name, repositoryUrl, branch, buildCommand, destinationDir, rootDir, env }, fetchImpl) {
   const path = projectPath(accountId, name);
   try {
@@ -76,12 +89,7 @@ async function ensureProject({ apiToken, accountId, projectName: name, repositor
           preview_deployment_setting: 'none', pr_comments_enabled: false,
         },
       },
-      build_config: {
-        build_command: buildCommand || 'npm run build',
-        destination_dir: destinationDir || 'dist',
-        root_dir: rootDir || '/',
-        build_caching: true,
-      },
+      build_config: buildConfig({ buildCommand, destinationDir, rootDir }),
       deployment_configs: {
         production: { env_vars: vars },
         preview: { env_vars: vars },
@@ -146,7 +154,7 @@ export async function getCloudflarePagesDeploymentLogs({ apiToken, accountId, pr
   return {
     build: (result.data || []).map((entry) => ({ timestamp: entry.ts || null, message: entry.line || '' })),
     runtime: [],
-    unavailable: !result.includes_container_logs,
+    unavailable: !(result.data || []).length,
     ...(result.includes_container_logs ? {} : { message: 'Cloudflare Pages deployment logs include build output; runtime container logs are not part of this Pages log endpoint.' }),
   };
 }
