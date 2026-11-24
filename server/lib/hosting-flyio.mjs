@@ -48,24 +48,24 @@ export PATH="$HOME/.fly/bin:$PATH"
 
 if [ ! -f fly.toml ]; then
   if [ -f Dockerfile ] || [ -f dockerfile ]; then
-    cat > fly.toml <<'FLYTOML'
-app = "\${KESTREL_FLY_APP}"
-primary_region = "\${KESTREL_FLY_REGION}"
+    cat > fly.toml <<FLYTOML
+app = "$KESTREL_FLY_APP"
+primary_region = "$KESTREL_FLY_REGION"
 [http_service]
-  internal_port = \${KESTREL_FLY_PORT}
+  internal_port = $KESTREL_FLY_PORT
   force_https = true
   auto_start_machines = true
   auto_stop_machines = "off"
   min_machines_running = 1
 FLYTOML
   else
-    cat > fly.toml <<'FLYTOML'
-app = "\${KESTREL_FLY_APP}"
-primary_region = "\${KESTREL_FLY_REGION}"
+    cat > fly.toml <<FLYTOML
+app = "$KESTREL_FLY_APP"
+primary_region = "$KESTREL_FLY_REGION"
 [build]
   builder = "paketobuildpacks/builder-jammy-base"
 [http_service]
-  internal_port = \${KESTREL_FLY_PORT}
+  internal_port = $KESTREL_FLY_PORT
   force_https = true
   auto_start_machines = true
   auto_stop_machines = "off"
@@ -78,7 +78,7 @@ node --input-type=module -e '
 import fs from "node:fs";
 const values = JSON.parse(process.env.KESTREL_ENV_JSON || "{}");
 const rows = Object.entries(values).filter(([key, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof value === "string");
-fs.writeFileSync(".kestrel-secrets.env", rows.map(([key, value]) => key + "=" + JSON.stringify(value)).join("\\n"), { mode: 0o600 });
+fs.writeFileSync(".kestrel-secrets.env", rows.map(([key, value]) => key + "=" + JSON.stringify(value)).join("\n"), { mode: 0o600 });
 '
 if [ -s .kestrel-secrets.env ]; then
   flyctl secrets import --app "$KESTREL_FLY_APP" < .kestrel-secrets.env
@@ -105,6 +105,9 @@ async function deployFlySource({
   timeoutMs = 1_800_000,
 } = {}) {
   const sourceUrl = validateSource(repositoryUrl, commitSha);
+  if (region && !/^[a-z]{3}$/.test(region)) throw new Error('Fly.io region must be a three-letter region code');
+  const internalPort = Number(port || 8080);
+  if (!Number.isInteger(internalPort) || internalPort < 1 || internalPort > 65535) throw new Error('Application port must be between 1 and 65535');
   const sandboxName = makeSandboxName();
   let sessionId;
   try {
