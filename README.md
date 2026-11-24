@@ -323,3 +323,18 @@ Kestrel includes a Fly.io Machines API adapter for OCI-image deployments. It cre
 ### Google Cloud Run managed deployment adapter
 
 Kestrel supports Cloud Run v2 services from published OCI images. The adapter authenticates using a tenant service account, creates and updates services, tracks long-running operations and ready revisions, retrieves runtime entries through Cloud Logging, and rolls traffic back to a previously recorded revision. The service account needs Cloud Run service administration, registry image-read access, and Cloud Logging read permissions. The adapter is not automatically selected until Kestrel's OCI image build-and-publish pipeline is connected.
+
+
+## Managed provider deployment coverage
+
+Kestrel now has provider-specific deployment lifecycles for all ten catalogued hosts:
+
+- **Source/Git adapters:** Railway, Render, DigitalOcean App Platform, Vercel, and Heroku.
+- **OCI-image adapters:** Fly.io Machines, Google Cloud Run, and AWS ECS Express Mode.
+- **Static adapters:** Netlify direct artifact uploads and Cloudflare Pages Git-connected builds.
+
+The automatically selectable set currently includes Railway, Render, DigitalOcean App Platform, Vercel, Netlify and Cloudflare Pages. Netlify requires artifact IDs from a successful Kestrel build; Cloudflare Pages requires the repository to have already been authorized in the Cloudflare Pages GitHub integration. Heroku remains gated until an explicit paid-dyno approval control is in place. Fly.io, Cloud Run and ECS Express Mode remain gated until Kestrel's isolated OCI build-and-registry publishing pipeline is connected; they reject deployments without a published image rather than accepting source-only requests.
+
+Netlify static uploads download artifacts from the private Kestrel artifact bucket and verify project ownership, expiry, byte size and SHA-256 before upload. Cloudflare Pages triggers a provider-side build pinned to the resolved Git commit and disables duplicate provider-native push deployments. Provider-generated URLs are returned to Kestrel; Kestrel does not host customer applications or require a Kestrel-owned domain.
+
+These adapters have automated mocked API tests. No live account deployment has yet been smoke-tested for the new Netlify, Cloudflare Pages, Fly.io, Cloud Run or ECS Express integrations. A verified credential means API authentication succeeded, not that a production deployment has succeeded.
