@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { redactSecrets } from '../server/lib/security.mjs';
 import { getDockerHostWorkspacePath } from './docker-paths.mjs';
+import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
@@ -506,6 +507,77 @@ async function execute(job) {
   }
 }
 
+async function executeManagedImageBuild(build) {
+  const startedAt = Date.now();
+  const workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
+  const secretValues = [build.registryUsername, build.registryPassword].filter(Boolean);
+  let leaseLost = false;
+  const heartbeat = setInterval(async () => {
+    try {
+      await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/lease', { leaseToken: build.leaseToken });
+    } catch (error) {
+      if (error.message.includes('409') || error.message.includes('expired')) leaseLost = true;
+    }
+  }, 10000);
+  try {
+    const repository = new URL(build.repositoryUrl);
+    if (repository.protocol !== 'https:' || repository.hostname !== 'github.com' || repository.username || repository.password) {
+      throw new Error('Managed OCI builds currently require a credential-free public GitHub repository');
+    }
+    const clone = await runGit(['clone', '--no-checkout', '--filter=blob:none', '--', build.repositoryUrl, workspace], workspace,
+      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)));
+    if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build');
+    const fetch = await runGit(['fetch', '--depth=1', 'origin', build.commitSha], workspace,
+      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)));
+    if (fetch.exitCode !== 0) throw new Error('Could not fetch the exact pipeline commit for OCI build');
+    const checkout = await runGit(['checkout', '--detach', build.commitSha], workspace,
+      (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)));
+    if (checkout.exitCode !== 0) throw new Error('Could not check out the exact pipeline commit for OCI build');
+    if (leaseLost) throw new Error('Managed OCI build lease was lost before the build started');
+    const result = await buildAndPublishOciImage({
+      contextDir: workspace,
+      image: build.image,
+      commitSha: build.commitSha,
+      registry: build.registry,
+      registryUsername: build.registryUsername,
+      registryPassword: build.registryPassword,
+    }, { dockerBin: DOCKER, timeoutMs: 30 * 60 * 1000 });
+    if (leaseLost) throw new Error('Managed OCI build lease was lost before publishing could be confirmed');
+    await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
+      leaseToken: build.leaseToken, status: 'succeeded',
+      imageDigest: result.digest, imageDigestRef: result.imageDigestRef,
+    });
+    console.log('[oci] Published ' + result.imageDigestRef + ' for commit ' + build.commitSha);
+  } catch (error) {
+    const safeError = redactSecrets(String(error?.message || 'OCI image build failed'), secretValues).slice(0, 500);
+    console.error('[oci] Managed image build failed:', safeError);
+    await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
+      leaseToken: build.leaseToken, status: 'failed', error: safeError,
+    }).catch(() => {});
+  } finally {
+    clearInterval(heartbeat);
+    await fs.rm(workspace, { recursive: true, force: true }).catch(() => {});
+    console.log('[oci] Worker build duration: ' + (Date.now() - startedAt) + 'ms');
+  }
+}
+
+async function managedImageBuildLoop() {
+  while (!isDraining) {
+    try {
+      const { build } = await api('/api/workers/managed-image-builds/claim', { workerId: WORKER_ID });
+      if (!build) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        continue;
+      }
+      console.log('[oci] Claimed managed image build ' + build.id + ' for ' + build.commitSha);
+      await executeManagedImageBuild(build);
+    } catch (error) {
+      console.error('[oci] Managed image build poll failed:', error.message);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+}
+
 // Startup verification
 if (!TOKEN || TOKEN.length < 16) {
   throw new Error('Valid KESTREL_WORKER_TOKEN is required');
@@ -557,7 +629,7 @@ function handleShutdown(signal) {
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
-// Polling loop for job claims
+// Managed OCI builds share the registered worker pool and have a separate durable lease queue.\nvoid managedImageBuildLoop();\n\n// Polling loop for job claims
 async function pollLoop(slot) {
   while (!isDraining) {
     try {
