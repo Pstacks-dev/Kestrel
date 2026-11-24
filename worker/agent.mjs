@@ -409,6 +409,12 @@ async function execute(job) {
   const abortController = new AbortController();
 
   const secretValues = Object.values(job.secrets || {}).filter(Boolean);
+  if (job.sourceToken) secretValues.push(job.sourceToken);
+  const gitAuthEnv = job.sourceToken ? {
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'http.extraheader',
+    GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + job.sourceToken).toString('base64'),
+  } : {};
 
   const flushLogs = async () => {
     if (logFlushActive || !logBuffer.length) return;
@@ -455,7 +461,8 @@ async function execute(job) {
       const clone = await runGit(
         ['clone', '--depth', '1', '--branch', String(job.branch || 'main'), '--', repository, '.'],
         workspace,
-        (s, m) => console.log(`[clone:${s}] ${m}`)
+        (s, m) => console.log(`[clone:${s}] ${redactSecrets(m, secretValues)}`),
+        gitAuthEnv
       );
         if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
       }
@@ -463,7 +470,7 @@ async function execute(job) {
 
     if (job.commitSha && EXECUTOR !== 'mock' && job.sourceType !== 'upload') {
       if (!/^[a-f0-9]{7,64}$/i.test(job.commitSha)) throw new Error('Invalid commit SHA format');
-      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${m}`));
+      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv);
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');
     }
 
