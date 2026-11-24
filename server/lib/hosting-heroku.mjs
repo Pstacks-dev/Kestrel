@@ -93,7 +93,13 @@ export async function getHerokuDeployment({ apiKey, appId, deploymentId }, { fet
 }
 
 export async function getHerokuDeploymentLogs({ apiKey, appId, deploymentId }, { fetchImpl = fetch } = {}) {
-  const build = await request(apiKey, `/apps/${encodeURIComponent(appId)}/builds/${encodeURIComponent(deploymentId)}`, { fetchImpl });
+  let build;
+  try {
+    build = await request(apiKey, `/apps/${encodeURIComponent(appId)}/builds/${encodeURIComponent(deploymentId)}`, { fetchImpl });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    return { build: [], runtime: [], unavailable: true, message: 'This Heroku release was created by rollback and has no build output stream.' };
+  }
   if (!build.output_stream_url) return { build: [], runtime: [], unavailable: true, message: 'Heroku has not supplied a build output stream URL for this build.' };
   const response = await fetchImpl(build.output_stream_url, { signal: AbortSignal.timeout(20000) });
   if (!response.ok) throw new Error(`Heroku build log stream failed (${response.status})`);
