@@ -161,7 +161,7 @@ export async function processManagedDeploymentRun({
     const providerDeployment = resource
       ? await deployManagedProviderService(selected.id, credentials, resource, run.commit_sha, { fetchImpl }, input)
       : await createManagedProviderDeployment(selected.id, credentials, input, { fetchImpl });
-    if (!providerDeployment?.deploymentId || !providerDeployment?.projectId || !providerDeployment?.serviceId) {
+    if (!providerDeployment?.deploymentId || (!resource && (!providerDeployment?.projectId || !providerDeployment?.serviceId))) {
       throw new Error('Hosting provider did not return deployment resource identifiers');
     }
 
@@ -217,6 +217,12 @@ export async function processManagedDeploymentRun({
 }
 
 export async function processManagedDeploymentQueue({ query, transaction, fetchImpl = fetch, storageFetch = fetch, limit = 10 }) {
+  await query(
+    `update public.managed_hosting_deployment_queue
+     set status = 'failed', locked_at = null, next_attempt_at = now(),
+         error_message = 'A previous deployment processor stopped before finishing', updated_at = now()
+     where status = 'processing' and locked_at < now() - interval '10 minutes'`
+  );
   const pending = await query(
     `select run_id from public.managed_hosting_deployment_queue
      where status in ('queued','failed') and attempts < 5 and next_attempt_at <= now()
