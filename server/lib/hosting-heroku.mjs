@@ -108,8 +108,16 @@ export async function getHerokuDeploymentLogs({ apiKey, appId, deploymentId }, {
 }
 
 export async function rollbackHerokuDeployment({ apiKey, appId, deploymentId }, { fetchImpl = fetch } = {}) {
-  const build = await request(apiKey, `/apps/${encodeURIComponent(appId)}/builds/${encodeURIComponent(deploymentId)}`, { fetchImpl });
-  const releaseId = build.release?.id;
+  let releaseId;
+  try {
+    const build = await request(apiKey, `/apps/${encodeURIComponent(appId)}/builds/${encodeURIComponent(deploymentId)}`, { fetchImpl });
+    releaseId = build.release?.id;
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    const priorRelease = await request(apiKey, `/apps/${encodeURIComponent(appId)}/releases/${encodeURIComponent(deploymentId)}`, { fetchImpl });
+    if (priorRelease.eligible_for_rollback === false) throw new Error('The selected Heroku release is not eligible for rollback');
+    releaseId = priorRelease.id;
+  }
   if (!releaseId) throw new Error('The selected Heroku build has no successful release to roll back to');
   const release = await request(apiKey, `/apps/${encodeURIComponent(appId)}/releases`, {
     method: 'POST', fetchImpl, body: { release: releaseId },
