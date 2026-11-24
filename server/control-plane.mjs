@@ -27,7 +27,7 @@ import { registerGitImportRoutes } from './routes/git-import.mjs';
 import { registerHostingRoutes } from './routes/hosting.mjs';
 import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
-import { startManagedHostingAutomation } from './lib/managed-hosting-automation.mjs';
+import { startManagedHostingAutomation, processManagedHostingQueue } from './lib/managed-hosting-automation.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1582,6 +1582,23 @@ app.get('/api/cron/recovery', async (req, res) => {
     res.json({ ok: true, recovery: result.rows[0], time: now() });
   } catch (e) {
     res.status(500).json({ error: 'Lease recovery failed' });
+  }
+});
+
+// Process durable post-CI managed deployment events. Configure this endpoint as a Vercel Cron
+// when running serverless; standalone mode also runs its own bounded queue poller.
+app.get('/api/cron/managed-deployments', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return res.status(503).json({ error: 'Cron authentication is not configured' });
+  if (req.headers.authorization !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: 'Unauthorized cron request' });
+  }
+  try {
+    const result = await processManagedHostingQueue({ query, transaction, logger: console }, 5);
+    res.json({ ok: true, ...result, time: now() });
+  } catch (error) {
+    console.error('Managed deployment cron failed:', { message: error?.message });
+    res.status(500).json({ error: 'Managed deployment queue processing failed' });
   }
 });
 
