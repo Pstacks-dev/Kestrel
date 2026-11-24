@@ -163,6 +163,7 @@ export async function startManagedOciBuild({
       args: ['-lc', createManagedOciBuildScript()],
       cwd: '/vercel/sandbox',
       timeoutMs: BUILD_TIMEOUT_MS,
+      sudo: true,
       env: {
         REPOSITORY_URL: repositoryUrl,
         COMMIT_SHA: commitSha,
