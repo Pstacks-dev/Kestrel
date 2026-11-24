@@ -351,3 +351,12 @@ Netlify deployments consume successful Kestrel build artifacts rather than runni
 ### Cloudflare Pages Git deployments
 
 Cloudflare Pages creates or reuses a GitHub-connected Pages project, disables duplicate provider-native push deployments, and triggers deployments against the immutable commit SHA resolved by Kestrel. It tracks deployment stages and URLs, retrieves provider build logs, and supports rollback through the Pages deployment API. The GitHub repository must already be authorized in the connected Cloudflare account. Cloudflare Pages is intended for static output and framework-supported Pages builds.
+
+
+### Automatic deployments and runtime environment variables
+
+A successful Kestrel pipeline run on a project's default branch now queues a provider deployment through an idempotent pipeline-run trigger record. Render, DigitalOcean App Platform, Cloudflare Pages and Netlify are triggered by Kestrel after the build succeeds; Railway and Vercel continue to use their native Git integrations to avoid duplicate provider builds. Feature branches do not automatically replace production deployments. Failed, canceled, retried and deployment-only runs do not start another managed release.
+
+Encrypted project secrets are loaded only by the server and synchronized to supported runtime provider configuration before deployment. Railway variables are upserted without triggering a second deploy; Render service environment variables, DigitalOcean component envs, Vercel sensitive environment values and Cloudflare Pages secret-text values are synchronized before the release. Fly.io, Cloud Run and ECS Express receive the same project secret set when their image-based deployment path is activated. Provider logs are redacted against both provider credentials and project secret values. Netlify consumes the already-built static artifacts, so its deployment does not need a second runtime environment injection.
+
+The Deployments workspace includes provider connection/verification forms, automatic provider selection, deployment history, live status polling, logs and rollback actions. Provider credentials are write-only in the UI; existing secret values are never returned to the browser.
