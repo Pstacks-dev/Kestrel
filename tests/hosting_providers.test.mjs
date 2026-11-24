@@ -32,9 +32,10 @@ test('container and persistent backend projects exclude serverless-only provider
   assert.ok(!ids.includes('cloudflare-pages'));
 });
 
-test('static frontend projects can use all ten compatible platforms', () => {
+test('static frontend projects can use compatible platforms without image-only providers', () => {
   const ranked = rankHostingProviders({ runtime: 'javascript', kind: 'static', isStatic: true }, {});
-  assert.equal(ranked.length, 10);
+  assert.equal(ranked.length, 9);
+  assert.ok(!ranked.some((provider) => provider.id === 'aws-ecs-express'));
 });
 
 test('managed database requirement only returns providers with database offerings', () => {
