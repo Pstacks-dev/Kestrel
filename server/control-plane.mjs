@@ -746,7 +746,8 @@ app.post('/api/webhooks/github', async (req, res) => {
         [project.id, deliveryId, event, branch, commitSha],
       );
       if (!accepted.rowCount) return { duplicate: true };
-      const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1 for update', [project.id]);
+      await c.query('select id from public.projects where id = $1 for update', [project.id]);
+      const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1', [project.id]);
       const rr = await c.query(
         'insert into public.pipeline_runs(project_id, run_number, branch, commit_sha, commit_message) values($1, $2, $3, $4, $5) returning *',
         [project.id, n.rows[0].n, branch, commitSha, commitMessage.slice(0, 300)]
