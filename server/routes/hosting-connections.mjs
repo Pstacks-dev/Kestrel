@@ -4,14 +4,14 @@ import { listHostingProviders } from '../lib/hosting-providers.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
-const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-app-runner', 'digitalocean-app-platform', 'heroku']);
+const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express', 'digitalocean-app-platform', 'heroku']);
 
 const CREDENTIAL_FIELDS = {
   render: ['apiKey'],
   railway: ['token'],
   flyio: ['token', 'orgSlug'],
   'google-cloud-run': ['projectId', 'serviceAccountJson'],
-  'aws-app-runner': ['accessKeyId', 'secretAccessKey', 'region'],
+  'aws-ecs-express': ['accessKeyId', 'secretAccessKey', 'region', 'executionRoleArn', 'infrastructureRoleArn'],
   'digitalocean-app-platform': ['accessToken'],
   heroku: ['apiKey'],
   vercel: ['token'],
@@ -24,6 +24,10 @@ export function validateProviderCredentials(providerId, credentials) {
   if (!required || !credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return false;
   for (const field of required) {
     if (typeof credentials[field] !== 'string' || !credentials[field].trim() || credentials[field].length > 20000) return false;
+  }
+  if (providerId === 'aws-ecs-express') {
+    const roleArn = /^arn:aws:iam::\\d{12}:role\\/[A-Za-z0-9+=,.@_/-]{1,512}$/;
+    if (!roleArn.test(credentials.executionRoleArn) || !roleArn.test(credentials.infrastructureRoleArn)) return false;
   }
   if (providerId === 'google-cloud-run') {
     try {
