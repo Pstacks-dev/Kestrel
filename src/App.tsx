@@ -1,6 +1,7 @@
 import Admin from './Admin';
 import { ProjectFiles } from './components/ProjectFiles';
 import ManagedHostingPanel from './components/ManagedHostingPanel';
+import { ManagedHosting } from './components/ManagedHosting';
 import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -1883,6 +1884,8 @@ function AppShell({ page }: { page: Page }) {
                 </label>
               </div>
             </div>
+
+            <ManagedHosting apiBase={api} accessToken={accessToken} organizationId={organizationId} projectId={selectedProject} />
 
             <ManagedHostingPanel
               apiBase={api}
