@@ -49,7 +49,7 @@ function imageRef(value) {
 export async function prepareEcsImageRegistry({ accessKeyId, secretAccessKey, sessionToken, region, executionRoleArn, projectName, commitSha }, { fetchImpl = fetch } = {}) {
   if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) throw new Error('A full Git commit SHA is required for an immutable ECR image tag');
   const accountId = String(executionRoleArn || '').split(':')[4];
-  if (!/^\\d{12}$/.test(accountId)) throw new Error('The ECS execution role must include a valid AWS account ID');
+  if (!/^\d{12}$/.test(accountId)) throw new Error('The ECS execution role must include a valid AWS account ID');
   const repositoryName = `kestrel/${String(projectName || 'application').toLowerCase().replace(/[^a-z0-9/_-]/g, '-').replace(/-+/g, '-').replace(/^[-/]+|[-/]+$/g, '').slice(0, 200)}`;
   const credentials = { accessKeyId, secretAccessKey, sessionToken, region };
   let repository;
