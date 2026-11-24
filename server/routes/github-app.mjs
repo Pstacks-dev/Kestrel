@@ -76,7 +76,7 @@ export function registerGitHubAppRoutes(app, { userAuth, query, transaction, sig
       });
     } catch (error) {
       console.error('GitHub App callback failed:', error.message);
-      return res.status(error.status === 404 ? 404 : 502).json({ error: 'Could not verify this GitHub App installation' });
+      return res.status([404, 409].includes(error.status) ? error.status : 502).json({ error: error.status === 409 ? error.message : 'Could not verify this GitHub App installation' });
     }
   });
 
