@@ -23,6 +23,7 @@ import { registerArtifactRoutes } from './routes/artifacts.mjs';
 import { registerDeploymentRoutes } from './routes/deployments.mjs';
 import { registerComputeRoutes } from './routes/compute.mjs';
 import { registerSandboxRoutes } from './routes/sandboxes.mjs';
+import { registerGitImportRoutes } from './routes/git-import.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1577,6 +1578,7 @@ registerArtifactRoutes(app, { userAuth, workerAuth, query });
 registerDeploymentRoutes(app, { userAuth, query, transaction });
 registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerSandboxRoutes(app, { userAuth, platformAdmin, query, transaction });
+registerGitImportRoutes(app, { userAuth, query, transaction });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
