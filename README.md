@@ -4,8 +4,8 @@ Kestrel is a production-hardened, distributed CI/CD platform built with:
 - **Frontend**: React 19, Vite, and TypeScript.
 - **Control Plane**: Express.js REST API with rate limiting, security headers, and webhook receivers.
 - **Persistence & Auth**: Supabase PostgreSQL with Row Level Security (RLS) and Supabase Auth.
-- **Build Workers**: Independent, sandboxed Docker workers with non-root UID, dropped Linux capabilities, and resource limits.
-- **Deployments**: Vercel-ready serverless API / static frontend, with separate Linux hosts for always-on Docker execution.
+- **Managed Cloud Builds**: Vercel Sandbox microVMs run detached, long-running builds without a customer-owned or Kestrel-owned worker host.
+- **Container Workers**: Optional independent Docker workers for OCI image builds and host-based deployments; these still require a managed Linux compute provider.
 
 ---
 
@@ -71,7 +71,14 @@ Kestrel is a production-hardened, distributed CI/CD platform built with:
    - Trusted Rust compute host agent; provider credentials stay on the host and node tokens are stored as SHA-256 hashes.
    - The existing workspace interface includes a Compute page for VM creation, resource quota usage and lifecycle controls.
    - A real Linux/KVM provider node is required. No hosted node has been provisioned and live VM lifecycle has not yet been verified.
-10. **Automated Migrations & Preflights**:
+10. **Managed Cloud Builds (Vercel Sandbox)**:
+   - Workspace developers can start a Node.js build from a public GitHub, GitLab, or Bitbucket repository inside a Vercel-managed microVM.
+   - The control plane starts the build as a detached command and immediately returns a command ID; it does not hold a serverless request open for the duration of dependency installation or compilation.
+   - Build status is polled through the Vercel Sandbox command API, and stdout/stderr can be retrieved through a bounded log endpoint.
+   - Build commands support npm, pnpm and Yarn lockfiles and run `npm run build`.
+   - No customer-managed Docker daemon, local worker process, or dedicated Kestrel server is needed for this build path. Vercel Sandbox credentials and provider usage/billing are required.
+   - This is a managed build path, not yet a complete artifact publication or managed production-ingress path. Existing Docker-based deployment workers remain a separate option.
+11. **Automated Migrations & Preflights**:
    - `scripts/migrate.mjs` applies ordered, transactional SQL migrations with idempotency tracking.
    - `scripts/check-env.mjs` verifies database URLs, SSL policies, and production security rules.
 
