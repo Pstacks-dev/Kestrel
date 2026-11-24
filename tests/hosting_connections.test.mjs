@@ -5,7 +5,7 @@ import { validateProviderCredentials } from '../server/routes/hosting-connection
 test('validates required credential shapes for the six initial full-stack providers', () => {
   assert.equal(validateProviderCredentials('render', { apiKey: 'render-secret' }), true);
   assert.equal(validateProviderCredentials('railway', { token: 'railway-secret' }), true);
-  assert.equal(validateProviderCredentials('flyio', { token: 'fly-secret' }), true);
+  assert.equal(validateProviderCredentials('flyio', { token: 'fly-secret', orgSlug: 'personal' }), true);
   assert.equal(validateProviderCredentials('aws-app-runner', { accessKeyId: 'key', secretAccessKey: 'secret', region: 'us-east-1' }), true);
   assert.equal(validateProviderCredentials('digitalocean-app-platform', { accessToken: 'do-token' }), true);
   assert.equal(validateProviderCredentials('heroku', { apiKey: 'heroku-token' }), true);
