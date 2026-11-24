@@ -13,7 +13,7 @@ async function awsRequest(credentials, service, action, payload, { fetchImpl = f
   const date = amzDate.slice(0, 8);
   const payloadHash = crypto.createHash('sha256').update(body).digest('hex');
   const contentType = 'application/x-amz-json-1.1';
-  const target = `AmazonEC2ContainerServiceV20141113.${action}`;
+  const target = `${service === 'logs' ? 'Logs_20140328' : 'AmazonEC2ContainerServiceV20141113'}.${action}`;
   const headers = {
     'content-type': contentType, host, 'x-amz-date': amzDate, 'x-amz-target': target,
   };
