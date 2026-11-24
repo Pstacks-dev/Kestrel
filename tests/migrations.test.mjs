@@ -90,3 +90,15 @@ test('managed deployment routes keep provider selection inside Kestrel and expos
   assert.ok(routes.includes('/api/managed-deployments/:deploymentId/rollback'));
   assert.match(routes, /decryptSecret\(/);
 });
+
+
+test('automatic managed deployment queue is durable and service-role only', async () => {
+  const sql = await readFile(new URL('../db/migrations/026_managed_hosting_deployment_queue.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\\.managed_hosting_deployment_queue/i);
+  assert.match(sql, /run_id uuid not null unique references public\\.pipeline_runs/i);
+  assert.match(sql, /status in \\(.*queued.*processing.*succeeded.*failed.*skipped/is);
+  assert.match(sql, /next_attempt_at timestamptz/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on public\\.managed_hosting_deployment_queue from anon, authenticated/i);
+  assert.match(sql, /grant all on public\\.managed_hosting_deployment_queue to service_role/i);
+});
