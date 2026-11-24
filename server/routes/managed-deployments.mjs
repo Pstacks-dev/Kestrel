@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { decryptSecret, redactSecrets } from '../lib/security.mjs';
 import { parseGitHubRepository } from './git-import.mjs';
 import { detectProjectProfile, rankHostingProviders } from '../lib/hosting-providers.mjs';
@@ -44,6 +45,48 @@ async function resolveCommit(repository, branch, suppliedSha, fetchImpl) {
   return sha;
 }
 
+async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch) {
+  if (!Array.isArray(artifactIds) || artifactIds.length < 1 || artifactIds.length > 5000 ||
+      artifactIds.some((id) => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id))) {
+    throw new Error('Select between 1 and 5000 completed build artifacts for this static deployment');
+  }
+  const result = await query(
+    `select a.id, a.name, a.object_key, a.size_bytes, a.sha256
+     from public.artifacts a
+     join public.pipeline_runs r on r.id = a.run_id
+     join public.projects p on p.id = r.project_id
+     where a.id = any($1::uuid[]) and p.id = $2 and a.deleted_at is null
+       and (a.expires_at is null or a.expires_at > now())`,
+    [artifactIds, projectId],
+  );
+  if (result.rowCount !== artifactIds.length) throw new Error('One or more selected build artifacts are missing or do not belong to this project');
+  const storageUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
+  const storageKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!storageUrl || !storageKey) throw new Error('Private artifact storage is not configured');
+  let total = 0;
+  const files = [];
+  for (const artifact of result.rows) {
+    const name = String(artifact.name || '');
+    if (!name || name.startsWith('/') || name.includes('\\') ||
+        name.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error('A build artifact contains an unsafe file path');
+    const encodedKey = String(artifact.object_key).split('/').map(encodeURIComponent).join('/');
+    const response = await storageFetch(`${storageUrl}/storage/v1/object/kestrel-artifacts/${encodedKey}`, {
+      headers: { apikey: storageKey, Authorization: `Bearer ${storageKey}` },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) throw new Error('A selected build artifact could not be downloaded from private storage');
+    const content = Buffer.from(await response.arrayBuffer());
+    if (content.length !== Number(artifact.size_bytes) ||
+        crypto.createHash('sha256').update(content).digest('hex') !== artifact.sha256) {
+      throw new Error('A selected build artifact failed its size or SHA-256 integrity check');
+    }
+    total += content.length;
+    if (total > 50 * 1024 * 1024) throw new Error('Static build output exceeds the 50 MiB provider upload limit');
+    files.push({ path: name, content });
+  }
+  return files;
+}
+
 function deploymentView(row) {
   return {
     id: row.id, projectId: row.project_id, provider: row.provider_id,
@@ -53,7 +96,7 @@ function deploymentView(row) {
   };
 }
 
-export function registerManagedDeploymentRoutes(app, { userAuth, query, transaction, fetchImpl = fetch }) {
+export function registerManagedDeploymentRoutes(app, { userAuth, query, transaction, fetchImpl = fetch, storageFetch = fetch }) {
   app.post('/api/projects/:projectId/managed-deployments', userAuth, async (req, res) => {
     try {
       const projectResult = await query(
@@ -89,6 +132,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       }
 
       const providerId = selected.id;
+      const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch) : null;
       const connection = verified.get(providerId);
       let credentials;
       try {
