@@ -108,6 +108,155 @@ async function loadProjectEnvironment(query, projectId) {
   return env;
 }
 
+const PIPELINE_AUTO_DEPLOY_PROVIDERS = new Set(['render', 'digitalocean-app-platform', 'netlify', 'cloudflare-pages']);
+
+export async function triggerManagedDeploymentForPipelineRun({ query, transaction, fetchImpl = fetch, storageFetch = fetch }, runId) {
+  const runResult = await query(
+    `select r.id, r.project_id, r.branch, r.commit_sha, r.status, r.triggered_by,
+            p.organization_id, p.name, p.repository_url, p.default_branch, p.source_type
+     from public.pipeline_runs r
+     join public.projects p on p.id = r.project_id
+     where r.id = $1`,
+    [runId],
+  );
+  if (!runResult.rowCount) return { status: 'skipped', reason: 'pipeline run not found' };
+  const run = runResult.rows[0];
+  if (run.status !== 'succeeded') return { status: 'skipped', reason: 'pipeline run did not succeed' };
+
+  const marker = await query(
+    `insert into public.managed_hosting_pipeline_triggers
+       (pipeline_run_id, project_id, organization_id, status)
+     values($1,$2,$3,'queued')
+     on conflict (pipeline_run_id) do nothing
+     returning pipeline_run_id`,
+    [run.id, run.project_id, run.organization_id],
+  );
+  if (!marker.rowCount) return { status: 'duplicate', reason: 'pipeline run was already processed' };
+
+  const updateTrigger = (status, providerId = null, deploymentId = null, errorMessage = null) => query(
+    `update public.managed_hosting_pipeline_triggers
+     set status = $2, provider_id = coalesce($3, provider_id),
+         managed_deployment_id = coalesce($4, managed_deployment_id),
+         error_message = $5, updated_at = now()
+     where pipeline_run_id = $1`,
+    [run.id, status, providerId, deploymentId, errorMessage ? String(errorMessage).slice(0, 500) : null],
+  );
+
+  try {
+    if (run.source_type !== 'git' || !parseGitHubRepository(run.repository_url)) {
+      await updateTrigger('skipped', null, null, 'Automatic managed deployments currently require a public GitHub source repository');
+      return { status: 'skipped', reason: 'unsupported source repository' };
+    }
+    if (!run.commit_sha || !/^[a-fA-F0-9]{40}$/.test(run.commit_sha)) {
+      await updateTrigger('skipped', null, null, 'The successful pipeline run has no verified commit SHA');
+      return { status: 'skipped', reason: 'missing commit SHA' };
+    }
+    const defaultBranch = run.default_branch || 'main';
+    if (run.branch !== defaultBranch) {
+      await updateTrigger('skipped', null, null, 'Automatic production deployments are limited to the project default branch');
+      return { status: 'skipped', reason: 'non-production branch' };
+    }
+
+    const repository = parseGitHubRepository(run.repository_url);
+    const profile = await inspectProject(repository, run.branch, fetchImpl);
+    const connections = await query(
+      `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag
+       from public.hosting_provider_connections
+       where organization_id = $1 and status = 'verified'`,
+      [run.organization_id],
+    );
+    const verified = new Map(connections.rows.map((row) => [row.provider_id, row]));
+    const artifactResult = await query(
+      'select id from public.artifacts where run_id = $1 order by name',
+      [run.id],
+    );
+    const artifactIds = artifactResult.rows.map((row) => row.id);
+    const selected = rankHostingProviders(profile, {}).find((provider) =>
+      PIPELINE_AUTO_DEPLOY_PROVIDERS.has(provider.id) &&
+      ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
+      verified.has(provider.id) &&
+      (provider.id !== 'netlify' || artifactIds.length > 0),
+    );
+    if (!selected) {
+      const native = ['railway', 'vercel'].some((id) => verified.has(id));
+      const reason = native
+        ? 'The connected Railway/Vercel Git integration handles provider-native push deployments; no Kestrel-triggered adapter was selected.'
+        : 'No verified compatible provider is enabled for automatic post-build deployment.';
+      await updateTrigger('skipped', null, null, reason);
+      return { status: 'skipped', reason };
+    }
+
+    const providerId = selected.id;
+    const connection = verified.get(providerId);
+    const credentials = JSON.parse(decryptSecret(
+      connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag,
+    ));
+    const projectEnv = await loadProjectEnvironment(query, run.project_id);
+    const files = providerId === 'netlify'
+      ? await loadStaticArtifactFiles(query, run.project_id, artifactIds, storageFetch)
+      : null;
+    const existing = await query(
+      `select * from public.managed_hosting_resources
+       where organization_id = $1 and project_id = $2 and provider_id = $3`,
+      [run.organization_id, run.project_id, providerId],
+    );
+    const resource = existing.rows[0] || null;
+    const projectName = `kestrel-${run.name}-${String(run.project_id).slice(0, 8)}`
+      .toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60);
+    const providerInput = {
+      repositoryUrl: run.repository_url, branch: run.branch, commitSha: run.commit_sha,
+      profile, projectName, env: projectEnv, files,
+      buildCommand: 'npm run build', destinationDir: 'dist', rootDir: '/',
+    };
+    await updateTrigger('deploying', providerId);
+    const providerDeployment = resource
+      ? await deployManagedProviderService(
+          providerId, credentials, resource, run.commit_sha, { fetchImpl },
+          { ...providerInput, containerImage: null, port: 8080 },
+        )
+      : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
+
+    const saved = await transaction(async (client) => {
+      let resourceId = resource?.id;
+      if (!resourceId) {
+        const insertedResource = await client.query(
+          `insert into public.managed_hosting_resources
+             (organization_id, project_id, provider_id, provider_project_id,
+              provider_service_id, provider_environment_id, provider_url, created_by)
+           values($1,$2,$3,$4,$5,$6,$7,$8)
+           returning id`,
+          [run.organization_id, run.project_id, providerId, providerDeployment.projectId,
+            providerDeployment.serviceId, providerDeployment.environmentId || null,
+            providerDeployment.providerUrl || null, run.triggered_by || null],
+        );
+        resourceId = insertedResource.rows[0].id;
+      }
+      const inserted = await client.query(
+        `insert into public.managed_hosting_deployments
+           (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
+            branch, commit_sha, status, provider_url, created_by)
+         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         returning id`,
+        [resourceId, run.organization_id, run.project_id, providerId, providerDeployment.deploymentId,
+          run.branch, run.commit_sha, providerDeployment.status || 'queued',
+          providerDeployment.providerUrl || null, run.triggered_by || null],
+      );
+      await client.query(
+        `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+         values($1,$2,'managed_deployment.auto_queued','managed_deployment',$3,$4::jsonb)`,
+        [run.organization_id, run.triggered_by || null, inserted.rows[0].id,
+          JSON.stringify({ provider: providerId, branch: run.branch, commitSha: run.commit_sha, pipelineRunId: run.id })],
+      );
+      return inserted.rows[0];
+    });
+    await updateTrigger('succeeded', providerId, saved.id, null);
+    return { status: 'succeeded', provider: providerId, deploymentId: saved.id };
+  } catch (error) {
+    await updateTrigger('failed', null, null, error.message || 'Automatic managed deployment failed');
+    return { status: 'failed', reason: 'provider deployment failed' };
+  }
+}
+
 function deploymentView(row) {
   return {
     id: row.id, projectId: row.project_id, provider: row.provider_id,
