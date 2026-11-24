@@ -95,6 +95,7 @@ async function deployFiles({ token, siteId, files, branch = 'main', commitSha },
 
 export async function createNetlifyDeployment({ authToken, projectName, files, branch = 'main', commitSha }, { fetchImpl = fetch } = {}) {
   if (!authToken) throw new Error('Netlify access token is required');
+  normalizeFiles(files);
   const site = await createSite(authToken, siteName(projectName), fetchImpl);
   if (!site.id) throw new Error('Netlify did not return a site identifier');
   const deploy = await deployFiles({ token: authToken, siteId: site.id, files, branch, commitSha }, { fetchImpl });
