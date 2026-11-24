@@ -115,9 +115,8 @@ if [ -f "$WORKSPACE/Dockerfile" ] || [ -f "$WORKSPACE/dockerfile" ]; then
   if [ -f /usr/local/share/ca-certificates/vercel-proxy-ca.crt ]; then
     cp /usr/local/share/ca-certificates/vercel-proxy-ca.crt "$WORKSPACE/.kestrel-vercel-proxy-ca.crt"
     awk '
-      BEGIN { IGNORECASE = 1 }
-      { print }
-      /^FROM[[:space:]]/ && $0 !~ /(scratch|distroless)/ {
+      { print; upper = toupper($0) }
+      upper ~ /^[[:space:]]*FROM[[:space:]]/ && upper !~ /(SCRATCH|DISTROLESS)/ {
         print "COPY .kestrel-vercel-proxy-ca.crt /usr/local/share/ca-certificates/vercel-proxy-ca.crt"
         print "RUN if command -v update-ca-certificates >/dev/null 2>&1; then update-ca-certificates; elif command -v update-ca-trust >/dev/null 2>&1; then update-ca-trust; fi"
       }
