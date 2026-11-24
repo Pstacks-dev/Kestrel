@@ -42,8 +42,16 @@ test('skips an automation event if its pipeline is no longer successful', async 
 test('bounds each queue batch to at most twenty events', async () => {
   let claims = 0;
   await processManagedHostingQueue({
-    query: async () => { claims += 1; return { rowCount: 0, rows: [] }; },
+    query: async (sql) => {
+      if (/with candidate as/i.test(sql)) {
+        claims += 1;
+        return { rowCount: 1, rows: [{ id: `queue-${claims}`, pipeline_run_id: `run-${claims}`, attempt_count: 1 }] };
+      }
+      if (/select r.id as run_id/i.test(sql)) return { rowCount: 1, rows: [{ run_id: 'run', run_status: 'failed' }] };
+      if (/update public.managed_hosting_automation_queue/i.test(sql)) return { rowCount: 1, rows: [] };
+      throw new Error('Unexpected query in bounded queue test');
+    },
     transaction: async () => {},
   }, 1000);
-  assert.equal(claims, 1);
+  assert.equal(claims, 20);
 });
