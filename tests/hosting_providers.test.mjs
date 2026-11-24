@@ -13,7 +13,7 @@ test('catalog contains the ten selected hosting providers', () => {
 
 test('normalizes project deployment requirements', () => {
   assert.deepEqual(normalizeAppProfile({ runtime: 'Node', dockerfile: true, needsPersistentProcess: true }), {
-    runtime: 'node', kind: 'web', isStatic: false, needsContainer: true,
+    runtime: 'node', framework: null, kind: 'web', isStatic: false, needsContainer: true,
     needsPersistentProcess: true, needsBackgroundWorker: false, needsDatabase: false,
   });
 });
@@ -87,4 +87,12 @@ test('AWS ECS Express Mode is recommended only when a container image is availab
   assert.ok(!sourceBuild.some((provider) => provider.id === 'aws-ecs-express'));
   const containerBuild = rankHostingProviders({ runtime: 'node', dockerfile: true, needsPersistentProcess: true }, {});
   assert.ok(containerBuild.some((provider) => provider.id === 'aws-ecs-express'));
+});
+
+
+test('Vercel accepts framework-managed Next.js functions without accepting arbitrary persistent servers', () => {
+  const next = rankHostingProviders({ runtime: 'node', framework: 'nextjs', needsPersistentProcess: true }, {});
+  assert.ok(next.some((provider) => provider.id === 'vercel'));
+  const customServer = rankHostingProviders({ runtime: 'node', needsPersistentProcess: true }, {});
+  assert.ok(!customServer.some((provider) => provider.id === 'vercel'));
 });
