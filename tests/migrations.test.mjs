@@ -109,6 +109,7 @@ test('deployed hosting schema reconciliation preserves encrypted credentials and
   assert.match(sql, /rename column display_name to account_label/i);
   assert.match(sql, /rename column created_by to connected_by/i);
   assert.match(sql, /when 'connected' then 'verified'/i);
+  assert.match(sql, /add column if not exists id uuid default gen_random_uuid\(\)/i);
   assert.match(sql, /add column if not exists branch text/i);
   assert.match(sql, /add column if not exists commit_sha text/i);
   assert.match(sql, /unique index if not exists github_webhook_deliveries_delivery_id_uidx/i);
