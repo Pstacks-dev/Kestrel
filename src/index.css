@@ -80,3 +80,7 @@
 @keyframes managed-spin{to{transform:rotate(360deg)}}
 @media(max-width:1000px){.managed-provider-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:650px){.managed-provider-grid{grid-template-columns:1fr}.managed-hosting-heading{flex-direction:column}.managed-deployment-row{grid-template-columns:1fr auto}.managed-deployment-row>a,.managed-deployment-row>small{grid-column:1/-1}}
+
+.managed-deployment-actions{grid-column:1/-1;display:flex;gap:7px;flex-wrap:wrap}
+.managed-deployment-actions .btn{font-size:10px;padding:7px 10px;min-height:29px}
+.managed-deployment-logs{grid-column:1/-1;margin:0;padding:12px;background:#20221f;color:#e6e6df;border:1px solid #35372f;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.6 'DM Mono',monospace}
