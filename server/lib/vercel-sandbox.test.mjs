@@ -76,9 +76,9 @@ test('rejects command timeouts above the provider limit before making a request'
 
 test('collects detached command stdout and stderr logs', async () => {
   const stream = [
-    JSON.stringify({ stream: 'stdout', data: 'installing dependencies\\n' }),
-    JSON.stringify({ stream: 'stderr', data: 'warning: optional package\\n' }),
-  ].join('\\n') + '\\n';
+    JSON.stringify({ stream: 'stdout', data: 'installing dependencies\n' }),
+    JSON.stringify({ stream: 'stderr', data: 'warning: optional package\n' }),
+  ].join('\n') + '\n';
   const client = createVercelSandboxClient({
     env,
     fetchImpl: async (url) => {
