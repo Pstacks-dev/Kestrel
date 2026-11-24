@@ -92,8 +92,8 @@ export function registerGitHubAppRoutes(app, { userAuth, query, transaction, sig
   });
 }
 
-export async function fetchGitHubRepositoryWithInstallation(installationId, repository, fetchImpl = fetch) {
-  const token = await createGitHubInstallationToken(installationId, { repository });
+export async function fetchGitHubRepositoryWithInstallation(installationId, repository, { fetchImpl = fetch, config } = {}) {
+  const token = await createGitHubInstallationToken(installationId, { repository, fetchImpl, config });
   const response = await fetchImpl(`https://api.github.com/repos/${repository.split('/').map(encodeURIComponent).join('/')}`, {
     headers: {
       Accept: 'application/vnd.github+json',
