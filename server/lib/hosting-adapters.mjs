@@ -86,7 +86,7 @@ export async function verifyHostingProvider(providerId, credentials, { fetchImpl
       if (railway.errors?.length || !railway.data?.me?.id) throw new Error('Railway rejected the credential');
       return { verified: true, account: railway.data.me.name || railway.data.me.id };
     case 'flyio':
-      response = await fetchImpl('`https://api.machines.dev/v1/apps?org_slug=${encodeURIComponent(credentials.orgSlug)}`, {
+      response = await fetchImpl(`https://api.machines.dev/v1/apps?org_slug=${encodeURIComponent(credentials.orgSlug)}`, {
         headers: { Authorization: `Bearer ${credentials.token}` }, signal: timeoutSignal(),
       });
       await requireOk(response);
