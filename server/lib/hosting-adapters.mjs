@@ -21,13 +21,13 @@ function awsSigningKey(secret, date, region, service) {
 async function verifyAwsEcs(credentials, fetchImpl, now) {
   async function signedRequest(service, action, payload = {}) {
     const region = credentials.region;
-    const host = service === 'ecr' ? `api.ecr.${region}.amazonaws.com` : `ecs.${region}.amazonaws.com`;
+    const host = service === 'ecr' ? 'api.ecr.' + region + '.amazonaws.com' : 'ecs.' + region + '.amazonaws.com';
     const body = JSON.stringify(payload);
-    const amzDate = new Date(now).toISOString().replace(/[:-]|\\.\\d{3}/g, '');
+    const amzDate = new Date(now).toISOString().replace(/[:-]|\.\d{3}/g, '');
     const date = amzDate.slice(0, 8);
     const target = service === 'ecr'
-      ? `AmazonEC2ContainerRegistry_V20150921.${action}`
-      : `AmazonEC2ContainerServiceV20141113.${action}`;
+      ? 'AmazonEC2ContainerRegistry_V20150921.' + action
+      : 'AmazonEC2ContainerServiceV20141113.' + action;
     const headers = {
       'content-type': 'application/x-amz-json-1.1',
       host,
@@ -36,14 +36,14 @@ async function verifyAwsEcs(credentials, fetchImpl, now) {
     };
     if (credentials.sessionToken) headers['x-amz-security-token'] = credentials.sessionToken;
     const signedHeaders = Object.keys(headers).sort().join(';');
-    const canonicalHeaders = Object.keys(headers).sort().map((key) => `${key}:${headers[key]}\\n`).join('');
+    const canonicalHeaders = Object.keys(headers).sort().map((key) => key + ':' + headers[key] + '\n').join('');
     const payloadHash = crypto.createHash('sha256').update(body).digest('hex');
-    const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, payloadHash].join('\\n');
-    const scope = `${date}/${region}/${service}/aws4_request`;
-    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\\n');
+    const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+    const scope = date + '/' + region + '/' + service + '/aws4_request';
+    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
     const signature = crypto.createHmac('sha256', awsSigningKey(credentials.secretAccessKey, date, region, service)).update(stringToSign).digest('hex');
-    headers.Authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-    const response = await fetchImpl(`https://${host}/`, { method: 'POST', signal: timeoutSignal(), body, headers });
+    headers.Authorization = 'AWS4-HMAC-SHA256 Credential=' + credentials.accessKeyId + '/' + scope + ', SignedHeaders=' + signedHeaders + ', Signature=' + signature;
+    const response = await fetchImpl('https://' + host + '/', { method: 'POST', signal: timeoutSignal(), body, headers });
     await requireOk(response);
     return response;
   }
