@@ -630,7 +630,7 @@ function handleShutdown(signal) {
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
-// Managed OCI builds share the registered worker pool and have a separate durable lease queue.\nvoid managedImageBuildLoop();\n\n// Polling loop for job claims
+// Managed OCI builds share the registered worker pool and have a separate durable lease queue.\nif (EXECUTOR === 'docker') void managedImageBuildLoop();\n\n// Polling loop for job claims
 async function pollLoop(slot) {
   while (!isDraining) {
     try {
