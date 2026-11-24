@@ -32,6 +32,13 @@ function status(value) {
   return 'unknown';
 }
 
+function digitalOceanEnv(env = {}, scope = 'RUN_AND_BUILD_TIME') {
+  return Object.entries(env).map(([key, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid DigitalOcean environment variable');
+    return { key, value, scope, type: 'SECRET' };
+  });
+}
+
 function assertResolvedCommit(deployment, expectedSha) {
   const actual = deployment?.services?.map((service) => service.source_commit_hash).filter(Boolean) || [];
   if (actual.length && actual.some((sha) => sha.toLowerCase() !== expectedSha.toLowerCase())) {
@@ -44,7 +51,7 @@ function safeName(value) {
   return result || 'kestrel-app';
 }
 
-export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {} }, { fetchImpl = fetch } = {}) {
+export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {} }, { fetchImpl = fetch } = {}) {
   if (!accessToken) throw new Error('DigitalOcean access token is required');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) throw new Error('Invalid deployment branch');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
@@ -52,6 +59,7 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   const isStatic = profile.isStatic === true;
   const component = {
     name: safeName(projectName),
+    envs: digitalOceanEnv(env, isStatic ? 'BUILD_TIME' : 'RUN_AND_BUILD_TIME'),
     github: { repo, branch, deploy_on_push: false },
     source_dir: '/',
   };
@@ -80,11 +88,31 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   return { provider: 'digitalocean-app-platform', projectId: app.id, serviceId: component.name, environmentId: null, deploymentId, status: status(deployment.phase || deployment.status), providerUrl: app.live_url || null };
 }
 
-export async function deployDigitalOceanApp({ accessToken, appId, commitSha }, { fetchImpl = fetch } = {}) {
+export async function deployDigitalOceanApp({ accessToken, appId, commitSha, env = {} }, { fetchImpl = fetch } = {}) {
   if (!appId) throw new Error('DigitalOcean app identifier is required');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
-  const deploymentResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}/deployments`, { method: 'POST', fetchImpl, body: { force_build: true } });
-  const deployment = deploymentResult.deployment || deploymentResult;
+  const currentResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}`, { fetchImpl });
+  const currentApp = currentResult.app || currentResult;
+  if (!currentApp.spec) throw new Error('DigitalOcean app did not return its current spec');
+  const spec = structuredClone(currentApp.spec);
+  const updateComponent = (component, scope) => ({ ...component, envs: digitalOceanEnv(env, scope) });
+  spec.services = (spec.services || []).map((component) => updateComponent(component, 'RUN_AND_BUILD_TIME'));
+  spec.static_sites = (spec.static_sites || []).map((component) => updateComponent(component, 'BUILD_TIME'));
+  spec.workers = (spec.workers || []).map((component) => updateComponent(component, 'RUN_TIME'));
+  const updatedResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}`, { method: 'PUT', fetchImpl, body: { spec } });
+  let updatedApp = updatedResult.app || updatedResult;
+  let deployment = updatedApp.in_progress_deployment || updatedApp.pending_deployment || null;
+  if (!deployment?.id) {
+    const refreshed = await request(accessToken, `/apps/${encodeURIComponent(appId)}`, { fetchImpl });
+    updatedApp = refreshed.app || refreshed;
+    deployment = updatedApp.in_progress_deployment || updatedApp.pending_deployment || null;
+  }
+  if (!deployment?.id) {
+    const listResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}/deployments?per_page=10`, { fetchImpl });
+    const deployments = listResult.deployments || [];
+    deployment = deployments.find((item) => item.services?.some((service) => service.source_commit_hash?.toLowerCase() === commitSha.toLowerCase()));
+  }
+  if (!deployment?.id) throw new Error('DigitalOcean accepted the app spec update but did not expose the resulting deployment');
   assertResolvedCommit(deployment, commitSha);
   const deploymentId = deployment.id;
   if (!deploymentId) throw new Error('DigitalOcean did not return a deployment identifier');
