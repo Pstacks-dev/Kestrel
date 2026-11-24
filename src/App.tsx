@@ -1747,7 +1747,7 @@ function AppShell({ page }: { page: Page }) {
                   Connected GitHub account
                   <select value={selectedGithubInstallation} onChange={(e) => setSelectedGithubInstallation(e.target.value)}>
                     {githubInstallations.map((item: any) => (
-                      <option key={item.installationId} value={String(item.installationId)}>
+                      <option key={item.installationId} value={String(item.installationId)} disabled={Boolean(item.suspendedAt)}>
                         {item.accountLogin} ({item.accountType}){item.suspendedAt ? ' — suspended' : ''}
                       </option>
                     ))}
