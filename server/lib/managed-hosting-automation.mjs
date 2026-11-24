@@ -176,7 +176,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, sandboxCl
     }
 
     const files = selected.id === 'netlify'
-      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl)
+      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, '', run.commit_sha)
       : undefined;
     const existingResult = await query(
       `select * from public.managed_hosting_resources
