@@ -137,8 +137,9 @@ export async function createCloudflarePagesDeployment({ apiToken, accountId, pro
 }
 
 export async function deployCloudflarePagesProject({ apiToken, accountId, projectName: name, branch = 'main', commitSha, commitMessage, env }, { fetchImpl = fetch } = {}) {
-  {
-    const variables = envVars(env || {});
+  if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required for Cloudflare Pages deployment');
+  if (env && Object.keys(env).length) {
+    const variables = envVars(env);
     await request(apiToken, projectPath(accountId, name), {
       method: 'PATCH', fetchImpl,
       body: {
