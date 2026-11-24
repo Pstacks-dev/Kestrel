@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { encryptSecret } from '../server/lib/security.mjs';
 import { triggerManagedDeploymentForPipelineRun } from '../server/routes/managed-deployments.mjs';
 
