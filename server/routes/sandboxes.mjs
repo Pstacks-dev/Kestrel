@@ -231,9 +231,8 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
     if (!result.rowCount) return fail(res, 404, 'Sandbox not found or access denied');
     const record = result.rows[0];
     try {
-      const current = await provider.get(record.provider_name, true);
-      const sessionId = current?.session?.id || current?.sandbox?.currentSessionId || record.provider_session_id;
-      if (!sessionId) return fail(res, 409, 'Sandbox session is unavailable');
+      const sessionId = record.provider_session_id;
+      if (!sessionId) return fail(res, 409, 'The original build session is no longer available');
       const command = await provider.getCommand(sessionId, req.params.commandId);
       const exitCode = command.exitCode === null || command.exitCode === undefined ? null : Number(command.exitCode);
       res.json({
@@ -249,6 +248,24 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
       });
     } catch (error) {
       fail(res, error instanceof SandboxProviderError ? error.status : 502, error.message || 'Could not retrieve cloud build status');
+    }
+  });
+
+  app.get('/api/sandboxes/:sandboxId/builds/:commandId/logs', userAuth, async (req, res) => {
+    const result = await query(
+      `select s.* from public.sandbox_instances s
+       join public.organization_members m on m.organization_id = s.organization_id
+       where s.id = $1 and m.user_id = $2 and m.role = any($3) and s.deleted_at is null`,
+      [req.params.sandboxId, req.user.id, MEMBER_ROLES],
+    );
+    if (!result.rowCount) return fail(res, 404, 'Sandbox not found or access denied');
+    const sessionId = result.rows[0].provider_session_id;
+    if (!sessionId) return fail(res, 409, 'The original build session is no longer available');
+    try {
+      const logs = await provider.getCommandLogs(sessionId, req.params.commandId);
+      res.json({ logs });
+    } catch (error) {
+      fail(res, error instanceof SandboxProviderError ? error.status : 502, error.message || 'Could not retrieve cloud build logs');
     }
   });
 
