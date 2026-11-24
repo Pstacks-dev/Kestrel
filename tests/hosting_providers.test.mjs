@@ -51,3 +51,32 @@ test('credential readiness changes ranking but never makes an incompatible provi
   assert.equal(ranked[0].configured, true);
   assert.ok(!ranked.some((provider) => provider.id === 'cloudflare-pages'));
 });
+
+test('detects static Vite frontend from its package manifest', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const profile = detectProjectProfile({
+    files: ['package.json', 'index.html', 'vite.config.js'],
+    packageJson: { dependencies: { vite: '^6.0.0', react: '^19.0.0' }, scripts: { build: 'vite build' } },
+  });
+  assert.equal(profile.runtime, 'node');
+  assert.equal(profile.framework, 'vite');
+  assert.equal(profile.isStatic, true);
+  assert.equal(profile.needsPersistentProcess, false);
+});
+
+test('detects a Docker-backed application as a persistent container workload', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const profile = detectProjectProfile({ files: ['Dockerfile', 'package.json'], packageJson: { scripts: { start: 'node server.js' } } });
+  assert.equal(profile.needsContainer, true);
+  assert.equal(profile.needsPersistentProcess, true);
+});
+
+test('detects Python, Go, Rust, PHP, Ruby and .NET manifests', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  for (const [file, runtime] of [
+    ['requirements.txt', 'python'], ['go.mod', 'go'], ['Cargo.toml', 'rust'],
+    ['composer.json', 'php'], ['Gemfile', 'ruby'], ['Api.csproj', 'dotnet'],
+  ]) {
+    assert.equal(detectProjectProfile({ files: [file] }).runtime, runtime, file);
+  }
+});
