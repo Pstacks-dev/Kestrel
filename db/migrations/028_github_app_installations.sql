@@ -21,3 +21,6 @@ create policy "workspace members read GitHub App installations" on public.github
     select 1 from public.organization_members m
     where m.organization_id = github_app_installations.organization_id and m.user_id = auth.uid()
   ));
+
+revoke all on public.github_app_installations from anon, authenticated;
+grant all on public.github_app_installations to service_role;
