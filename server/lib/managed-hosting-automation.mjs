@@ -148,7 +148,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, sandboxCl
       containerImage = build.imageRef;
       await query(
         `update public.managed_hosting_automation_queue
-         set container_image = $2, build_sandbox_name = null, build_session_id = null,
+         set container_image = $2, build_image_ref = null, build_sandbox_name = null, build_session_id = null,
              build_command_id = null, status = 'running', locked_at = now(), updated_at = now()
          where id = $1`,
         [item.id, containerImage],
@@ -163,7 +163,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, sandboxCl
       await query(
         `update public.managed_hosting_automation_queue
          set status = 'building', selected_provider_id = $2, build_sandbox_name = $3,
-             build_session_id = $4, build_command_id = $5, container_image = $6,
+             build_session_id = $4, build_command_id = $5, build_image_ref = $6,
              locked_at = null, available_at = now() + interval '10 seconds', updated_at = now()
          where id = $1`,
         [item.id, selected.id, build.sandboxName, build.sessionId, build.commandId, build.imageRef],
@@ -239,7 +239,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, sandboxCl
       await query(
         `update public.managed_hosting_automation_queue
          set build_sandbox_name = null, build_session_id = null, build_command_id = null,
-             container_image = null, updated_at = now()
+             container_image = null, build_image_ref = null, updated_at = now()
          where id = $1`,
         [item.id],
       );
