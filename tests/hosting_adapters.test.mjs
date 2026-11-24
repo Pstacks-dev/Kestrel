@@ -33,11 +33,15 @@ test('verifies Render, Railway, Fly.io, DigitalOcean and Heroku API credentials'
 
 test('verifies AWS ECS Express Mode credentials using a signed ECS API request', async () => {
   let authorization = '';
+  let target = '';
+  let requestUrl = '';
   const result = await verifyHostingProvider('aws-ecs-express', {
     accessKeyId: 'AKIATESTKEY', secretAccessKey: 'test-secret', region: 'us-east-1',
   }, {
     now: Date.parse('2026-11-24T00:00:00.000Z'),
-    fetchImpl: async (_url, options) => {
+    fetchImpl: async (url, options) => {
+      requestUrl = url;
+      target = options.headers['x-amz-target'];
       authorization = options.headers.Authorization;
       return new Response('{}', { status: 200 });
     },
