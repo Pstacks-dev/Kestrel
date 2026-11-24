@@ -121,3 +121,14 @@ export async function rollbackRailwayDeployment({ token, deploymentId }, { fetch
   if (!rollback?.id) throw new Error('Railway did not create a rollback deployment');
   return { provider: 'railway', deploymentId: rollback.id, status: normalizeRailwayStatus(rollback.status) };
 }
+
+export async function deployRailwayService({ token, serviceId, environmentId, commitSha }, { fetchImpl = fetch } = {}) {
+  if (!serviceId || !environmentId) throw new Error('Railway service and environment identifiers are required');
+  if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
+  const data = await railwayGraphQL(token,
+    'mutation DeployCommit($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }',
+    { serviceId, environmentId, commitSha }, fetchImpl);
+  const deploymentId = data.serviceInstanceDeployV2;
+  if (!deploymentId || typeof deploymentId !== 'string') throw new Error('Railway did not return a deployment identifier');
+  return { provider: 'railway', serviceId, environmentId, deploymentId, commitSha, status: 'queued' };
+}
