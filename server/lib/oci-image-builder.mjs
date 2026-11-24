@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 
 const IMAGE_REF = /^(?:[a-z0-9.-]+(?::\d+)?\/)?[a-z0-9._/-]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/i;
@@ -103,6 +104,7 @@ export async function buildAndPublishOciImage(rawInput, {
   if (!dockerfileStat?.isFile()) throw new OciBuildError('Dockerfile was not found in the build context', 'oci_dockerfile_missing', 422);
 
   const dockerConfig = await mkdtemp(path.join(tempRoot, 'kestrel-oci-'));
+  const builderName = 'kestrel-' + crypto.randomUUID().replace(/-/g, '').slice(0, 24);
   await mkdir(dockerConfig, { recursive: true });
   const metadataPath = path.join(dockerConfig, 'build-metadata.json');
   const env = { ...process.env, DOCKER_CONFIG: dockerConfig };
@@ -111,8 +113,10 @@ export async function buildAndPublishOciImage(rawInput, {
     await run(dockerBin, ['login', input.registry, '--username', input.registryUsername, '--password-stdin'], {
       ...runOptions, input: input.registryPassword,
     });
+    await run(dockerBin, ['buildx', 'create', '--name', builderName, '--driver', 'docker-container'], runOptions);
+    await run(dockerBin, ['buildx', 'inspect', '--bootstrap', builderName], runOptions);
     const args = [
-      'buildx', 'build', '--push', '--pull',
+      'buildx', 'build', '--builder', builderName, '--push', '--pull',
       '--file', input.dockerfile,
       '--tag', input.image,
       '--platform', input.platforms.join(','),
@@ -140,6 +144,7 @@ export async function buildAndPublishOciImage(rawInput, {
     if (error instanceof OciBuildError) throw error;
     throw new OciBuildError(error.message || 'OCI image build failed');
   } finally {
+    await run(dockerBin, ['buildx', 'rm', builderName], runOptions).catch(() => {});
     await rm(dockerConfig, { recursive: true, force: true });
   }
 }

@@ -79,6 +79,19 @@ overview. Queue a pipeline run for the same organization. The worker polls for
 jobs, starts a separate Docker container for each job, streams logs, and reports
 the result.
 
+For container projects with a root `Dockerfile`, successful default-branch
+pipeline runs can also enqueue a managed OCI image build when the workspace has
+a verified Fly.io, Google Cloud Run, or AWS ECS Express connection. The worker
+uses its Docker socket and the pinned Docker Buildx plugin to clone the exact
+pipeline commit, build and push an immutable commit-tagged image, and return its
+SHA-256 digest to the control plane. The deployment queue remains parked until
+that digest is available. This requires migration `027_managed_hosting_oci_builds.sql`
+to be applied. Registry credentials are encrypted at rest and delivered only to
+the worker holding the build lease; project runtime secrets are not sent to the
+image-build worker. Source builds currently support public GitHub repositories
+with a root Dockerfile; private repositories and monorepo subdirectories are
+not yet supported.
+
 ## Security notes
 
 The worker container mounts the Docker daemon socket. Access to that socket is

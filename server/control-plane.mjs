@@ -1252,6 +1252,85 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
   }
 });
 
+// Dedicated managed OCI build leases. Registry credentials are decrypted only for the owning worker.
+app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res) => {
+  if (req.body?.workerId !== req.worker.id) return res.status(403).json({ error: 'Worker identity mismatch' });
+  try {
+    const build = await transaction(async (client) => {
+      const worker = await client.query('select * from public.workers where id = $1 for update', [req.worker.id]);
+      if (!worker.rowCount || ['draining', 'offline'].includes(worker.rows[0].state)) return null;
+      const active = await client.query(
+        'select (select count(*)::int from public.jobs where worker_id = $1 and status = \'running\') + (select count(*)::int from public.managed_hosting_image_builds where worker_id = $1 and status = \'running\') as count',
+        [req.worker.id],
+      );
+      if (active.rows[0].count >= worker.rows[0].max_concurrency) return null;
+      await client.query(
+        "update public.managed_hosting_image_builds set status = case when attempt_count < 4 then 'queued' else 'failed' end, worker_id = null, lease_token = null, lease_expires_at = null, available_at = case when attempt_count < 4 then now() + interval '15 seconds' else available_at end, updated_at = now() where status = 'running' and lease_expires_at <= now()",
+      );
+      await client.query(
+        "update public.managed_hosting_automation_queue q set status = 'queued', locked_at = null, available_at = now(), updated_at = now() where q.status = 'waiting_for_image' and exists (select 1 from public.managed_hosting_image_builds b where b.automation_queue_id = q.id and b.status = 'failed')",
+      );
+      const claimed = await client.query(
+        "with candidate as (select b.id from public.managed_hosting_image_builds b join public.projects p on p.id = b.project_id where p.organization_id = $1 and b.status = 'queued' and b.attempt_count < 4 and b.available_at <= now() order by b.created_at for update of b skip locked limit 1) update public.managed_hosting_image_builds b set status = 'running', attempt_count = attempt_count + 1, worker_id = $2, lease_token = $3, lease_expires_at = now() + interval '45 seconds', started_at = coalesce(started_at, now()), updated_at = now() from candidate where b.id = candidate.id returning b.*",
+        [worker.rows[0].organization_id, req.worker.id, crypto.randomBytes(32).toString('hex')],
+      );
+      if (!claimed.rowCount) return null;
+      const row = claimed.rows[0];
+      return {
+        id: row.id, leaseToken: row.lease_token, repositoryUrl: row.repository_url,
+        branch: row.branch, commitSha: row.commit_sha, image: row.image,
+        registry: row.registry, provider: row.provider_id,
+        registryUsername: decryptSecret(row.registry_username_ciphertext, row.registry_username_iv, row.registry_username_auth_tag),
+        registryPassword: decryptSecret(row.registry_password_ciphertext, row.registry_password_iv, row.registry_password_auth_tag),
+      };
+    });
+    res.json({ build });
+  } catch (error) {
+    console.error('Managed OCI build claim failed:', { code: error.code });
+    res.status(500).json({ error: 'Could not claim managed OCI build' });
+  }
+});
+
+app.post('/api/workers/managed-image-builds/:buildId/lease', workerAuth, async (req, res) => {
+  const leaseToken = String(req.body?.leaseToken || '');
+  const result = await query(
+    "update public.managed_hosting_image_builds set lease_expires_at = now() + interval '45 seconds', updated_at = now() where id = $1 and worker_id = $2 and lease_token = $3 and status = 'running' and lease_expires_at > now() returning id",
+    [req.params.buildId, req.worker.id, leaseToken],
+  );
+  if (!result.rowCount) return res.status(409).json({ error: 'Managed OCI build lease is invalid or expired' });
+  res.json({ ok: true });
+});
+
+app.post('/api/workers/managed-image-builds/:buildId/complete', workerAuth, async (req, res) => {
+  const { leaseToken, status, imageDigest, imageDigestRef, error } = req.body || {};
+  const buildMeta = await query(
+    "select image from public.managed_hosting_image_builds where id = $1 and worker_id = $2 and lease_token = $3 and status = 'running' and lease_expires_at > now()",
+    [req.params.buildId, req.worker.id, leaseToken],
+  );
+  const expectedImagePrefix = buildMeta.rows[0]?.image?.split(':').slice(0, -1).join(':') + '@';
+  const succeeded = status === 'succeeded' &&
+    /^sha256:[a-f0-9]{64}$/.test(imageDigest || '') &&
+    typeof imageDigestRef === 'string' &&
+    expectedImagePrefix !== '@' && imageDigestRef === expectedImagePrefix + imageDigest;
+  const result = await transaction(async (client) => {
+    const updated = await client.query(
+      "update public.managed_hosting_image_builds set status = case when $4 then 'succeeded' when attempt_count < 4 then 'queued' else 'failed' end, image_digest = case when $4 then $5 else null end, image_digest_ref = case when $4 then $6 else null end, last_error = case when $4 then null else $7 end, available_at = case when not $4 and attempt_count < 4 then now() + interval '30 seconds' else available_at end, finished_at = case when $4 or attempt_count >= 4 then now() else null end, worker_id = null, lease_token = null, lease_expires_at = null, updated_at = now() where id = $1 and worker_id = $2 and lease_token = $3 and status = 'running' and lease_expires_at > now() returning automation_queue_id, status, image_digest_ref",
+      [req.params.buildId, req.worker.id, leaseToken, succeeded, imageDigest || null,
+        imageDigestRef || null, redactSecrets(String(error || 'OCI build failed')).slice(0, 500)],
+    );
+    if (!updated.rowCount) return null;
+    if (['succeeded', 'failed'].includes(updated.rows[0].status)) {
+      await client.query(
+        "update public.managed_hosting_automation_queue set status = 'queued', locked_at = null, available_at = now(), updated_at = now() where id = $1",
+        [updated.rows[0].automation_queue_id],
+      );
+    }
+    return updated.rows[0];
+  });
+  if (!result) return res.status(409).json({ error: 'Managed OCI build lease is invalid or expired' });
+  res.json({ ok: true, status: result.status, imageDigestRef: result.image_digest_ref });
+});
+
 // Job Logs Ingest
 app.post('/api/workers/jobs/:jobId/logs', workerAuth, async (req, res) => {
   const { leaseToken, entries = [] } = req.body || {};

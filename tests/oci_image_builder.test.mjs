@@ -31,8 +31,12 @@ test('logs in through stdin, pushes a commit-labelled image and returns the regi
     assert.equal(calls[0].args[0], 'login');
     assert.equal(calls[0].input, 'do-not-log-me');
     assert.ok(!calls[0].args.includes('do-not-log-me'));
-    assert.ok(calls[1].args.includes('--push'));
-    assert.ok(calls[1].args.includes('--label'));
+    const buildCall = calls.find((call) => call.args[0] === 'buildx' && call.args[1] === 'build');
+    assert.ok(calls.some((call) => call.args[0] === 'buildx' && call.args[1] === 'create'));
+    assert.ok(calls.some((call) => call.args[0] === 'buildx' && call.args[1] === 'inspect'));
+    assert.ok(calls.some((call) => call.args[0] === 'buildx' && call.args[1] === 'rm'));
+    assert.ok(buildCall.args.includes('--push'));
+    assert.ok(buildCall.args.includes('--label'));
     assert.equal(result.imageDigestRef, 'registry.example.test/team/service@' + digest);
     assert.equal(result.commitSha, 'b'.repeat(40));
     await assert.rejects(stat(calls[0].env.DOCKER_CONFIG));

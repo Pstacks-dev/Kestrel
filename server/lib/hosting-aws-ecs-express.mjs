@@ -106,7 +106,7 @@ export async function getEcsExpressDeployment({ accessKeyId, secretAccessKey, se
   const service = result.service || result;
   const status = service.status?.statusCode;
   const current = revisionId(service);
-  const ready = status === 'ACTIVE';
+  const ready = status === 'ACTIVE' && (!deploymentId || current === deploymentId);
   return {
     provider: 'aws-ecs-express', deploymentId: current, providerDeploymentId: current,
     providerStatus: status || 'UNKNOWN',

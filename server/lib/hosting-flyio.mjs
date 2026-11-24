@@ -33,11 +33,16 @@ function validateImage(image) {
 }
 
 function machineConfig({ image, port, env, cpuKind, cpus, memoryMb }) {
+  const variables = env && typeof env === 'object' && !Array.isArray(env) ? env : {};
+  const entries = Object.entries(variables);
+  if (entries.length > 100 || entries.some(([name, value]) => !/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(name) || typeof value !== 'string' || value.length > 30000)) {
+    throw new Error('Fly.io supports at most 100 valid environment variables per Machine');
+  }
   const internalPort = Number(port || 3000);
   if (!Number.isInteger(internalPort) || internalPort < 1 || internalPort > 65535) throw new Error('Application port must be between 1 and 65535');
   return {
     image,
-    env: env && typeof env === 'object' ? env : {},
+    env: variables,
     guest: { cpu_kind: cpuKind || 'shared', cpus: Number(cpus || 1), memory_mb: Number(memoryMb || 512) },
     services: [{
       protocol: 'tcp',
@@ -91,6 +96,7 @@ async function createMachine({ token, appName, image, port, env, region, cpuKind
 export async function createFlyDeployment({ token, orgSlug, projectName, containerImage, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl = fetch } = {}) {
   if (!token || !orgSlug) throw new Error('Fly.io token and organization slug are required');
   const image = validateImage(containerImage);
+  machineConfig({ image, port, env, cpuKind, cpus, memoryMb });
   const appName = safeAppName(projectName);
   await ensureFlyApp({ token, appName, orgSlug }, fetchImpl);
   await allocatePublicAddresses(token, appName, fetchImpl);

@@ -142,3 +142,11 @@ test('rejects non-image deployments before contacting AWS', async () => {
     ...credentials, projectName: 'demo', containerImage: 'not-an-image',
   }, { fetchImpl: async () => assert.fail('AWS must not be called') }), /published OCI image/);
 });
+
+test('does not report a newer ECS Express revision live for an older deployment', async () => {
+  const result = await getEcsExpressDeployment({
+    ...credentials, serviceArn: 'arn:aws:ecs:us-east-1:123456789012:service/default/demo',
+    deploymentId: 'arn:aws:ecs:us-east-1:123456789012:service-revision/demo/previous',
+  }, { fetchImpl: async () => response({ service: service('ACTIVE', 'arn:aws:ecs:us-east-1:123456789012:service-revision/demo/current') }) });
+  assert.equal(result.status, 'deploying');
+});
