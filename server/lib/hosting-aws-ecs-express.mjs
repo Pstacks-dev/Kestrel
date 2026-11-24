@@ -7,13 +7,13 @@ function signingKey(secret, date, region, service) {
 
 async function awsRequest(credentials, service, action, payload, { fetchImpl = fetch } = {}) {
   const region = credentials.region;
-  const host = `${service}.${region}.amazonaws.com`;
+  const host = service === 'ecr' ? `api.ecr.${region}.amazonaws.com` : `${service}.${region}.amazonaws.com`;
   const body = JSON.stringify(payload || {});
   const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
   const date = amzDate.slice(0, 8);
   const payloadHash = crypto.createHash('sha256').update(body).digest('hex');
   const contentType = 'application/x-amz-json-1.1';
-  const target = `${service === 'logs' ? 'Logs_20140328' : 'AmazonEC2ContainerServiceV20141113'}.${action}`;
+  const target = service === 'logs' ? `Logs_20140328.${action}` : service === 'ecr' ? `AmazonEC2ContainerRegistry_V20150921.${action}` : `AmazonEC2ContainerServiceV20141113.${action}`;
   const headers = {
     'content-type': contentType, host, 'x-amz-date': amzDate, 'x-amz-target': target,
   };
@@ -32,6 +32,7 @@ async function awsRequest(credentials, service, action, payload, { fetchImpl = f
   if (!response.ok) {
     const error = new Error(`AWS ${service} ${action} failed (${response.status})`);
     error.status = response.status;
+    error.code = result.code || result.Code || result.__type || null;
     throw error;
   }
   return result;
@@ -43,6 +44,47 @@ function imageRef(value) {
     throw new Error('A published OCI image reference is required for ECS Express Mode');
   }
   return value;
+}
+
+export async function prepareEcsImageRegistry({ accessKeyId, secretAccessKey, sessionToken, region, executionRoleArn, projectName, commitSha }, { fetchImpl = fetch } = {}) {
+  if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) throw new Error('A full Git commit SHA is required for an immutable ECR image tag');
+  const accountId = String(executionRoleArn || '').split(':')[4];
+  if (!/^\\d{12}$/.test(accountId)) throw new Error('The ECS execution role must include a valid AWS account ID');
+  const repositoryName = `kestrel/${String(projectName || 'application').toLowerCase().replace(/[^a-z0-9/_-]/g, '-').replace(/-+/g, '-').replace(/^[-/]+|[-/]+$/g, '').slice(0, 200)}`;
+  const credentials = { accessKeyId, secretAccessKey, sessionToken, region };
+  let repository;
+  try {
+    const described = await awsRequest(credentials, 'ecr', 'DescribeRepositories', { repositoryNames: [repositoryName] }, { fetchImpl });
+    repository = described.repositories?.[0];
+  } catch (error) {
+    if (!String(error.code || '').includes('RepositoryNotFoundException')) throw error;
+  }
+  if (!repository) {
+    try {
+      const created = await awsRequest(credentials, 'ecr', 'CreateRepository', {
+        repositoryName, imageTagMutability: 'IMMUTABLE', imageScanningConfiguration: { scanOnPush: true },
+      }, { fetchImpl });
+      repository = created.repository;
+    } catch (error) {
+      if (!String(error.code || '').includes('RepositoryAlreadyExistsException')) throw error;
+      const described = await awsRequest(credentials, 'ecr', 'DescribeRepositories', { repositoryNames: [repositoryName] }, { fetchImpl });
+      repository = described.repositories?.[0];
+    }
+  }
+  if (!repository?.repositoryUri) throw new Error('AWS ECR did not return a repository URI');
+  const auth = await awsRequest(credentials, 'ecr', 'GetAuthorizationToken', {}, { fetchImpl });
+  const authorization = auth.authorizationData?.[0];
+  if (!authorization?.authorizationToken || !authorization?.proxyEndpoint) throw new Error('AWS ECR did not return registry credentials');
+  const decoded = Buffer.from(authorization.authorizationToken, 'base64').toString('utf8');
+  const separator = decoded.indexOf(':');
+  if (separator < 1) throw new Error('AWS ECR returned malformed registry credentials');
+  return {
+    registryHost: new URL(authorization.proxyEndpoint).host,
+    registryUser: decoded.slice(0, separator),
+    registryPassword: decoded.slice(separator + 1),
+    imageRef: `${repository.repositoryUri}:${commitSha.toLowerCase()}`,
+    repositoryName,
+  };
 }
 
 function serviceName(value) {
