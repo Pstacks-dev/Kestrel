@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createEcsExpressDeployment, updateEcsExpressDeployment, getEcsExpressDeployment,
-  getEcsExpressDeploymentLogs, rollbackEcsExpressDeployment,
+  getEcsExpressDeploymentLogs, rollbackEcsExpressDeployment, prepareEcsImageRegistry,
 } from '../server/lib/hosting-aws-ecs-express.mjs';
 
 const response = (payload, status = 200) => new Response(JSON.stringify(payload), {
