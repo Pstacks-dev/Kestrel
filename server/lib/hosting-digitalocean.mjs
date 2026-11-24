@@ -77,7 +77,7 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   assertResolvedCommit(deployment, commitSha);
   const deploymentId = deployment.id;
   if (!deploymentId) throw new Error('DigitalOcean did not return a deployment identifier');
-  return { provider: 'digitalocean-app-platform', projectId: app.id, serviceId: component.name, environmentId: null, deploymentId, status: status(deployment.deployment?.phase || deployment.deployment?.status), providerUrl: app.live_url || null };
+  return { provider: 'digitalocean-app-platform', projectId: app.id, serviceId: component.name, environmentId: null, deploymentId, status: status(deployment.phase || deployment.status), providerUrl: app.live_url || null };
 }
 
 export async function deployDigitalOceanApp({ accessToken, appId, commitSha }, { fetchImpl = fetch } = {}) {
