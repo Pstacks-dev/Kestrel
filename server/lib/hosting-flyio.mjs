@@ -50,6 +50,35 @@ function machineConfig({ image, port, env, cpuKind, cpus, memoryMb }) {
   };
 }
 
+async function allocatePublicAddresses(token, appName, fetchImpl) {
+  const response = await fetchImpl('https://api.fly.io/graphql', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query: 'mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { app { sharedIpAddress } } }',
+      variables: { input: { appId: appName, type: 'shared_v4', region: 'global' } },
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.errors?.length) {
+    const message = payload.errors?.[0]?.message || `Fly.io IP allocation failed (${response.status})`;
+    if (!/already|exists|allocated/i.test(message)) throw new Error(message);
+  }
+}
+
+async function ensureFlyApp({ token, appName, orgSlug }, fetchImpl) {
+  const existing = await request(token, `/apps/${encodeURIComponent(appName)}`, { fetchImpl, allowNotFound: true });
+  if (existing) {
+    if (existing.organization?.slug && existing.organization.slug !== orgSlug) throw new Error('Fly.io app name is already owned by another organization');
+    return existing;
+  }
+  return request(token, '/apps', {
+    method: 'POST', fetchImpl,
+    body: { app_name: appName, org_slug: orgSlug },
+  });
+}
+
 async function createMachine({ token, appName, image, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl = fetch } = {}) {
   const machine = await request(token, `/apps/${encodeURIComponent(appName)}/machines`, {
     method: 'POST', fetchImpl,
@@ -63,10 +92,8 @@ export async function createFlyDeployment({ token, orgSlug, projectName, contain
   if (!token || !orgSlug) throw new Error('Fly.io token and organization slug are required');
   const image = validateImage(containerImage);
   const appName = safeAppName(projectName);
-  await request(token, '/apps', {
-    method: 'POST', fetchImpl,
-    body: { app_name: appName, org_slug: orgSlug },
-  });
+  await ensureFlyApp({ token, appName, orgSlug }, fetchImpl);
+  await allocatePublicAddresses(token, appName, fetchImpl);
   const machine = await createMachine({ token, appName, image, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl });
   return {
     provider: 'flyio', projectId: appName, serviceId: appName, environmentId: region || 'iad',
