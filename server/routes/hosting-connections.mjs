@@ -9,7 +9,7 @@ const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-
 const CREDENTIAL_FIELDS = {
   render: ['apiKey'],
   railway: ['token'],
-  flyio: ['token'],
+  flyio: ['token', 'orgSlug'],
   'google-cloud-run': ['projectId', 'serviceAccountJson'],
   'aws-app-runner': ['accessKeyId', 'secretAccessKey', 'region'],
   'digitalocean-app-platform': ['accessToken'],
