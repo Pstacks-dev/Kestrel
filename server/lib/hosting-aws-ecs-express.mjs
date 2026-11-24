@@ -136,20 +136,37 @@ export async function getEcsExpressDeploymentLogs({ accessKeyId, secretAccessKey
 }
 
 export async function rollbackEcsExpressDeployment({ accessKeyId, secretAccessKey, sessionToken, region, serviceArn, deploymentId }, { fetchImpl = fetch } = {}) {
-  const result = await awsRequest({ accessKeyId, secretAccessKey, sessionToken, region }, 'ecs', 'DescribeExpressGatewayService', { serviceArn }, { fetchImpl });
-  const service = result.service || result;
-  const previous = (service.activeConfigurations || []).find((item) => item.serviceRevisionArn === deploymentId);
-  const priorContainer = previous?.primaryContainer;
-  if (!priorContainer?.image) throw new Error('The selected ECS Express service revision is no longer available for rollback');
-  const updated = await awsRequest({ accessKeyId, secretAccessKey, sessionToken, region }, 'ecs', 'UpdateExpressGatewayService', {
-    serviceArn,
-    primaryContainer: {
-      image: priorContainer.image,
-      containerPort: priorContainer.containerPort,
-      ...(priorContainer.environment ? { environment: priorContainer.environment } : {}),
-      ...(priorContainer.command ? { command: priorContainer.command } : {}),
-    },
-    ...(previous.healthCheckPath ? { healthCheckPath: previous.healthCheckPath } : {}),
+  const credentials = { accessKeyId, secretAccessKey, sessionToken, region };
+  const revisionResult = await awsRequest(credentials, 'ecs', 'DescribeServiceRevisions', {
+    serviceRevisionArns: [deploymentId],
+  }, { fetchImpl });
+  const revision = revisionResult.serviceRevisions?.find((item) => item.serviceRevisionArn === deploymentId);
+  const taskDefinitionArn = revision?.taskDefinitionArn || revision?.taskDefinition;
+  if (!taskDefinitionArn) throw new Error('The selected ECS service revision is no longer available for rollback');
+  const taskResult = await awsRequest(credentials, 'ecs', 'DescribeTaskDefinition', {
+    taskDefinition: taskDefinitionArn,
+  }, { fetchImpl });
+  const task = taskResult.taskDefinition;
+  const priorContainer = task?.containerDefinitions?.find((item) => item.name === 'Main') || task?.containerDefinitions?.[0];
+  if (!priorContainer?.image) throw new Error('The selected ECS revision has no recoverable container image');
+  const primaryContainer = {
+    image: priorContainer.image,
+    containerPort: priorContainer.portMappings?.find((item) => item.protocol === 'tcp')?.containerPort || 8080,
+    ...(priorContainer.environment?.length ? { environment: priorContainer.environment } : {}),
+    ...(priorContainer.secrets?.length ? { secrets: priorContainer.secrets } : {}),
+    ...(priorContainer.command?.length ? { command: priorContainer.command } : {}),
+    ...(priorContainer.logConfiguration?.options?.['awslogs-group'] ? {
+      awsLogsConfiguration: {
+        logGroup: priorContainer.logConfiguration.options['awslogs-group'],
+        logStreamPrefix: priorContainer.logConfiguration.options['awslogs-stream-prefix'] || 'ecs',
+      },
+    } : {}),
+  };
+  const updated = await awsRequest(credentials, 'ecs', 'UpdateExpressGatewayService', {
+    serviceArn, primaryContainer,
+    ...(revision.healthCheckPath ? { healthCheckPath: revision.healthCheckPath } : {}),
+    ...(revision.cpu ? { cpu: revision.cpu } : {}),
+    ...(revision.memory ? { memory: revision.memory } : {}),
   }, { fetchImpl });
   const value = updated.service || updated;
   return { provider: 'aws-ecs-express', deploymentId: revisionId(value), status: 'deploying', providerUrl: endpoint(value) };
