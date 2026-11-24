@@ -111,20 +111,20 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
     const artifacts = profile.isStatic
       ? await query('select id from public.artifacts where run_id = $1 and deleted_at is null and (expires_at is null or expires_at > now()) order by created_at', [run.run_id])
       : { rows: [] };
+    const env = await loadProjectEnvironment(query, run.project_id);
     const selected = compatible.find((provider) =>
       ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
       verified.has(provider.id) &&
-      (provider.id !== 'netlify' || artifacts.rows.length > 0));
+      (provider.id !== 'netlify' || (artifacts.rows.length > 0 && Object.keys(env).length === 0)));
     if (!selected) {
-      await markQueue(query, item.id, 'skipped', 'No verified compatible provider is available for this project and build output', item.attempt_count);
+      await markQueue(query, item.id, 'skipped', 'No verified compatible provider is available. Netlify requires successful static artifacts and currently cannot sync project secrets.', item.attempt_count);
       return { status: 'skipped' };
     }
 
     const connection = verified.get(selected.id);
     const credentials = JSON.parse(decryptSecret(connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag));
-    const env = await loadProjectEnvironment(query, run.project_id);
     const files = selected.id === 'netlify'
-      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl)
+      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, '', run.commit_sha)
       : undefined;
     const existingResult = await query(
       `select * from public.managed_hosting_resources
