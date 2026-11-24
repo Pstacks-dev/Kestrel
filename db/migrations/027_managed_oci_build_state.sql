@@ -11,7 +11,8 @@ alter table public.managed_hosting_automation_queue
   add column if not exists build_sandbox_name text,
   add column if not exists build_session_id text,
   add column if not exists build_command_id text,
-  add column if not exists container_image text;
+  add column if not exists container_image text,
+  add column if not exists build_image_ref text;
 
 drop index if exists idx_managed_hosting_automation_ready;
 create index idx_managed_hosting_automation_ready
