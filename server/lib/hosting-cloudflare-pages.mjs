@@ -61,6 +61,35 @@ function buildConfig({ buildCommand, destinationDir, rootDir }) {
   return { build_command: command, destination_dir: destination, root_dir: root, build_caching: true };
 }
 
+async function disableGitAutodeploy({ apiToken, accountId, projectName: name, branch }, fetchImpl) {
+  const path = projectPath(accountId, name);
+  const existing = await request(apiToken, path, { fetchImpl });
+  if (existing.source?.type !== 'github' || !existing.source?.config) {
+    throw new Error('Cloudflare Pages project must use a GitHub source to be managed by Kestrel');
+  }
+  const sourceConfig = existing.source.config;
+  if (sourceConfig.deployments_enabled !== false ||
+      sourceConfig.production_deployments_enabled !== false ||
+      sourceConfig.preview_deployment_setting !== 'none') {
+    await request(apiToken, path, {
+      method: 'PATCH', fetchImpl,
+      body: {
+        source: {
+          type: 'github',
+          config: {
+            ...sourceConfig,
+            production_branch: branch || sourceConfig.production_branch,
+            deployments_enabled: false,
+            production_deployments_enabled: false,
+            preview_deployment_setting: 'none',
+          },
+        },
+      },
+    });
+  }
+  return existing;
+}
+
 async function ensureProject({ apiToken, accountId, projectName: name, repositoryUrl, branch, buildCommand, destinationDir, rootDir, env }, fetchImpl) {
   const path = projectPath(accountId, name);
   try {
@@ -71,6 +100,7 @@ async function ensureProject({ apiToken, accountId, projectName: name, repositor
         source.repo_name?.toLowerCase() !== parseRepository(repositoryUrl).repo.toLowerCase()) {
       throw new Error('Cloudflare Pages project name is already linked to another repository');
     }
+    await disableGitAutodeploy({ apiToken, accountId, projectName: name, branch }, fetchImpl);
     return existing;
   } catch (error) {
     if (error.status !== 404) throw error;
@@ -138,6 +168,7 @@ export async function createCloudflarePagesDeployment({ apiToken, accountId, pro
 
 export async function deployCloudflarePagesProject({ apiToken, accountId, projectName: name, branch = 'main', commitSha, commitMessage, env }, { fetchImpl = fetch } = {}) {
   if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required for Cloudflare Pages deployment');
+  const existing = await disableGitAutodeploy({ apiToken, accountId, projectName: name, branch }, fetchImpl);
   if (env && Object.keys(env).length) {
     const variables = envVars(env);
     await request(apiToken, projectPath(accountId, name), {
