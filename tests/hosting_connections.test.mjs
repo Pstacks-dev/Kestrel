@@ -6,7 +6,7 @@ test('validates required credential shapes for the six initial full-stack provid
   assert.equal(validateProviderCredentials('render', { apiKey: 'render-secret' }), true);
   assert.equal(validateProviderCredentials('railway', { token: 'railway-secret' }), true);
   assert.equal(validateProviderCredentials('flyio', { token: 'fly-secret', orgSlug: 'personal' }), true);
-  assert.equal(validateProviderCredentials('aws-app-runner', { accessKeyId: 'key', secretAccessKey: 'secret', region: 'us-east-1' }), true);
+  assert.equal(validateProviderCredentials('aws-ecs-express', { accessKeyId: 'key', secretAccessKey: 'secret', region: 'us-east-1', executionRoleArn: 'arn:aws:iam::123456789012:role/ecsExecution', infrastructureRoleArn: 'arn:aws:iam::123456789012:role/ecsInfrastructure' }), true);
   assert.equal(validateProviderCredentials('digitalocean-app-platform', { accessToken: 'do-token' }), true);
   assert.equal(validateProviderCredentials('heroku', { apiKey: 'heroku-token' }), true);
 });
