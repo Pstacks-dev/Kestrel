@@ -56,8 +56,8 @@ async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFet
      from public.artifacts a
      join public.pipeline_runs r on r.id = a.run_id
      join public.projects p on p.id = r.project_id
-     where a.id = any($1::uuid[]) and p.id = $2 and a.deleted_at is null
-       and (a.expires_at is null or a.expires_at > now())`,
+     where a.id = any($1::uuid[]) and p.id = $2 and r.status = 'succeeded'
+       and a.deleted_at is null and (a.expires_at is null or a.expires_at > now())`,
     [artifactIds, projectId],
   );
   if (result.rowCount !== artifactIds.length) throw Object.assign(new Error('One or more selected build artifacts are missing or do not belong to this project'), { status: 422 });
@@ -74,7 +74,8 @@ async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFet
   const files = [];
   for (const artifact of result.rows) {
     const storedName = String(artifact.name || '');
-    const name = prefix && storedName.startsWith(`${prefix}/`) ? storedName.slice(prefix.length + 1) : storedName;
+    if (prefix && !storedName.startsWith(`${prefix}/`)) throw Object.assign(new Error('A selected artifact is outside the configured static output directory'), { status: 422 });
+    const name = prefix ? storedName.slice(prefix.length + 1) : storedName;
     if (!name || name.startsWith('/') || name.includes('\\') ||
         name.split('/').some((part) => !part || part === '.' || part === '..')) throw Object.assign(new Error('A build artifact contains an unsafe file path'), { status: 422 });
     const encodedKey = String(artifact.object_key).split('/').map(encodeURIComponent).join('/');
