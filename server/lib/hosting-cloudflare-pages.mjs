@@ -68,7 +68,7 @@ async function ensureProject({ apiToken, accountId, projectName: name, repositor
     const source = existing.source?.config;
     if (existing.source?.type !== 'github' || !source) throw new Error('Existing Cloudflare Pages project is not connected to GitHub');
     if (source.owner?.toLowerCase() !== parseRepository(repositoryUrl).owner.toLowerCase() ||
-        source.repo_name?.toLowerCase() !== parseRepository(repositoryUrl).repo.toLowerCase())) {
+        source.repo_name?.toLowerCase() !== parseRepository(repositoryUrl).repo.toLowerCase()) {
       throw new Error('Cloudflare Pages project name is already linked to another repository');
     }
     return existing;
