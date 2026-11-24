@@ -17,7 +17,7 @@ test('provisions an idempotent Fly registry destination using the verified app t
     if (url.endsWith('/apps/web-app')) return response({ name: 'kestrel-web-app', organization: { slug: 'personal' } });
     throw new Error('Unexpected Fly request');
   } });
-  assert.equal(result.image, `registry.fly.io/kestrel-web-app:sha-${sha}`);
+  assert.equal(result.image, `registry.fly.io/web-app:sha-${sha}`);
   assert.equal(result.username, 'x');
   assert.equal(result.password, 'fly-secret');
   assert.equal(calls.length, 1);
