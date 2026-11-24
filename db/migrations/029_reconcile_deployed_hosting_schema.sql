@@ -50,6 +50,15 @@ alter table public.hosting_provider_connections enable row level security;
 revoke all on public.hosting_provider_connections from anon, authenticated;
 grant all on public.hosting_provider_connections to service_role;
 
+-- The deployed table also predates the surrogate ID returned by the current receiver.
+alter table public.github_webhook_deliveries
+  add column if not exists id uuid default gen_random_uuid();
+update public.github_webhook_deliveries set id = gen_random_uuid() where id is null;
+alter table public.github_webhook_deliveries alter column id set default gen_random_uuid();
+alter table public.github_webhook_deliveries alter column id set not null;
+create unique index if not exists github_webhook_deliveries_id_uidx
+  on public.github_webhook_deliveries(id);
+
 -- The deployed webhook deduplication table predates branch/commit metadata and
 -- used a composite primary key. The control plane requires globally unique
 -- GitHub delivery IDs for ON CONFLICT(delivery_id) idempotency.
