@@ -18,29 +18,28 @@ function awsSigningKey(secret, date, region, service) {
   return hmac(hmac(hmac(hmac('AWS4' + secret, date), region), service), 'aws4_request');
 }
 
-async function verifyAws(credentials, fetchImpl, now) {
-  const host = `sts.${credentials.region}.amazonaws.com`;
+async function verifyAwsEcs(credentials, fetchImpl, now) {
+  const host = `ecs.${credentials.region}.amazonaws.com`;
   const region = credentials.region;
-  const body = 'Action=GetCallerIdentity&Version=2011-06-15';
-  const amzDate = new Date(now).toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const body = '{}';
+  const amzDate = new Date(now).toISOString().replace(/[:-]|\\.\\d{3}/g, '');
   const date = amzDate.slice(0, 8);
   const payloadHash = crypto.createHash('sha256').update(body).digest('hex');
-  const canonicalHeaders = `content-type:application/x-www-form-urlencoded; charset=utf-8\nhost:${host}\nx-amz-date:${amzDate}\n`;
-  const signedHeaders = 'content-type;host;x-amz-date';
-  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
-  const scope = `${date}/${region}/sts/aws4_request`;
-  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
-  const signature = crypto.createHmac('sha256', awsSigningKey(credentials.secretAccessKey, date, region, 'sts')).update(stringToSign).digest('hex');
+  const target = 'AmazonEC2ContainerServiceV20141113.ListClusters';
+  const contentType = 'application/x-amz-json-1.1';
+  const canonicalHeaders = `content-type:${contentType}\\nhost:${host}\\nx-amz-date:${amzDate}\\nx-amz-target:${target}\\n`;
+  const signedHeaders = 'content-type;host;x-amz-date;x-amz-target';
+  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, payloadHash].join('\\n');
+  const scope = `${date}/${region}/ecs/aws4_request`;
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\\n');
+  const signature = crypto.createHmac('sha256', awsSigningKey(credentials.secretAccessKey, date, region, 'ecs')).update(stringToSign).digest('hex');
   const authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
   const response = await fetchImpl(`https://${host}/`, {
     method: 'POST', signal: timeoutSignal(), body,
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded; charset=utf-8',
-      'x-amz-date': amzDate, Authorization: authorization,
-    },
+    headers: { 'content-type': contentType, 'x-amz-date': amzDate, 'x-amz-target': target, Authorization: authorization },
   });
   await requireOk(response);
-  return { account: 'AWS account authenticated' };
+  return { account: 'AWS ECS API authenticated' };
 }
 
 async function verifyGoogle(credentials, fetchImpl, now) {
@@ -93,8 +92,8 @@ export async function verifyHostingProvider(providerId, credentials, { fetchImpl
       return { verified: true, account: 'Fly.io Machines API authenticated' };
     case 'google-cloud-run':
       return { verified: true, ...(await verifyGoogle(credentials, fetchImpl, now)) };
-    case 'aws-app-runner':
-      return { verified: true, ...(await verifyAws(credentials, fetchImpl, now)) };
+    case 'aws-ecs-express':
+      return { verified: true, ...(await verifyAwsEcs(credentials, fetchImpl, now)) };
     case 'digitalocean-app-platform':
       response = await fetchImpl('https://api.digitalocean.com/v2/account', {
         headers: { Authorization: `Bearer ${credentials.accessToken}`, Accept: 'application/json' }, signal: timeoutSignal(),
