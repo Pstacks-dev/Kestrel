@@ -157,7 +157,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const projectEnv = await loadProjectEnvironment(query, project.id);
       const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix, commitSha) : null;
       const containerImage = String(req.body?.containerImage || '').trim();
-      if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
+      if (['google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
         return fail(res, 422, 'This provider requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
       }
       const connection = verified.get(providerId);
