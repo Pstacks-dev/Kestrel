@@ -1300,9 +1300,15 @@ app.post('/api/workers/managed-image-builds/:buildId/lease', workerAuth, async (
 
 app.post('/api/workers/managed-image-builds/:buildId/complete', workerAuth, async (req, res) => {
   const { leaseToken, status, imageDigest, imageDigestRef, error } = req.body || {};
+  const buildMeta = await query(
+    "select image from public.managed_hosting_image_builds where id = $1 and worker_id = $2 and lease_token = $3 and status = 'running' and lease_expires_at > now()",
+    [req.params.buildId, req.worker.id, leaseToken],
+  );
+  const expectedImagePrefix = buildMeta.rows[0]?.image?.split(':').slice(0, -1).join(':') + '@';
   const succeeded = status === 'succeeded' &&
     /^sha256:[a-f0-9]{64}$/.test(imageDigest || '') &&
-    typeof imageDigestRef === 'string' && imageDigestRef.endsWith('@' + imageDigest);
+    typeof imageDigestRef === 'string' &&
+    expectedImagePrefix !== '@' && imageDigestRef === expectedImagePrefix + imageDigest;
   const result = await transaction(async (client) => {
     const updated = await client.query(
       "update public.managed_hosting_image_builds set status = case when $4 then 'succeeded' when attempt_count < 4 then 'queued' else 'failed' end, image_digest = case when $4 then $5 else null end, image_digest_ref = case when $4 then $6 else null end, last_error = case when $4 then null else $7 end, available_at = case when not $4 and attempt_count < 4 then now() + interval '30 seconds' else available_at end, finished_at = case when $4 or attempt_count >= 4 then now() else null end, worker_id = null, lease_token = null, lease_expires_at = null, updated_at = now() where id = $1 and worker_id = $2 and lease_token = $3 and status = 'running' and lease_expires_at > now() returning automation_queue_id, status, image_digest_ref",
