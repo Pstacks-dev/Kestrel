@@ -679,7 +679,7 @@ function AppShell({ page }: { page: Page }) {
         const items = data.installations || [];
         setGithubInstallations(items);
         setSelectedGithubInstallation((current) => current && items.some((item: any) => String(item.installationId) === current)
-          ? current : (items[0] ? String(items[0].installationId) : ''));
+          ? current : (items.find((item: any) => !item.suspendedAt) ? String(items.find((item: any) => !item.suspendedAt).installationId) : ''));
       }
     }).catch((error) => { if (active) setGithubInstallMessage(error.message); });
     return () => { active = false; };
