@@ -14,7 +14,7 @@ test('provisions an idempotent Fly registry destination using the verified app t
     token: 'fly-secret', orgSlug: 'personal',
   }, 'web-app', sha, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
-    if (url.endsWith('/apps/kestrel-web-app')) return response({ name: 'kestrel-web-app', organization: { slug: 'personal' } });
+    if (url.endsWith('/apps/web-app')) return response({ name: 'kestrel-web-app', organization: { slug: 'personal' } });
     throw new Error('Unexpected Fly request');
   } });
   assert.equal(result.image, `registry.fly.io/kestrel-web-app:sha-${sha}`);
