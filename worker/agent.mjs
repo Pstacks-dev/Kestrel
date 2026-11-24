@@ -329,7 +329,7 @@ async function runGit(args, cwd, onLine) {
 // Upload real artifact bytes to private object storage through the authenticated control plane.
 async function collectArtifacts(job, workspace) {
   const roots = ['dist', 'build', 'artifacts'];
-  const maxFiles = 50;
+  const maxFiles = 5000;
   const maxTotal = 250 * 1024 * 1024;
   const maxFile = 100 * 1024 * 1024;
   let uploaded = 0;
