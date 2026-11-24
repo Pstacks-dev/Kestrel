@@ -67,7 +67,7 @@ async function allocatePublicAddresses(token, appName, fetchImpl) {
   }
 }
 
-async function ensureFlyApp({ token, appName, orgSlug }, fetchImpl) {
+export async function ensureFlyApp({ token, appName, orgSlug }, fetchImpl) {
   const existing = await request(token, `/apps/${encodeURIComponent(appName)}`, { fetchImpl, allowNotFound: true });
   if (existing) {
     if (existing.organization?.slug && existing.organization.slug !== orgSlug) throw new Error('Fly.io app name is already owned by another organization');
