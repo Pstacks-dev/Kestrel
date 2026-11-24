@@ -3,14 +3,14 @@ import { createGitHubInstallationToken, getGitHubInstallation, getGitHubAppConfi
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
-function signInstallationState(payload, secret = process.env.GITHUB_APP_STATE_SECRET, now = Date.now()) {
+export function signInstallationState(payload, secret = process.env.GITHUB_APP_STATE_SECRET, now = Date.now()) {
   if (!secret || String(secret).length < 32) throw new Error('GITHUB_APP_STATE_SECRET must contain at least 32 characters');
   const body = Buffer.from(JSON.stringify({ ...payload, iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + 600 })).toString('base64url');
   const signature = crypto.createHmac('sha256', secret).update(body).digest('base64url');
   return body + '.' + signature;
 }
 
-function verifyInstallationState(token, secret = process.env.GITHUB_APP_STATE_SECRET, now = Date.now()) {
+export function verifyInstallationState(token, secret = process.env.GITHUB_APP_STATE_SECRET, now = Date.now()) {
   if (!secret || String(secret).length < 32 || typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
