@@ -509,6 +509,7 @@ async function execute(job) {
 
 async function executeManagedImageBuild(build) {
   const startedAt = Date.now();
+  await fs.mkdir(ROOT, { recursive: true });
   const workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
   const secretValues = [build.registryUsername, build.registryPassword].filter(Boolean);
   let leaseLost = false;
