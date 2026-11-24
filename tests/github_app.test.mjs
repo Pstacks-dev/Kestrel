@@ -26,7 +26,7 @@ test('mints an installation token scoped to one repository', async () => {
     },
   });
   assert.match(request.url, /installations\/987\/access_tokens$/);
-  assert.deepEqual(JSON.parse(request.options.body), { repository: 'private-app', repositories: ['private-app'] });
+  assert.deepEqual(JSON.parse(request.options.body), { repositories: ['private-app'] });
   assert.equal(result.token, 'short-lived-token');
   assert.equal(result.permissions.contents, 'read');
 });
