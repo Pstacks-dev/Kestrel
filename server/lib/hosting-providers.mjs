@@ -57,3 +57,51 @@ export function rankHostingProviders(profileInput, env = process.env) {
   }).filter(Boolean);
   return compatible.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
+
+export function detectProjectProfile({ files = [], packageJson = null } = {}) {
+  const names = new Set(files.map((file) => String(typeof file === 'string' ? file : file.name || '').toLowerCase()));
+  const pkg = packageJson && typeof packageJson === 'object' ? packageJson : {};
+  const dependencies = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  const scripts = pkg.scripts || {};
+  const has = (...values) => values.some((value) => names.has(value));
+  const profile = {
+    runtime: 'unknown', kind: 'web', isStatic: false, needsContainer: false,
+    needsPersistentProcess: false, needsBackgroundWorker: false, needsDatabase: false,
+    framework: null, detectedFrom: [],
+  };
+  if (has('dockerfile', 'containerfile')) {
+    profile.needsContainer = true;
+    profile.needsPersistentProcess = true;
+    profile.detectedFrom.push('Dockerfile');
+  }
+  if (Object.keys(dependencies).length || has('package.json')) {
+    profile.runtime = 'node';
+    profile.detectedFrom.push('package.json');
+    if (dependencies.next || dependencies.nuxt || dependencies['@sveltejs/kit'] || dependencies.remix) {
+      profile.framework = dependencies.next ? 'nextjs' : dependencies.nuxt ? 'nuxt' : dependencies.remix ? 'remix' : 'sveltekit';
+      profile.needsPersistentProcess = profile.needsPersistentProcess || Boolean(scripts.start);
+    } else if (dependencies.vite || dependencies['react-scripts'] || dependencies.gatsby) {
+      profile.framework = dependencies.vite ? 'vite' : dependencies.gatsby ? 'gatsby' : 'create-react-app';
+      profile.isStatic = !profile.needsContainer;
+      profile.kind = profile.isStatic ? 'static' : 'web';
+    }
+    if (scripts.worker || scripts['start:worker']) profile.needsBackgroundWorker = true;
+    if (scripts.start && !profile.isStatic) profile.needsPersistentProcess = true;
+  } else if (has('requirements.txt', 'pyproject.toml', 'manage.py')) {
+    profile.runtime = 'python';
+    profile.needsPersistentProcess = true;
+    profile.framework = has('manage.py') ? 'django' : has('requirements.txt') ? 'python-web' : 'python';
+    profile.detectedFrom.push('Python project manifest');
+  } else if (has('go.mod')) {
+    profile.runtime = 'go'; profile.needsPersistentProcess = true; profile.detectedFrom.push('go.mod');
+  } else if (has('cargo.toml')) {
+    profile.runtime = 'rust'; profile.needsPersistentProcess = true; profile.detectedFrom.push('Cargo.toml');
+  } else if (has('composer.json')) {
+    profile.runtime = 'php'; profile.needsPersistentProcess = true; profile.detectedFrom.push('composer.json');
+  } else if (has('gemfile')) {
+    profile.runtime = 'ruby'; profile.needsPersistentProcess = true; profile.detectedFrom.push('Gemfile');
+  } else if ([...names].some((name) => name.endsWith('.csproj') || name.endsWith('.sln'))) {
+    profile.runtime = 'dotnet'; profile.needsPersistentProcess = true; profile.detectedFrom.push('.NET project file');
+  }
+  return profile;
+}
