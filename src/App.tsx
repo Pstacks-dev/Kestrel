@@ -748,21 +748,21 @@ function AppShell({ page }: { page: Page }) {
     e.preventDefault();
     setActionMessage('');
     try {
-      const res = await fetch(`${api}/projects`, {
+      const repositoryUrl = projectRepo.trim();
+      const res = await fetch(repositoryUrl ? `${api}/git/import` : `${api}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({
-          organizationId,
-          name: projectName,
-          repo: projectRepo.trim() || null,
-          defaultBranch: projectBranch,
-        }),
+        body: JSON.stringify(repositoryUrl
+          ? { organizationId, name: projectName, repositoryUrl }
+          : { organizationId, name: projectName, repo: null, defaultBranch: projectBranch }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not register project');
       setProjectName('');
       setProjectRepo('');
-      setActionMessage('Project registered successfully.');
+      setActionMessage(repositoryUrl
+        ? `Imported ${data.repository?.fullName || repositoryUrl}. Add the Kestrel webhook in GitHub to enable automatic push builds.`
+        : 'Project registered successfully. Upload source files to begin a build.');
       await connect();
     } catch (err: any) {
       setActionMessage(err.message || 'Project registration failed');
