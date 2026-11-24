@@ -286,7 +286,7 @@ The initial catalog covers Render, Railway, Fly.io, Google Cloud Run, AWS ECS Ex
 AWS App Runner is not included in the new-customer provider pool: AWS closed it to new customers on 2026-04-30 and recommends ECS Express Mode. ECS Express Mode requires a published OCI image plus task-execution and infrastructure IAM role ARNs; Kestrel's image-publishing pipeline is a prerequisite before this provider can accept production deployments.
  Vercel's container runtime, Netlify Server, and Cloudflare Pages/Workers have distinct runtime constraints; they are not interchangeable with general-purpose container hosts.
 
-This change establishes compatibility-aware provider selection, not live deployment adapters. A provider is deployable only after its adapter, encrypted credential storage, deploy/status/log/rollback operations, and provider-account smoke tests are implemented. No provider is marked live merely because its catalog entry exists.
+Compatibility-aware provider selection and tenant-scoped encrypted credentials are implemented. Railway is the first provider with a managed deploy/status/log/rollback adapter. The other nine providers remain catalogued but are not yet enabled for deployment. No provider is marked production-live until real provider-account deployment smoke tests pass.
 
 
 ### Tenant hosting-provider credentials
@@ -300,3 +300,16 @@ Workspace owners, admins, and developers can manage provider credentials through
 
 
 Set a strong `KESTREL_ENCRYPTION_KEY` (at least 32 characters) before enabling these endpoints. Credentials are tenant-scoped, never returned by the API, and the table is inaccessible to browser roles. A newly saved connection is marked `configured`, not `verified`; successful API authentication and deployment smoke tests are still required before Kestrel can use it for production deployments. Apply migration `023_managed_hosting_providers.sql` before enabling the endpoints.
+
+
+## Provider-managed application deployments
+
+The first provider-backed deployment adapter is Railway. Apply migration 024 before enabling it. Kestrel detects the imported GitHub project's runtime and deployment requirements, then automatically selects Railway only when it is compatible and the workspace's Railway credentials have been verified.
+
+- `POST /api/projects/:projectId/managed-deployments` creates the Railway project/service on the first deploy and deploys later commits to that same service.
+- `GET /api/projects/:projectId/managed-deployments` lists deployment history.
+- `GET /api/managed-deployments/:deploymentId` refreshes provider status and the provider-generated application URL.
+- `GET /api/managed-deployments/:deploymentId/logs` retrieves build and runtime logs.
+- `POST /api/managed-deployments/:deploymentId/rollback` requests a provider rollback.
+
+Railway must already have GitHub repository access for the imported repository. Kestrel stores Railway project/service/environment identifiers and deployment history; Railway hosts the application and supplies its URL. Other providers remain in the catalog but are not selectable for deployment until their deployment adapters are implemented and tested.

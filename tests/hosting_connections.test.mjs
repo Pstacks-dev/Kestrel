@@ -23,3 +23,8 @@ test('rejects missing credentials, unsupported providers and extra secret fields
   assert.equal(validateProviderCredentials('railway', { token: 'x', password: 'not-allowed' }), false);
   assert.equal(validateProviderCredentials('cloudflare-pages', { apiToken: 'token' }), false);
 });
+
+test('accepts optional Railway workspace-scoped token metadata', () => {
+  assert.equal(validateProviderCredentials('railway', { token: 'railway-secret', workspaceId: 'workspace-123' }), true);
+  assert.equal(validateProviderCredentials('railway', { token: 'railway-secret', workspaceId: 42 }), false);
+});

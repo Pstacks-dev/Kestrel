@@ -35,7 +35,9 @@ export function validateProviderCredentials(providerId, credentials) {
       if (account.type !== 'service_account' || !account.client_email || !account.private_key) return false;
     } catch { return false; }
   }
-  return Object.keys(credentials).every((field) => required.includes(field) || field === 'accountLabel');
+  const allowed = new Set([...required, 'accountLabel', ...(providerId === 'railway' ? ['workspaceId'] : [])]);
+  if (credentials.workspaceId !== undefined && (typeof credentials.workspaceId !== 'string' || credentials.workspaceId.length > 200)) return false;
+  return Object.keys(credentials).every((field) => allowed.has(field));
 }
 
 function fail(res, status, error) {
