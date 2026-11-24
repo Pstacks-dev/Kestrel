@@ -37,9 +37,9 @@ function sandboxMock() {
 test('OCI build script pins the source commit, supports Dockerfiles and buildpacks, and pushes the image', () => {
   const script = createManagedOciBuildScript();
   assert.match(script, /git -C "\$WORKSPACE" checkout --detach "\$COMMIT_SHA"/);
-  assert.match(script, /docker build --pull --platform linux\/amd64/);
+  assert.match(script, /\$DOCKER build --pull --platform linux\/amd64/);
   assert.match(script, /paketobuildpacks\/builder-jammy-base/);
-  assert.match(script, /docker push "\$IMAGE_REF"/);
+  assert.match(script, /\$DOCKER push "\$IMAGE_REF"/);
 });
 
 test('starts a detached Fly.io OCI build in an isolated Vercel sandbox', async () => {
@@ -68,7 +68,7 @@ test('starts a detached Fly.io OCI build in an isolated Vercel sandbox', async (
   assert.equal(command.input.env.REGISTRY_PASSWORD, 'fly-token');
   assert.equal(command.input.env.COMMIT_SHA, 'a'.repeat(40));
   assert.equal(command.input.sudo, true);
-  assert.match(command.input.args[1], /docker build/);
+  assert.match(command.input.args[1], /\$DOCKER build/);
 });
 
 test('prepares Artifact Registry and uses a short-lived Google OAuth token for the image push', async () => {
