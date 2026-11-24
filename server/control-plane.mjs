@@ -31,6 +31,7 @@ import { registerHostingConnectionRoutes } from './routes/hosting-connections.mj
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
 import { startManagedHostingAutomation, processManagedHostingQueue } from './lib/managed-hosting-automation.mjs';
 import { refreshProviderImageRegistryCredentials } from './lib/oci-registries.mjs';
+import { createGitHubInstallationToken } from './lib/github-app.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1273,7 +1274,7 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
         "update public.managed_hosting_automation_queue q set status = 'queued', locked_at = null, available_at = now(), updated_at = now() where q.status = 'waiting_for_image' and exists (select 1 from public.managed_hosting_image_builds b where b.automation_queue_id = q.id and b.status = 'failed')",
       );
       const claimed = await client.query(
-        "with candidate as (select b.id from public.managed_hosting_image_builds b join public.projects p on p.id = b.project_id where p.organization_id = $1 and b.status = 'queued' and b.attempt_count < 4 and b.available_at <= now() order by b.created_at for update of b skip locked limit 1) update public.managed_hosting_image_builds b set status = 'running', attempt_count = attempt_count + 1, worker_id = $2, lease_token = $3, lease_expires_at = now() + interval '45 seconds', started_at = coalesce(started_at, now()), updated_at = now() from candidate where b.id = candidate.id returning b.*",
+        "with candidate as (select b.id, p.github_installation_id from public.managed_hosting_image_builds b join public.projects p on p.id = b.project_id where p.organization_id = $1 and b.status = 'queued' and b.attempt_count < 4 and b.available_at <= now() order by b.created_at for update of b skip locked limit 1) update public.managed_hosting_image_builds b set status = 'running', attempt_count = attempt_count + 1, worker_id = $2, lease_token = $3, lease_expires_at = now() + interval '45 seconds', started_at = coalesce(started_at, now()), updated_at = now() from candidate where b.id = candidate.id returning b.*, candidate.github_installation_id",
         [worker.rows[0].organization_id, req.worker.id, crypto.randomBytes(32).toString('hex')],
       );
       if (!claimed.rowCount) return null;
@@ -1281,6 +1282,7 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
       return {
         id: row.id, leaseToken: row.lease_token, organizationId: row.organization_id,
         projectId: row.project_id, repositoryUrl: row.repository_url,
+        githubInstallationId: row.github_installation_id,
         branch: row.branch, commitSha: row.commit_sha, image: row.image,
         registry: row.registry, provider: row.provider_id,
         registryUsername: decryptSecret(row.registry_username_ciphertext, row.registry_username_iv, row.registry_username_auth_tag),
@@ -1289,6 +1291,24 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
     });
     if (!build) return res.json({ build: null });
 
+    if (build.githubInstallationId) {
+      const parsed = new URL(build.repositoryUrl);
+      const parts = parsed.pathname.replace(/\\.git$/i, '').split('/').filter(Boolean);
+      if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || parts.length !== 2) {
+        throw new Error('Private GitHub repository URL is invalid');
+      }
+      const linked = await query(
+        'select installation_id from public.github_app_installations where organization_id = $1 and installation_id = $2 and suspended_at is null',
+        [build.organizationId, build.githubInstallationId],
+      );
+      if (!linked.rowCount) throw new Error('The GitHub App installation for this project is no longer connected');
+      const sourceToken = await createGitHubInstallationToken(build.githubInstallationId, {
+        repository: `${parts[0]}/${parts[1]}`,
+        permissions: { contents: 'read' },
+      });
+      build.sourceToken = sourceToken.token;
+    }
+    delete build.githubInstallationId;
     // ECR authorization tokens expire after 12 hours. Refresh at claim time so a
     // queued build never relies on credentials minted when the pipeline was queued.
     if (build.provider === 'aws-ecs-express') {
