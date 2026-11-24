@@ -4,7 +4,7 @@ import { listHostingProviders } from '../lib/hosting-providers.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
-const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express', 'digitalocean-app-platform', 'heroku']);
+const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express', 'digitalocean-app-platform', 'heroku', 'vercel']);
 
 const CREDENTIAL_FIELDS = {
   render: ['apiKey', 'ownerId'],
@@ -35,10 +35,11 @@ export function validateProviderCredentials(providerId, credentials) {
       if (account.type !== 'service_account' || !account.client_email || !account.private_key) return false;
     } catch { return false; }
   }
-  const allowed = new Set([...required, 'accountLabel', ...(providerId === 'railway' ? ['workspaceId'] : []), ...(providerId === 'digitalocean-app-platform' ? ['region'] : [])]);
+  const allowed = new Set([...required, 'accountLabel', ...(providerId === 'railway' ? ['workspaceId'] : []), ...(providerId === 'digitalocean-app-platform' ? ['region'] : []), ...(providerId === 'vercel' ? ['teamId'] : [])]);
   if (credentials.workspaceId !== undefined && (typeof credentials.workspaceId !== 'string' || credentials.workspaceId.length > 200)) return false;
   if (providerId === 'digitalocean-app-platform' && credentials.region !== undefined && !/^[a-z]{3}$/.test(credentials.region)) return false;
   if (providerId === 'render' && !/^[A-Za-z0-9_-]{3,100}$/.test(credentials.ownerId)) return false;
+  if (providerId === 'vercel' && credentials.teamId !== undefined && (typeof credentials.teamId !== 'string' || credentials.teamId.length > 200)) return false;
   return Object.keys(credentials).every((field) => allowed.has(field));
 }
 
