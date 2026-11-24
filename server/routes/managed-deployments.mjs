@@ -45,7 +45,7 @@ async function resolveCommit(repository, branch, suppliedSha, fetchImpl) {
   return sha;
 }
 
-async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch, artifactPrefix = '') {
+export async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch, artifactPrefix = '') {
   if (!Array.isArray(artifactIds) || artifactIds.length < 1 || artifactIds.length > 5000 ||
       artifactIds.some((id) => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) ||
       new Set(artifactIds).size !== artifactIds.length) {
