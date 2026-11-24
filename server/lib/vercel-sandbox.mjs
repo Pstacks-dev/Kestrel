@@ -91,13 +91,13 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
       const response = await request(`/v2/sandboxes/${encodeURIComponent(name)}?projectId=${encodeURIComponent(c.projectId)}&deleteOrphanSnapshots=true`, { method: 'DELETE' });
       return response.json();
     },
-    async startCommand(sessionId, { command, args = [], cwd, timeoutMs = 1_800_000, env: commandEnv = {} }) {
+    async startCommand(sessionId, { command, args = [], cwd, timeoutMs = 1_800_000, env: commandEnv = {}, sudo = false }) {
       if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 18_000_000) {
         throw new SandboxProviderError('Command timeout must be between 100ms and 5 hours', 400, 'sandbox_invalid_timeout');
       }
       const response = await request(`/v2/sandboxes/sessions/${encodeURIComponent(sessionId)}/cmd`, {
         method: 'POST',
-        body: { command, args, cwd, env: commandEnv, sudo: false, wait: false, timeout: timeoutMs },
+        body: { command, args, cwd, env: commandEnv, sudo: Boolean(sudo), wait: false, timeout: timeoutMs },
       });
       const data = await response.json();
       if (!data?.command?.id) throw new SandboxProviderError('Sandbox provider did not return a command ID', 502, 'sandbox_command_missing_id');
