@@ -133,6 +133,10 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
 
       const providerId = selected.id;
       const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch) : null;
+      const containerImage = String(req.body?.containerImage || '').trim();
+      if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
+        return fail(res, 422, 'This provider requires a published OCI image. Kestrel must build and publish the project image before deployment.');
+      }
       const connection = verified.get(providerId);
       let credentials;
       try {
@@ -150,9 +154,10 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const providerInput = {
         repositoryUrl: project.repository_url, branch, commitSha, profile,
         projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
+        containerImage, port: req.body?.port || 8080, env: req.body?.env || {}, files: staticFiles,
       };
       const providerDeployment = resource
-        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName })
+        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files })
         : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
       const saved = await transaction(async (client) => {
