@@ -282,6 +282,21 @@ Kestrel uses external hosting providers; it does not require Kestrel-owned hosti
 - `POST /api/hosting/recommend` accepts a detected application profile (`runtime`, `kind`, `isStatic`, `dockerfile`, `needsPersistentProcess`, `needsBackgroundWorker`, `needsDatabase`) and ranks compatible providers.
 - The scorer excludes providers that cannot satisfy hard requirements such as arbitrary containers, persistent processes, workers, or managed databases. It prefers a provider with credentials configured but never treats a missing credential as a successful deployment.
 
-The initial catalog covers Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, DigitalOcean App Platform, Heroku, Vercel, Netlify, and Cloudflare Pages. Vercel's container runtime, Netlify Server, and Cloudflare Pages/Workers have distinct runtime constraints; they are not interchangeable with general-purpose container hosts.
+The initial catalog covers Render, Railway, Fly.io, Google Cloud Run, AWS ECS Express Mode, DigitalOcean App Platform, Heroku, Vercel, Netlify, and Cloudflare Pages.
+AWS App Runner is not included in the new-customer provider pool: AWS closed it to new customers on 2026-04-30 and recommends ECS Express Mode. ECS Express Mode requires a published OCI image plus task-execution and infrastructure IAM role ARNs; Kestrel's image-publishing pipeline is a prerequisite before this provider can accept production deployments.
+ Vercel's container runtime, Netlify Server, and Cloudflare Pages/Workers have distinct runtime constraints; they are not interchangeable with general-purpose container hosts.
 
 This change establishes compatibility-aware provider selection, not live deployment adapters. A provider is deployable only after its adapter, encrypted credential storage, deploy/status/log/rollback operations, and provider-account smoke tests are implemented. No provider is marked live merely because its catalog entry exists.
+
+
+### Tenant hosting-provider credentials
+
+Workspace owners, admins, and developers can manage provider credentials through the authenticated control plane:
+
+- `GET /api/workspaces/:orgId/hosting/providers` lists provider connection state without returning credentials.
+- `PUT /api/workspaces/:orgId/hosting/providers/:providerId` stores validated credentials encrypted with AES-256-GCM.
+- `DELETE /api/workspaces/:orgId/hosting/providers/:providerId` removes a workspace's provider connection.
+- `POST /api/workspaces/:orgId/hosting/providers/:providerId/verify` validates stored credentials against the provider API for Render, Railway, Fly.io, Google Cloud Run, AWS ECS API (for ECS Express Mode credentials), DigitalOcean, and Heroku. Successful authentication marks the connection `verified`; it does not mean an application has been deployed.
+
+
+Set a strong `KESTREL_ENCRYPTION_KEY` (at least 32 characters) before enabling these endpoints. Credentials are tenant-scoped, never returned by the API, and the table is inaccessible to browser roles. A newly saved connection is marked `configured`, not `verified`; successful API authentication and deployment smoke tests are still required before Kestrel can use it for production deployments. Apply migration `023_managed_hosting_providers.sql` before enabling the endpoints.

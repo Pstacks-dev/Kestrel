@@ -25,6 +25,7 @@ import { registerComputeRoutes } from './routes/compute.mjs';
 import { registerSandboxRoutes } from './routes/sandboxes.mjs';
 import { registerGitImportRoutes } from './routes/git-import.mjs';
 import { registerHostingRoutes } from './routes/hosting.mjs';
+import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1581,6 +1582,7 @@ registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerSandboxRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerGitImportRoutes(app, { userAuth, query, transaction });
 registerHostingRoutes(app, { userAuth, query });
+registerHostingConnectionRoutes(app, { userAuth, query, transaction });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {

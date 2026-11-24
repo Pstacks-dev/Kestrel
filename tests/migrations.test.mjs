@@ -50,3 +50,19 @@ test('sandbox migration adds tenant sandbox inventory, quotas and row-level secu
   assert.match(sql, /members read sandbox instances/i);
   assert.match(sql, /provider_name text not null unique/i);
 });
+
+
+test('managed hosting credentials are tenant-scoped, encrypted and inaccessible to browser roles', async () => {
+  const sql = await readFile(new URL('../db/migrations/023_managed_hosting_providers.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.hosting_provider_connections/i);
+  assert.match(sql, /organization_id uuid not null references public\.organizations/i);
+  assert.match(sql, /credentials_ciphertext text not null/i);
+  assert.match(sql, /credentials_iv text not null/i);
+  assert.match(sql, /credentials_auth_tag text not null/i);
+  assert.match(sql, /last_verified_at timestamptz/i);
+  assert.match(sql, /last_error text/i);
+  assert.match(sql, /unique \(organization_id, provider_id\)/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on public\.hosting_provider_connections from anon, authenticated/i);
+  assert.match(sql, /grant all on public\.hosting_provider_connections to service_role/i);
+});

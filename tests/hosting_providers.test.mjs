@@ -6,7 +6,7 @@ test('catalog contains the ten selected hosting providers', () => {
   const providers = listHostingProviders({});
   assert.equal(providers.length, 10);
   assert.deepEqual(providers.map((provider) => provider.id), [
-    'render','railway','flyio','google-cloud-run','aws-app-runner',
+    'render','railway','flyio','google-cloud-run','aws-ecs-express',
     'digitalocean-app-platform','heroku','vercel','netlify','cloudflare-pages',
   ]);
 });
@@ -25,16 +25,17 @@ test('container and persistent backend projects exclude serverless-only provider
   assert.ok(ids.includes('railway'));
   assert.ok(ids.includes('flyio'));
   assert.ok(ids.includes('google-cloud-run'));
-  assert.ok(ids.includes('aws-app-runner'));
+  assert.ok(ids.includes('aws-ecs-express'));
   assert.ok(ids.includes('digitalocean-app-platform'));
   assert.ok(ids.includes('heroku'));
   assert.ok(!ids.includes('netlify'));
   assert.ok(!ids.includes('cloudflare-pages'));
 });
 
-test('static frontend projects can use all ten compatible platforms', () => {
+test('static frontend projects can use compatible platforms without image-only providers', () => {
   const ranked = rankHostingProviders({ runtime: 'javascript', kind: 'static', isStatic: true }, {});
-  assert.equal(ranked.length, 10);
+  assert.equal(ranked.length, 9);
+  assert.ok(!ranked.some((provider) => provider.id === 'aws-ecs-express'));
 });
 
 test('managed database requirement only returns providers with database offerings', () => {
@@ -79,4 +80,11 @@ test('detects Python, Go, Rust, PHP, Ruby and .NET manifests', async () => {
   ]) {
     assert.equal(detectProjectProfile({ files: [file] }).runtime, runtime, file);
   }
+});
+
+test('AWS ECS Express Mode is recommended only when a container image is available', () => {
+  const sourceBuild = rankHostingProviders({ runtime: 'node', needsPersistentProcess: true }, {});
+  assert.ok(!sourceBuild.some((provider) => provider.id === 'aws-ecs-express'));
+  const containerBuild = rankHostingProviders({ runtime: 'node', dockerfile: true, needsPersistentProcess: true }, {});
+  assert.ok(containerBuild.some((provider) => provider.id === 'aws-ecs-express'));
 });
