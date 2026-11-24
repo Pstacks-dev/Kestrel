@@ -547,6 +547,10 @@ function AppShell({ page }: { page: Page }) {
   const [projectRepo, setProjectRepo] = useState('');
   const [projectBranch, setProjectBranch] = useState('main');
   const [actionMessage, setActionMessage] = useState('');
+  const [githubInstallations, setGithubInstallations] = useState<any[]>([]);
+  const [selectedGithubInstallation, setSelectedGithubInstallation] = useState('');
+  const [githubInstallBusy, setGithubInstallBusy] = useState(false);
+  const [githubInstallMessage, setGithubInstallMessage] = useState('');
 
   // Run creation state
   const [selectedProject, setSelectedProject] = useState('');
@@ -663,6 +667,42 @@ function AppShell({ page }: { page: Page }) {
     connect();
   }, []);
 
+  useEffect(() => {
+    if (!accessToken || !organizationId) return;
+    let active = true;
+    fetch(`${api}/workspaces/${organizationId}/github/installations`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load GitHub installations');
+      if (active) {
+        const items = data.installations || [];
+        setGithubInstallations(items);
+        setSelectedGithubInstallation((current) => current && items.some((item: any) => String(item.installationId) === current)
+          ? current : (items[0] ? String(items[0].installationId) : ''));
+      }
+    }).catch((error) => { if (active) setGithubInstallMessage(error.message); });
+    return () => { active = false; };
+  }, [accessToken, organizationId, api]);
+
+  async function connectGitHubApp() {
+    setGithubInstallBusy(true);
+    setGithubInstallMessage('');
+    try {
+      const response = await fetch(`${api}/git/app/install`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ organizationId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not start GitHub App installation');
+      window.location.assign(data.installUrl);
+    } catch (error: any) {
+      setGithubInstallMessage(error.message || 'Could not connect GitHub');
+      setGithubInstallBusy(false);
+    }
+  }
+
   // Periodic polling for active runs
   useEffect(() => {
     if (!accessToken || !organizationId) return;
@@ -755,7 +795,7 @@ function AppShell({ page }: { page: Page }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify(repositoryUrl
-          ? { organizationId, name: projectName, repositoryUrl }
+          ? { organizationId, name: projectName, repositoryUrl, ...(selectedGithubInstallation ? { installationId: selectedGithubInstallation } : {}) }
           : { organizationId, name: projectName, repo: null, defaultBranch: projectBranch }),
       });
       const data = await res.json();
@@ -763,7 +803,7 @@ function AppShell({ page }: { page: Page }) {
       setProjectName('');
       setProjectRepo('');
       setActionMessage(repositoryUrl
-        ? `Imported ${data.repository?.fullName || repositoryUrl}. Add the Kestrel webhook in GitHub to enable automatic push builds.`
+        ? `Imported ${data.repository?.fullName || repositoryUrl}. GitHub push and pull-request events will trigger builds when the App webhook is configured.`
         : 'Project registered successfully. Upload source files to begin a build.');
       await connect();
     } catch (err: any) {
@@ -1692,11 +1732,35 @@ function AppShell({ page }: { page: Page }) {
               title="Projects & Repositories"
               desc="Connect repositories and manage project configuration."
             />
+            <div className="panel mb-4">
+              <div className="panel-head">
+                <div>
+                  <h3>GitHub App connection</h3>
+                  <p>Connect a GitHub account or organisation to import private repositories and automate builds.</p>
+                </div>
+                <Button type="button" onClick={connectGitHubApp} disabled={githubInstallBusy || !accessToken}>
+                  {githubInstallBusy ? 'Opening GitHub…' : 'Connect GitHub'} <Plus size={14} />
+                </Button>
+              </div>
+              {githubInstallations.length > 0 && (
+                <label className="block">
+                  Connected GitHub account
+                  <select value={selectedGithubInstallation} onChange={(e) => setSelectedGithubInstallation(e.target.value)}>
+                    {githubInstallations.map((item: any) => (
+                      <option key={item.installationId} value={String(item.installationId)}>
+                        {item.accountLogin} ({item.accountType}){item.suspendedAt ? ' — suspended' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {githubInstallMessage && <p className="action-message mt-3">{githubInstallMessage}</p>}
+            </div>
             <div className="panel">
               <div className="panel-head">
                 <div>
                   <h3>Register a repository</h3>
-                  <p>Add a credential-free HTTPS Git URL on an approved host.</p>
+                  <p>Import a public repository directly, or select a connected GitHub installation for private repositories.</p>
                 </div>
               </div>
               <form className="project-form" onSubmit={registerProject}>
