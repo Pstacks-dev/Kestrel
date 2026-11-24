@@ -73,3 +73,25 @@ test('rejects command timeouts above the provider limit before making a request'
   );
   assert.equal(called, false);
 });
+
+test('collects detached command stdout and stderr logs', async () => {
+  const stream = [
+    JSON.stringify({ stream: 'stdout', data: 'installing dependencies\\n' }),
+    JSON.stringify({ stream: 'stderr', data: 'warning: optional package\\n' }),
+  ].join('\\n') + '\\n';
+  const client = createVercelSandboxClient({
+    env,
+    fetchImpl: async (url) => {
+      assert.match(String(url), /\\/cmd\\/cmd_123\\/logs/);
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'application/x-ndjson' },
+      });
+    },
+  });
+
+  const logs = await client.getCommandLogs('session_123', 'cmd_123');
+  assert.match(logs.stdout, /installing dependencies/);
+  assert.match(logs.stderr, /optional package/);
+  assert.equal(logs.truncated, false);
+});
