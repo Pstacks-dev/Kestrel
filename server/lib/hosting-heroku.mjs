@@ -27,7 +27,9 @@ function repository(repositoryUrl) {
 
 function appName(value) {
   const name = String(value || 'kestrel-app').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 28);
-  return name.length >= 3 ? name : 'kestrel-app';
+  const suffix = name.match(/-[a-f0-9]{8}$/i)?.[0] || '';
+  const bounded = suffix ? `${name.slice(0, 28 - suffix.length)}${suffix}` : name.slice(0, 28);
+  return bounded.length >= 3 ? bounded : 'kestrel-app';
 }
 
 function status(value) {
@@ -68,17 +70,24 @@ export async function deployHerokuApp({ apiKey, appId, repositoryUrl, commitSha 
 }
 
 export async function getHerokuDeployment({ apiKey, appId, deploymentId }, { fetchImpl = fetch } = {}) {
-  const [build, app, formation] = await Promise.all([
-    request(apiKey, `/apps/${encodeURIComponent(appId)}/builds/${encodeURIComponent(deploymentId)}`, { fetchImpl }),
+  let build;
+  let release = null;
+  try {
+    build = await request(apiKey, `/apps/${encodeURIComponent(appId)}/builds/${encodeURIComponent(deploymentId)}`, { fetchImpl });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    release = await request(apiKey, `/apps/${encodeURIComponent(appId)}/releases/${encodeURIComponent(deploymentId)}`, { fetchImpl });
+    build = { status: 'succeeded', release: { id: release.id } };
+  }
+  const [app, formation] = await Promise.all([
     request(apiKey, `/apps/${encodeURIComponent(appId)}`, { fetchImpl }),
     request(apiKey, `/apps/${encodeURIComponent(appId)}/formation`, { fetchImpl }),
   ]);
   const web = Array.isArray(formation) ? formation.find((process) => process.type === 'web' || process.process_type === 'web') : null;
-  const buildStatus = status(build.status);
   const live = build.status === 'succeeded' && app.status === 'active' && Number(web?.quantity || 0) > 0;
   return {
-    provider: 'heroku', deploymentId, providerStatus: build.status,
-    status: live ? 'live' : buildStatus === 'deploying' ? 'deploying' : buildStatus,
+    provider: 'heroku', deploymentId, providerStatus: release ? 'released' : build.status,
+    status: live ? 'live' : build.status === 'succeeded' ? 'deploying' : status(build.status),
     providerUrl: app.web_url || null, canRollback: build.status === 'succeeded' && Boolean(build.release?.id),
   };
 }
