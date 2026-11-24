@@ -62,8 +62,8 @@ function container({ image, port, env }) {
 }
 
 function revisionId(service) {
-  return service.currentDeployment ||
-    service.activeConfigurations?.find((item) => item.serviceRevisionArn)?.serviceRevisionArn ||
+  return service.activeConfigurations?.find((item) => item.serviceRevisionArn)?.serviceRevisionArn ||
+    service.currentDeployment ||
     service.targetConfiguration?.serviceRevisionArn || service.serviceArn;
 }
 
