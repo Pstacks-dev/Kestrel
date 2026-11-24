@@ -741,6 +741,13 @@ app.post('/api/webhooks/github', async (req, res) => {
     }
 
     const project = projQuery.rows[0];
+    if (event === 'pull_request') {
+      const baseRepository = String(body?.repository?.full_name || '').toLowerCase();
+      const headRepository = String(body?.pull_request?.head?.repo?.full_name || '').toLowerCase();
+      if (!baseRepository || !headRepository || baseRepository !== headRepository) {
+        return res.status(202).json({ message: 'Pull requests from forks are not executed because project secrets are not exposed to untrusted fork code' });
+      }
+    }
     if (!project.active || !project.webhook_secret) {
       return res.status(403).json({ error: 'GitHub webhook is not active for this project' });
     }
