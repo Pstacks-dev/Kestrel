@@ -1,7 +1,7 @@
 const PROVIDERS = [
   { id: 'render', name: 'Render', category: 'container-paas', fullStack: true, static: true, containers: true, persistentProcesses: true, backgroundWorkers: true, databases: true, runtimes: ['node','python','go','ruby','php','docker'], env: ['RENDER_API_KEY'], docs: 'https://render.com/docs' },
   { id: 'railway', name: 'Railway', category: 'container-paas', fullStack: true, static: true, containers: true, persistentProcesses: true, backgroundWorkers: true, databases: true, runtimes: ['node','python','go','java','ruby','php','dotnet','docker'], env: ['RAILWAY_API_TOKEN'], docs: 'https://docs.railway.com' },
-  { id: 'flyio', name: 'Fly.io', category: 'container-paas', fullStack: true, static: true, containers: true, persistentProcesses: true, backgroundWorkers: true, databases: false, runtimes: ['node','python','go','java','ruby','php','dotnet','docker'], env: ['FLY_API_TOKEN'], docs: 'https://fly.io/docs' },
+  { id: 'flyio', name: 'Fly.io', category: 'container-paas', fullStack: true, static: false, containers: true, requiresContainerImage: true, persistentProcesses: true, backgroundWorkers: true, databases: false, runtimes: ['node','python','go','java','ruby','php','dotnet','docker'], env: ['FLY_API_TOKEN'], docs: 'https://fly.io/docs' },
   { id: 'google-cloud-run', name: 'Google Cloud Run', category: 'managed-containers', fullStack: true, static: false, containers: true, persistentProcesses: true, backgroundWorkers: true, databases: false, runtimes: ['node','python','go','java','ruby','php','dotnet','docker'], env: ['GOOGLE_CLOUD_PROJECT','GOOGLE_APPLICATION_CREDENTIALS'], docs: 'https://cloud.google.com/run/docs' },
   { id: 'aws-ecs-express', name: 'AWS ECS Express Mode', category: 'managed-containers', fullStack: true, static: false, containers: true, requiresContainerImage: true, persistentProcesses: true, backgroundWorkers: false, databases: false, runtimes: ['docker'], env: ['AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_REGION','AWS_ECS_EXECUTION_ROLE_ARN','AWS_ECS_INFRASTRUCTURE_ROLE_ARN'], docs: 'https://docs.aws.amazon.com/AmazonECS/latest/developerguide/express-service-overview.html', caveat: 'Requires an OCI image in a registry and two IAM roles; designed for stateless HTTP applications and APIs.' },
   { id: 'digitalocean-app-platform', name: 'DigitalOcean App Platform', category: 'container-paas', fullStack: true, static: true, containers: true, persistentProcesses: true, backgroundWorkers: true, databases: true, runtimes: ['node','python','go','java','ruby','php','dotnet','docker'], env: ['DIGITALOCEAN_ACCESS_TOKEN'], docs: 'https://docs.digitalocean.com/products/app-platform' },
@@ -40,6 +40,7 @@ export function rankHostingProviders(profileInput, env = process.env) {
   const compatible = catalog.map((provider) => {
     const reasons = [];
     let score = 0;
+    if (profile.isStatic && !provider.static) return null;
     if (profile.isStatic && provider.static) { score += 30; reasons.push('Supports static site hosting'); }
     if (!profile.isStatic && provider.fullStack) { score += 20; reasons.push('Supports application backends'); }
     if (profile.runtime !== 'unknown' && provider.runtimes.includes(profile.runtime)) { score += 20; reasons.push('Supports the detected runtime'); }
