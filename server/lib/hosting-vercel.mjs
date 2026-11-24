@@ -60,6 +60,10 @@ async function createProject({ token, teamId, name, repositoryUrl, profile }, { 
       if (linkedRepo && linkedRepo.toLowerCase() !== `${repo.org}/${repo.repo}`.toLowerCase()) {
         throw new Error('A Vercel project with this name is already linked to another repository');
       }
+      await request(token, `/v9/projects/${encodeURIComponent(existing.id)}`, {
+        method: 'PATCH', teamId, fetchImpl,
+        body: { gitProviderOptions: { createDeployments: 'disabled', disableRepositoryDispatchEvents: true } },
+      });
       return { id: existing.id, name: existing.name || name, repo };
     }
   } catch (error) {
@@ -67,7 +71,7 @@ async function createProject({ token, teamId, name, repositoryUrl, profile }, { 
   }
   const created = await request(token, '/v11/projects', {
     method: 'POST', teamId, fetchImpl,
-    body: { name, gitRepository: { type: 'github', repo: `${repo.org}/${repo.repo}` }, ...(framework(profile) ? { framework: framework(profile) } : {}) },
+    body: { name, gitRepository: { type: 'github', repo: `${repo.org}/${repo.repo}` }, gitProviderOptions: { createDeployments: 'disabled', disableRepositoryDispatchEvents: true }, ...(framework(profile) ? { framework: framework(profile) } : {}) },
   });
   if (!created.id) throw new Error('Vercel did not return a project identifier');
   return { id: created.id, name: created.name || name, repo };
