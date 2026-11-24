@@ -95,3 +95,43 @@ test('collects detached command stdout and stderr logs', async () => {
   assert.match(logs.stderr, /optional package/);
   assert.equal(logs.truncated, false);
 });
+
+test('creates a sandbox from an exact public Git revision', async () => {
+  let body;
+  const client = createVercelSandboxClient({
+    env,
+    fetchImpl: async (_url, options) => {
+      body = JSON.parse(options.body);
+      return new Response(JSON.stringify({ sandbox: { name: 'sandbox', currentSessionId: 'session' }, session: { id: 'session' } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await client.create({
+    name: 'kestrel-build', vcpus: 2, timeoutMs: 600000, region: 'iad1',
+    source: { type: 'git', url: 'https://github.com/acme/demo', revision: 'a'.repeat(40) },
+  });
+  assert.equal(body.source.revision, 'a'.repeat(40));
+  assert.equal(body.source.type, 'git');
+});
+
+test('passes tenant build secrets only in the sandbox command environment', async () => {
+  let body;
+  const stream = [
+    JSON.stringify({ stream: 'stdout', data: 'build complete\\n' }),
+    JSON.stringify({ command: { id: 'cmd_env', exitCode: 0, durationMs: 50 } }),
+  ].join('\\n') + '\\n';
+  const client = createVercelSandboxClient({
+    env,
+    fetchImpl: async (_url, options) => {
+      body = JSON.parse(options.body);
+      return new Response(stream, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
+    },
+  });
+  const result = await client.runCommand('session_123', {
+    command: 'bash', args: ['-lc', 'echo build'], cwd: '/vercel/sandbox',
+    timeoutMs: 60000, env: { FLY_API_TOKEN: 'tenant-secret' },
+  });
+  assert.equal(body.env.FLY_API_TOKEN, 'tenant-secret');
+  assert.equal(result.exitCode, 0);
+});
