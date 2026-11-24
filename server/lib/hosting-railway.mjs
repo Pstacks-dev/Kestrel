@@ -32,9 +32,20 @@ function normalizeRailwayStatus(status) {
   return 'unknown';
 }
 
+async function syncRailwayVariables(token, projectId, environmentId, serviceId, variables, fetchImpl) {
+  if (!variables || typeof variables !== 'object' || Array.isArray(variables)) throw new Error('Railway environment variables must be an object');
+  for (const [key, value] of Object.entries(variables)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Railway environment variable');
+  }
+  await railwayGraphQL(token,
+    'mutation UpsertVariables($input: VariableCollectionUpsertInput!) { variableCollectionUpsert(input: $input) }',
+    { input: { projectId, environmentId, serviceId, variables, skipDeploys: true } },
+    fetchImpl);
+}
+
 export async function createRailwayDeployment({
   token, repositoryUrl, branch = 'main', commitSha, projectName, serviceName,
-  workspaceId = null,
+  workspaceId = null, env = {},
 }, { fetchImpl = fetch } = {}) {
   const repository = parseRepository(repositoryUrl);
   if (!repository) throw new Error('A public GitHub repository URL is required for Railway deployment');
@@ -66,6 +77,8 @@ export async function createRailwayDeployment({
     fetchImpl);
   const serviceId = createdService.serviceCreate?.id;
   if (!serviceId) throw new Error('Railway did not return a service identifier');
+
+  await syncRailwayVariables(token, projectId, environment.id, serviceId, env, fetchImpl);
 
   const deploymentData = await railwayGraphQL(token,
     'mutation DeployCommit($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }',
@@ -122,9 +135,10 @@ export async function rollbackRailwayDeployment({ token, deploymentId }, { fetch
   return { provider: 'railway', deploymentId: rollback.id, status: normalizeRailwayStatus(rollback.status) };
 }
 
-export async function deployRailwayService({ token, serviceId, environmentId, commitSha }, { fetchImpl = fetch } = {}) {
+export async function deployRailwayService({ token, projectId, serviceId, environmentId, commitSha, env = {} }, { fetchImpl = fetch } = {}) {
   if (!serviceId || !environmentId) throw new Error('Railway service and environment identifiers are required');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
+  await syncRailwayVariables(token, projectId, environmentId, serviceId, env, fetchImpl);
   const data = await railwayGraphQL(token,
     'mutation DeployCommit($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }',
     { serviceId, environmentId, commitSha }, fetchImpl);
