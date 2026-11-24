@@ -1,0 +1,277 @@
+import { decryptSecret, redactSecrets } from '../lib/security.mjs';
+import { parseGitHubRepository } from './git-import.mjs';
+import { detectProjectProfile, rankHostingProviders } from '../lib/hosting-providers.mjs';
+import {
+  createRailwayDeployment, deployRailwayService, getRailwayDeployment,
+  getRailwayDeploymentLogs, rollbackRailwayDeployment,
+} from '../lib/hosting-railway.mjs';
+
+const WRITE_ROLES = ['owner', 'admin', 'developer'];
+const API_HEADERS = {
+  Accept: 'application/vnd.github+json',
+  'X-GitHub-Api-Version': '2022-11-28',
+  'User-Agent': 'Kestrel-Managed-Deployments',
+};
+
+function fail(res, status, error) { return res.status(status).json({ error }); }
+
+async function githubJson(url, fetchImpl) {
+  const response = await fetchImpl(url, { headers: API_HEADERS, signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw Object.assign(new Error('GitHub repository inspection failed'), { status: response.status });
+  return response.json();
+}
+
+async function inspectProject(repository, branch, fetchImpl) {
+  const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`;
+  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(branch)}`, fetchImpl);
+  if (!Array.isArray(root)) throw new Error('GitHub repository root could not be inspected');
+  const files = root.filter((item) => item.type === 'file').map((item) => item.name);
+  let packageJson = null;
+  if (files.some((name) => name.toLowerCase() === 'package.json')) {
+    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(branch)}`, fetchImpl);
+    try { packageJson = JSON.parse(Buffer.from(file.content || '', 'base64').toString('utf8')); }
+    catch { throw new Error('Repository package.json is invalid'); }
+  }
+  return detectProjectProfile({ files, packageJson });
+}
+
+async function resolveCommit(repository, branch, suppliedSha, fetchImpl) {
+  const ref = suppliedSha || branch.split('/').map(encodeURIComponent).join('/');
+  const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/commits/${ref}`;
+  const commit = await githubJson(base, fetchImpl);
+  const sha = commit.sha;
+  if (!/^[a-fA-F0-9]{40}$/.test(sha || '')) throw new Error('GitHub did not return a valid commit SHA');
+  return sha;
+}
+
+function deploymentView(row) {
+  return {
+    id: row.id, projectId: row.project_id, provider: row.provider_id,
+    status: row.status, branch: row.branch, commitSha: row.commit_sha,
+    providerUrl: row.provider_url, rollbackOf: row.rollback_of,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+export function registerManagedDeploymentRoutes(app, { userAuth, query, transaction, fetchImpl = fetch }) {
+  app.post('/api/projects/:projectId/managed-deployments', userAuth, async (req, res) => {
+    try {
+      const projectResult = await query(
+        `select p.id, p.organization_id, p.name, p.repository_url, p.default_branch,
+                p.source_type, m.role
+         from public.projects p
+         join public.organization_members m on m.organization_id = p.organization_id
+         where p.id = $1 and m.user_id = $2`,
+        [req.params.projectId, req.user.id],
+      );
+      if (!projectResult.rowCount) return fail(res, 404, 'Project not found');
+      const project = projectResult.rows[0];
+      if (!WRITE_ROLES.includes(project.role)) return fail(res, 403, 'Developer access is required to deploy this project');
+      const repository = parseGitHubRepository(project.repository_url);
+      if (project.source_type !== 'git' || !repository) {
+        return fail(res, 422, 'Managed source deployments currently require a public GitHub repository');
+      }
+
+      const branch = String(req.body?.branch || project.default_branch || 'main');
+      const commitSha = await resolveCommit(repository, branch, req.body?.commitSha, fetchImpl);
+      const profile = await inspectProject(repository, branch, fetchImpl);
+      const compatible = rankHostingProviders(profile, {});
+      const connectionResult = await query(
+        `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag
+         from public.hosting_provider_connections
+         where organization_id = $1 and status = 'verified'`,
+        [project.organization_id],
+      );
+      const verified = new Map(connectionResult.rows.map((row) => [row.provider_id, row]));
+      const selected = compatible.find((provider) => provider.id === 'railway' && verified.has(provider.id));
+      if (!selected) {
+        return fail(res, 409, 'No verified compatible provider adapter is available. Railway is the first managed deployment adapter; connect and verify a compatible Railway workspace.');
+      }
+
+      const connection = verified.get(selected.id);
+      let credentials;
+      try {
+        credentials = JSON.parse(decryptSecret(connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag));
+      } catch {
+        return fail(res, 503, 'Railway credentials could not be decrypted. Check the Kestrel encryption key.');
+      }
+
+      const existing = await query(
+        `select * from public.managed_hosting_resources
+         where organization_id = $1 and project_id = $2 and provider_id = 'railway'`,
+        [project.organization_id, project.id],
+      );
+      let providerDeployment;
+      let resource;
+      if (existing.rowCount) {
+        resource = existing.rows[0];
+        providerDeployment = await deployRailwayService({
+          token: credentials.token,
+          serviceId: resource.provider_service_id,
+          environmentId: resource.provider_environment_id,
+          commitSha,
+        }, { fetchImpl });
+      } else {
+        providerDeployment = await createRailwayDeployment({
+          token: credentials.token,
+          workspaceId: credentials.workspaceId || null,
+          repositoryUrl: project.repository_url,
+          branch,
+          commitSha,
+          projectName: `Kestrel - ${project.name}`.slice(0, 100),
+          serviceName: project.name.slice(0, 100),
+        }, { fetchImpl });
+      }
+
+      const saved = await transaction(async (client) => {
+        let resourceId;
+        if (existing.rowCount) {
+          resourceId = resource.id;
+        } else {
+          const insertedResource = await client.query(
+            `insert into public.managed_hosting_resources
+               (organization_id, project_id, provider_id, provider_project_id,
+                provider_service_id, provider_environment_id, created_by)
+             values($1,$2,'railway',$3,$4,$5,$6)
+             returning id`,
+            [project.organization_id, project.id, providerDeployment.projectId,
+              providerDeployment.serviceId, providerDeployment.environmentId, req.user.id],
+          );
+          resourceId = insertedResource.rows[0].id;
+        }
+        const inserted = await client.query(
+          `insert into public.managed_hosting_deployments
+             (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
+              branch, commit_sha, status, created_by)
+           values($1,$2,$3,'railway',$4,$5,$6,'queued',$7)
+           returning *`,
+          [resourceId, project.organization_id, project.id, providerDeployment.deploymentId,
+            branch, commitSha, req.user.id],
+        );
+        await client.query(
+          `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+           values($1,$2,'managed_deployment.queued','managed_deployment',$3,$4::jsonb)`,
+          [project.organization_id, req.user.id, inserted.rows[0].id,
+            JSON.stringify({ provider: 'railway', branch, commitSha })],
+        );
+        return inserted.rows[0];
+      });
+      return res.status(202).json({
+        deployment: deploymentView(saved),
+        selectedProvider: 'railway',
+        profile,
+        providerUrl: providerDeployment.providerUrl || null,
+      });
+    } catch (error) {
+      const status = error.status === 404 ? 404 : error.status === 422 ? 422 : 502;
+      console.error('Managed deployment request failed:', { code: error.code || 'PROVIDER_ERROR' });
+      return fail(res, status, status === 404 ? 'GitHub repository or commit was not found' : 'Could not start managed deployment');
+    }
+  });
+
+  app.get('/api/projects/:projectId/managed-deployments', userAuth, async (req, res) => {
+    try {
+      const access = await query(
+        `select p.id from public.projects p
+         join public.organization_members m on m.organization_id = p.organization_id
+         where p.id = $1 and m.user_id = $2`,
+        [req.params.projectId, req.user.id],
+      );
+      if (!access.rowCount) return fail(res, 404, 'Project not found');
+      const result = await query(
+        `select * from public.managed_hosting_deployments
+         where project_id = $1 order by created_at desc limit 100`,
+        [req.params.projectId],
+      );
+      res.json({ deployments: result.rows.map(deploymentView) });
+    } catch {
+      fail(res, 500, 'Could not load managed deployment history');
+    }
+  });
+
+  async function loadAuthorizedDeployment(deploymentId, userId) {
+    const result = await query(
+      `select d.*, c.credentials_ciphertext, c.credentials_iv, c.credentials_auth_tag,
+              r.provider_service_id, r.provider_environment_id
+       from public.managed_hosting_deployments d
+       join public.managed_hosting_resources r on r.id = d.resource_id
+       join public.hosting_provider_connections c
+         on c.organization_id = d.organization_id and c.provider_id = d.provider_id
+       join public.organization_members m on m.organization_id = d.organization_id
+       where d.id = $1 and m.user_id = $2 and d.provider_id = 'railway'`,
+      [deploymentId, userId],
+    );
+    return result.rows[0] || null;
+  }
+
+  app.get('/api/managed-deployments/:deploymentId', userAuth, async (req, res) => {
+    try {
+      const row = await loadAuthorizedDeployment(req.params.deploymentId, req.user.id);
+      if (!row) return fail(res, 404, 'Managed deployment not found');
+      const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
+      const current = await getRailwayDeployment({ token: credentials.token, deploymentId: row.provider_deployment_id }, { fetchImpl });
+      await query(
+        `update public.managed_hosting_deployments set status = $2, provider_url = $3, updated_at = now() where id = $1`,
+        [row.id, current.status, current.providerUrl],
+      );
+      if (current.providerUrl) {
+        await query(
+          `update public.managed_hosting_resources set provider_url = $2, updated_at = now() where id = $1`,
+          [row.resource_id, current.providerUrl],
+        );
+      }
+      res.json({ deployment: { ...deploymentView(row), status: current.status, providerUrl: current.providerUrl, providerStatus: current.providerStatus } });
+    } catch {
+      fail(res, 502, 'Could not retrieve managed deployment status');
+    }
+  });
+
+  app.get('/api/managed-deployments/:deploymentId/logs', userAuth, async (req, res) => {
+    try {
+      const row = await loadAuthorizedDeployment(req.params.deploymentId, req.user.id);
+      if (!row) return fail(res, 404, 'Managed deployment not found');
+      const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
+      const logs = await getRailwayDeploymentLogs({
+        token: credentials.token, deploymentId: row.provider_deployment_id, limit: req.query.limit,
+      }, { fetchImpl });
+      const redact = (entries) => entries.map((entry) => ({
+        ...entry, message: redactSecrets(String(entry.message || ''), [credentials.token]),
+      }));
+      res.json({ build: redact(logs.build), runtime: redact(logs.runtime) });
+    } catch {
+      fail(res, 502, 'Could not retrieve managed deployment logs');
+    }
+  });
+
+  app.post('/api/managed-deployments/:deploymentId/rollback', userAuth, async (req, res) => {
+    try {
+      const row = await loadAuthorizedDeployment(req.params.deploymentId, req.user.id);
+      if (!row) return fail(res, 404, 'Managed deployment not found');
+      if (!WRITE_ROLES.includes((await query(
+        'select role from public.organization_members where organization_id = $1 and user_id = $2',
+        [row.organization_id, req.user.id],
+      )).rows[0]?.role)) return fail(res, 403, 'Developer access is required to roll back');
+      const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
+      const rollback = await rollbackRailwayDeployment({ token: credentials.token, deploymentId: row.provider_deployment_id }, { fetchImpl });
+      const saved = await transaction(async (client) => {
+        const inserted = await client.query(
+          `insert into public.managed_hosting_deployments
+             (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
+              branch, commit_sha, status, rollback_of, created_by)
+           values($1,$2,$3,'railway',$4,$5,$6,$7,$8,$9) returning *`,
+          [row.resource_id, row.organization_id, row.project_id, rollback.deploymentId,
+            row.branch, row.commit_sha, rollback.status, row.id, req.user.id],
+        );
+        await client.query(
+          `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+           values($1,$2,'managed_deployment.rollback_queued','managed_deployment',$3,$4::jsonb)`,
+          [row.organization_id, req.user.id, inserted.rows[0].id, JSON.stringify({ provider: 'railway', rollbackOf: row.id })],
+        );
+        return inserted.rows[0];
+      });
+      res.status(202).json({ deployment: deploymentView(saved) });
+    } catch {
+      fail(res, 502, 'Could not roll back managed deployment');
+    }
+  });
+}
