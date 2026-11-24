@@ -19,6 +19,10 @@
     {
       "path": "/api/cron/artifacts/cleanup",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/managed-deployments",
+      "schedule": "* * * * *"
     }
   ],
   "rewrites": [
