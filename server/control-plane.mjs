@@ -1842,7 +1842,7 @@ registerDeploymentRoutes(app, { userAuth, query, transaction });
 registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerSandboxRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerGitImportRoutes(app, { userAuth, query, transaction });
-registerGitHubAppRoutes(app, { userAuth, query, transaction, signJwt, verifyJwt });
+registerGitHubAppRoutes(app, { userAuth, query, transaction });
 registerHostingRoutes(app, { userAuth, query });
 registerHostingConnectionRoutes(app, { userAuth, query, transaction });
 registerManagedDeploymentRoutes(app, { userAuth, query, transaction });
