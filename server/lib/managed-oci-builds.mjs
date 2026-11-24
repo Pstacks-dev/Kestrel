@@ -112,6 +112,18 @@ if [ -f "$WORKSPACE/Dockerfile" ] || [ -f "$WORKSPACE/dockerfile" ]; then
   cd "$WORKSPACE"
   DOCKERFILE=Dockerfile
   if [ ! -f "$DOCKERFILE" ]; then DOCKERFILE=dockerfile; fi
+  if [ -f /usr/local/share/ca-certificates/vercel-proxy-ca.crt ]; then
+    cp /usr/local/share/ca-certificates/vercel-proxy-ca.crt "$WORKSPACE/.kestrel-vercel-proxy-ca.crt"
+    awk '
+      BEGIN { IGNORECASE = 1 }
+      { print }
+      /^FROM[[:space:]]/ && $0 !~ /(scratch|distroless)/ {
+        print "COPY .kestrel-vercel-proxy-ca.crt /usr/local/share/ca-certificates/vercel-proxy-ca.crt"
+        print "RUN if command -v update-ca-certificates >/dev/null 2>&1; then update-ca-certificates; elif command -v update-ca-trust >/dev/null 2>&1; then update-ca-trust; fi"
+      }
+    ' "$DOCKERFILE" > "$DOCKERFILE.kestrel"
+    DOCKERFILE="$DOCKERFILE.kestrel"
+  fi
   DOCKER_BUILDKIT=1 $DOCKER build --pull --platform linux/amd64 -f "$DOCKERFILE" \
     --build-arg HTTP_PROXY="${HTTP_PROXY:-}" \
     --build-arg HTTPS_PROXY="${HTTPS_PROXY:-}" \
@@ -123,8 +135,14 @@ else
   mkdir -p /tmp/pack && tar -xzf /tmp/pack.tgz -C /tmp/pack
   PACK_BIN=$(find /tmp/pack -type f -name pack -perm -u+x | head -n 1)
   if [ -z "$PACK_BIN" ]; then echo "Cloud Native Buildpacks CLI was not installed" >&2; exit 1; fi
+  PACK_CA_ARGS=()
+  if [ -f /usr/local/share/ca-certificates/vercel-proxy-ca.crt ]; then
+    PACK_CA_ARGS+=(--volume "/usr/local/share/ca-certificates/vercel-proxy-ca.crt:/usr/local/share/ca-certificates/vercel-proxy-ca.crt:ro")
+    PACK_CA_ARGS+=(--env "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/vercel-proxy-ca.crt")
+    PACK_CA_ARGS+=(--env "SSL_CERT_FILE=/usr/local/share/ca-certificates/vercel-proxy-ca.crt")
+  fi
   "$PACK_BIN" build "$IMAGE_REF" --builder paketobuildpacks/builder-jammy-base:latest --path "$WORKSPACE" \
-    --env "HTTP_PROXY=${HTTP_PROXY:-}" --env "HTTPS_PROXY=${HTTPS_PROXY:-}" --env "NO_PROXY=${NO_PROXY:-}"
+    --env "HTTP_PROXY=${HTTP_PROXY:-}" --env "HTTPS_PROXY=${HTTPS_PROXY:-}" --env "NO_PROXY=${NO_PROXY:-}" "${PACK_CA_ARGS[@]}"
 fi
 
 $DOCKER push "$IMAGE_REF"
