@@ -50,6 +50,10 @@ test('reuses a matching Cloudflare Pages project for subsequent commits', async 
     apiToken: 'cf-token', accountId: 'a'.repeat(32), projectName: 'kestrel-demo',
     branch: 'main', commitSha: 'c'.repeat(40),
   }, { fetchImpl: async (url, options) => {
+    if (url.endsWith('/pages/projects/kestrel-demo')) {
+      assert.equal(options.method, 'PATCH');
+      return response({ name: 'kestrel-demo' });
+    }
     assert.equal(url.endsWith('/pages/projects/kestrel-demo/deployments'), true);
     assert.equal(options.body.get('commit_hash'), 'c'.repeat(40));
     return response({ id: 'deploy-2', latest_stage: { name: 'deploy', status: 'active' } });
