@@ -32,6 +32,13 @@ function status(value) {
   return 'unknown';
 }
 
+function assertResolvedCommit(deployment, expectedSha) {
+  const actual = deployment?.services?.map((service) => service.source_commit_hash).filter(Boolean) || [];
+  if (actual.length && actual.some((sha) => sha.toLowerCase() !== expectedSha.toLowerCase())) {
+    throw new Error('DigitalOcean deployed a different Git commit than the verified Kestrel commit');
+  }
+}
+
 function safeName(value) {
   const result = String(value || 'kestrel-app').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
   return result || 'kestrel-app';
@@ -50,7 +57,7 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   };
   if (isStatic) {
     component.build_command = 'npm install && npm run build';
-    component.output_dir = 'dist';
+    component.output_dir = profile.framework === 'create-react-app' ? 'build' : 'dist';
   } else {
     component.build_command = 'npm install && npm run build';
     component.run_command = 'npm start';
@@ -62,8 +69,10 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   const created = await request(accessToken, '/apps', { method: 'POST', fetchImpl, body: { spec } });
   const app = created.app;
   if (!app?.id) throw new Error('DigitalOcean did not return an app identifier');
-  const deployment = await request(accessToken, `/apps/${encodeURIComponent(app.id)}/deployments`, { method: 'POST', fetchImpl, body: { force_build: true } });
-  const deploymentId = deployment.deployment?.id || deployment.id;
+  const deploymentResult = await request(accessToken, `/apps/${encodeURIComponent(app.id)}/deployments`, { method: 'POST', fetchImpl, body: { force_build: true } });
+  const deployment = deploymentResult.deployment || deploymentResult;
+  assertResolvedCommit(deployment, commitSha);
+  const deploymentId = deployment.id;
   if (!deploymentId) throw new Error('DigitalOcean did not return a deployment identifier');
   return { provider: 'digitalocean-app-platform', projectId: app.id, serviceId: component.name, environmentId: null, deploymentId, status: status(deployment.deployment?.phase || deployment.deployment?.status), providerUrl: app.live_url || null };
 }
@@ -71,8 +80,10 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
 export async function deployDigitalOceanApp({ accessToken, appId, commitSha }, { fetchImpl = fetch } = {}) {
   if (!appId) throw new Error('DigitalOcean app identifier is required');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
-  const deployment = await request(accessToken, `/apps/${encodeURIComponent(appId)}/deployments`, { method: 'POST', fetchImpl, body: { force_build: true } });
-  const deploymentId = deployment.deployment?.id || deployment.id;
+  const deploymentResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}/deployments`, { method: 'POST', fetchImpl, body: { force_build: true } });
+  const deployment = deploymentResult.deployment || deploymentResult;
+  assertResolvedCommit(deployment, commitSha);
+  const deploymentId = deployment.id;
   if (!deploymentId) throw new Error('DigitalOcean did not return a deployment identifier');
   return { provider: 'digitalocean-app-platform', projectId: appId, deploymentId, status: status(deployment.deployment?.phase || deployment.deployment?.status) };
 }
