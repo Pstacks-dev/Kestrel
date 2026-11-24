@@ -26,16 +26,19 @@ export function validateProviderCredentials(providerId, credentials) {
     if (typeof credentials[field] !== 'string' || !credentials[field].trim() || credentials[field].length > 20000) return false;
   }
   if (providerId === 'aws-ecs-express') {
+    if (!/^[a-z]{2}(?:-[a-z]+)+-\\d$/.test(credentials.region)) return false;
+    if (credentials.sessionToken !== undefined && (typeof credentials.sessionToken !== 'string' || credentials.sessionToken.length > 20000)) return false;
     const roleArn = /^arn:aws:iam::\d{12}:role\/[A-Za-z0-9+=,.@_\/-]{1,512}$/;
     if (!roleArn.test(credentials.executionRoleArn) || !roleArn.test(credentials.infrastructureRoleArn)) return false;
   }
   if (providerId === 'google-cloud-run') {
+    if (credentials.region !== undefined && !/^[a-z]+-[a-z]+[0-9]$/.test(credentials.region)) return false;
     try {
       const account = JSON.parse(credentials.serviceAccountJson);
       if (account.type !== 'service_account' || !account.client_email || !account.private_key) return false;
     } catch { return false; }
   }
-  const allowed = new Set([...required, 'accountLabel', ...(providerId === 'railway' ? ['workspaceId'] : []), ...(providerId === 'digitalocean-app-platform' ? ['region'] : []), ...(providerId === 'vercel' ? ['teamId'] : [])]);
+  const allowed = new Set([...required, 'accountLabel', ...(providerId === 'railway' ? ['workspaceId'] : []), ...(providerId === 'digitalocean-app-platform' ? ['region'] : []), ...(providerId === 'vercel' ? ['teamId'] : []), ...(providerId === 'google-cloud-run' ? ['region'] : []), ...(providerId === 'aws-ecs-express' ? ['sessionToken'] : [])]);
   if (credentials.workspaceId !== undefined && (typeof credentials.workspaceId !== 'string' || credentials.workspaceId.length > 200)) return false;
   if (providerId === 'digitalocean-app-platform' && credentials.region !== undefined && !/^[a-z]{3}$/.test(credentials.region)) return false;
   if (providerId === 'render' && !/^[A-Za-z0-9_-]{3,100}$/.test(credentials.ownerId)) return false;
