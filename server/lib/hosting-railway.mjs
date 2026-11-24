@@ -34,6 +34,7 @@ function normalizeRailwayStatus(status) {
 
 async function syncRailwayVariables(token, projectId, environmentId, serviceId, variables, fetchImpl) {
   if (!variables || typeof variables !== 'object' || Array.isArray(variables)) throw new Error('Railway environment variables must be an object');
+  if (!Object.keys(variables).length) return;
   for (const [key, value] of Object.entries(variables)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Railway environment variable');
   }
