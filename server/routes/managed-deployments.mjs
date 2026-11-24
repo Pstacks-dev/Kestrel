@@ -89,8 +89,9 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       }
 
       const providerId = selected.id;
-      if (providerId === 'flyio' && !String(req.body?.containerImage || '').trim()) {
-        return fail(res, 422, 'Fly.io requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
+      const containerImage = String(req.body?.containerImage || '').trim();
+      if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
+        return fail(res, 422, 'This provider requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
       }
       const connection = verified.get(providerId);
       let credentials;
@@ -109,8 +110,8 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const providerInput = {
         repositoryUrl: project.repository_url, branch, commitSha, profile,
         projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
-        containerImage: req.body?.containerImage || null,
-        port: req.body?.port || 3000,
+        containerImage,
+        port: req.body?.port || (providerId === 'flyio' ? 3000 : 8080),
         env: req.body?.env || {},
       };
       const providerDeployment = resource
@@ -204,8 +205,11 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
       const current = await getManagedProviderDeployment(row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl });
       await query(
-        `update public.managed_hosting_deployments set status = $2, provider_url = $3, updated_at = now() where id = $1`,
-        [row.id, current.status, current.providerUrl],
+        `update public.managed_hosting_deployments
+         set status = $2, provider_url = $3,
+             provider_deployment_id = coalesce($4, provider_deployment_id), updated_at = now()
+         where id = $1`,
+        [row.id, current.status, current.providerUrl, current.providerDeploymentId || null],
       );
       if (current.providerUrl) {
         await query(
