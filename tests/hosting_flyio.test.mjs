@@ -96,3 +96,11 @@ test('rejects invalid OCI image references before creating Fly resources', async
     token: 'x', orgSlug: 'personal', projectName: 'demo', containerImage: 'not-an-image',
   }, { fetchImpl: async () => assert.fail('Fly API must not be called') }), /published OCI image/);
 });
+
+test('rejects malformed Fly runtime environment variables before creating a Machine', async () => {
+  await assert.rejects(createFlyDeployment({
+    token: 'x', orgSlug: 'personal', projectName: 'demo',
+    containerImage: 'registry.fly.io/demo:sha-12345678',
+    env: { 'BAD KEY': 'secret' },
+  }, { fetchImpl: async () => assert.fail('Fly API must not be called') }), /environment variables/);
+});
