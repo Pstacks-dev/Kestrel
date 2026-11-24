@@ -154,7 +154,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
           [item.id],
         )).rows[0];
         await query(
-          'update public.managed_hosting_automation_queue set image_build_id = $2, status = \'queued\', locked_at = null, available_at = now() + interval \'20 seconds\', updated_at = now() where id = $1',
+          'update public.managed_hosting_automation_queue set image_build_id = $2, status = \'waiting_for_image\', locked_at = null, available_at = now() + interval \'20 seconds\', updated_at = now() where id = $1',
           [item.id, imageBuild.id],
         );
         return { status: 'waiting_for_image', imageBuildId: imageBuild.id, provider: selected.id };
@@ -165,7 +165,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
           return { status: 'skipped' };
         }
         await query(
-          'update public.managed_hosting_automation_queue set status = \'queued\', locked_at = null, available_at = now() + interval \'30 seconds\', updated_at = now() where id = $1',
+          'update public.managed_hosting_automation_queue set status = \'waiting_for_image\', locked_at = null, available_at = now() + interval \'30 seconds\', updated_at = now() where id = $1',
           [item.id],
         );
         return { status: 'waiting_for_image', imageBuildId: imageBuild.id, buildStatus: imageBuild.status };
