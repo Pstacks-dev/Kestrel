@@ -1594,7 +1594,7 @@ app.get('/api/cron/managed-deployments', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized cron request' });
   }
   try {
-    const result = await processManagedHostingQueue({ query, transaction, logger: console }, 5);
+    const result = await processManagedHostingQueue({ query, transaction, logger: console }, 1);
     res.json({ ok: true, ...result, time: now() });
   } catch (error) {
     console.error('Managed deployment cron failed:', { message: error?.message });
