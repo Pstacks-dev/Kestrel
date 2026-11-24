@@ -251,8 +251,9 @@ export async function triggerManagedDeploymentForPipelineRun({ query, transactio
       );
       return inserted.rows[0];
     });
-    await updateTrigger('succeeded', providerId, saved.id, null);
-    return { status: 'succeeded', provider: providerId, deploymentId: saved.id };
+    const triggerStatus = providerDeployment.status === 'live' ? 'succeeded' : 'deploying';
+    await updateTrigger(triggerStatus, providerId, saved.id, null);
+    return { status: triggerStatus, provider: providerId, deploymentId: saved.id };
   } catch (error) {
     await updateTrigger('failed', null, null, error.message || 'Automatic managed deployment failed');
     return { status: 'failed', reason: 'provider deployment failed' };
@@ -444,6 +445,13 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
              provider_deployment_id = coalesce($4, provider_deployment_id), updated_at = now()
          where id = $1`,
         [row.id, current.status, current.providerUrl, current.providerDeploymentId || null],
+      );
+      await query(
+        `update public.managed_hosting_pipeline_triggers
+         set status = case when $2 = 'live' then 'succeeded' when $2 = 'failed' then 'failed' else 'deploying' end,
+             updated_at = now()
+         where managed_deployment_id = $1`,
+        [row.id, current.status],
       );
       if (current.providerUrl) {
         await query(
