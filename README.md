@@ -286,7 +286,7 @@ The initial catalog covers Render, Railway, Fly.io, Google Cloud Run, AWS ECS Ex
 AWS App Runner is not included in the new-customer provider pool: AWS closed it to new customers on 2026-04-30 and recommends ECS Express Mode. ECS Express Mode requires a published OCI image plus task-execution and infrastructure IAM role ARNs; Kestrel's image-publishing pipeline is a prerequisite before this provider can accept production deployments.
  Vercel's container runtime, Netlify Server, and Cloudflare Pages/Workers have distinct runtime constraints; they are not interchangeable with general-purpose container hosts.
 
-This change establishes compatibility-aware provider selection, not live deployment adapters. A provider is deployable only after its adapter, encrypted credential storage, deploy/status/log/rollback operations, and provider-account smoke tests are implemented. No provider is marked live merely because its catalog entry exists.
+Compatibility-aware provider selection and tenant-scoped encrypted credentials are implemented. Railway is the first provider with a managed deploy/status/log/rollback adapter. The other nine providers remain catalogued but are not yet enabled for deployment. No provider is marked production-live until real provider-account deployment smoke tests pass.
 
 
 ### Tenant hosting-provider credentials
