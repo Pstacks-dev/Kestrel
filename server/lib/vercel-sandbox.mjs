@@ -137,7 +137,7 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
             const { value, done } = await reader.read();
             pending += decoder.decode(value || new Uint8Array(), { stream: !done });
             let newline;
-            while ((newline = pending.indexOf('\\n')) >= 0) {
+            while ((newline = pending.indexOf('\n')) >= 0) {
               const line = pending.slice(0, newline).trim();
               pending = pending.slice(newline + 1);
               if (!line) continue;
@@ -147,6 +147,12 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
               else if (item.stream === 'error') throw new SandboxProviderError(item.data?.message || 'Sandbox log stream failed', 502, item.data?.code || 'sandbox_log_stream_error');
             }
             if (done) break;
+          }
+          if (pending.trim() && !controller.signal.aborted) {
+            const item = JSON.parse(pending.trim());
+            if (item.stream === 'stdout') stdout = append(stdout, item.data || '');
+            else if (item.stream === 'stderr') stderr = append(stderr, item.data || '');
+            else if (item.stream === 'error') throw new SandboxProviderError(item.data?.message || 'Sandbox log stream failed', 502, item.data?.code || 'sandbox_log_stream_error');
           }
         } catch (error) {
           if (!controller.signal.aborted) throw error;
