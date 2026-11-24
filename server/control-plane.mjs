@@ -1382,6 +1382,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
        select r.id, p.organization_id, p.id, r.branch, r.commit_sha
        from public.pipeline_runs r join public.projects p on p.id = r.project_id
        where r.id = $1 and r.status = 'succeeded' and r.commit_sha is not null
+         and not exists (select 1 from public.jobs j where j.run_id = r.id and j.job_type = 'deployment')
        on conflict (pipeline_run_id) do nothing`,
       [runId],
     );
