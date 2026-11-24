@@ -155,27 +155,32 @@ export async function startManagedOciBuild({
   const session = created?.session;
   if (!sandbox?.name || !session?.id) throw new Error('Managed build sandbox did not return a running session');
 
-  const command = await sandboxClient.startCommand(session.id, {
-    command: 'bash',
-    args: ['-lc', createManagedOciBuildScript()],
-    cwd: '/vercel/sandbox',
-    timeoutMs: BUILD_TIMEOUT_MS,
-    env: {
-      REPOSITORY_URL: repositoryUrl,
-      COMMIT_SHA: commitSha,
-      REGISTRY_HOST: registry.registryHost,
-      REGISTRY_USER: registry.registryUser,
-      REGISTRY_PASSWORD: registry.registryPassword,
-      IMAGE_REF: registry.imageRef,
-    },
-  });
-  return {
-    sandboxName: sandbox.name,
-    sessionId: session.id,
-    commandId: command.id,
-    imageRef: registry.imageRef,
-    providerMetadata: { appName: registry.appName || null, region: registry.region || credentials.region || null },
-  };
+  try {
+    const command = await sandboxClient.startCommand(session.id, {
+      command: 'bash',
+      args: ['-lc', createManagedOciBuildScript()],
+      cwd: '/vercel/sandbox',
+      timeoutMs: BUILD_TIMEOUT_MS,
+      env: {
+        REPOSITORY_URL: repositoryUrl,
+        COMMIT_SHA: commitSha,
+        REGISTRY_HOST: registry.registryHost,
+        REGISTRY_USER: registry.registryUser,
+        REGISTRY_PASSWORD: registry.registryPassword,
+        IMAGE_REF: registry.imageRef,
+      },
+    });
+    return {
+      sandboxName: sandbox.name,
+      sessionId: session.id,
+      commandId: command.id,
+      imageRef: registry.imageRef,
+      providerMetadata: { appName: registry.appName || null, region: registry.region || credentials.region || null },
+    };
+  } catch (error) {
+    await cleanupManagedOciBuild({ sandboxName: sandbox.name, sessionId: session.id, sandboxClient });
+    throw error;
+  }
 }
 
 export async function pollManagedOciBuild({ sandboxName, sessionId, commandId }, { sandboxClient = createVercelSandboxClient() } = {}) {
@@ -184,6 +189,7 @@ export async function pollManagedOciBuild({ sandboxName, sessionId, commandId },
   const logs = await sandboxClient.getCommandLogs(sessionId, commandId, { maxWaitMs: 1000, maxBytes: 64 * 1024 });
   if (Number(command.exitCode) !== 0) {
     const detail = String(logs.stderr || logs.stdout || 'OCI image build failed').slice(-3000);
+    await cleanupManagedOciBuild({ sandboxName, sessionId, sandboxClient });
     throw new Error(detail);
   }
   const imageRef = String(logs.stdout || '').match(/^KESTREL_IMAGE_REF=(.+)$/m)?.[1]?.trim();
