@@ -285,3 +285,14 @@ Kestrel uses external hosting providers; it does not require Kestrel-owned hosti
 The initial catalog covers Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, DigitalOcean App Platform, Heroku, Vercel, Netlify, and Cloudflare Pages. Vercel's container runtime, Netlify Server, and Cloudflare Pages/Workers have distinct runtime constraints; they are not interchangeable with general-purpose container hosts.
 
 This change establishes compatibility-aware provider selection, not live deployment adapters. A provider is deployable only after its adapter, encrypted credential storage, deploy/status/log/rollback operations, and provider-account smoke tests are implemented. No provider is marked live merely because its catalog entry exists.
+
+
+### Tenant hosting-provider credentials
+
+Workspace owners, admins, and developers can manage provider credentials through the authenticated control plane:
+
+- `GET /api/workspaces/:orgId/hosting/providers` lists provider connection state without returning credentials.
+- `PUT /api/workspaces/:orgId/hosting/providers/:providerId` stores validated credentials encrypted with AES-256-GCM.
+- `DELETE /api/workspaces/:orgId/hosting/providers/:providerId` removes a workspace's provider connection.
+
+Set a strong `KESTREL_ENCRYPTION_KEY` (at least 32 characters) before enabling these endpoints. Credentials are tenant-scoped, never returned by the API, and the table is inaccessible to browser roles. A newly saved connection is marked `configured`, not `verified`; successful API authentication and deployment smoke tests are still required before Kestrel can use it for production deployments. Apply migration `023_managed_hosting_providers.sql` before enabling the endpoints.
