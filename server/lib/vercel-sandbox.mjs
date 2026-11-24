@@ -59,7 +59,7 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
   }
 
   return {
-    async create({ name, vcpus, timeoutMs, region, tags }) {
+    async create({ name, vcpus, timeoutMs, region, tags, source }) {
       const c = credentials();
       const response = await request('/v3/sandboxes', {
         method: 'POST',
@@ -72,6 +72,7 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
           persistent: true,
           region: region || DEFAULT_REGION,
           tags,
+          ...(source ? { source } : {}),
           ports: [],
         },
       });
@@ -164,10 +165,10 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
       }
       return { stdout, stderr, truncated };
     },
-    async runCommand(sessionId, { command, args, cwd, timeoutMs }) {
+    async runCommand(sessionId, { command, args, cwd, timeoutMs, env: commandEnv = {} }) {
       const response = await request(`/v2/sandboxes/sessions/${encodeURIComponent(sessionId)}/cmd`, {
         method: 'POST',
-        body: { command, args, cwd, env: {}, sudo: false, wait: true, timeout: timeoutMs },
+        body: { command, args, cwd, env: commandEnv, sudo: false, wait: true, timeout: timeoutMs },
       });
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/x-ndjson') || !response.body) {
