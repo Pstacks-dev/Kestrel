@@ -85,7 +85,20 @@ export default function ManagedHostingPanel({
     });
     if (response.ok) {
       const data = await response.json();
-      setDeployments(data.deployments || []);
+      const current: Deployment[] = data.deployments || [];
+      const pending = current.filter((deployment) => ['queued', 'deploying', 'building'].includes(deployment.status)).slice(0, 10);
+      const updates = await Promise.all(pending.map(async (deployment) => {
+        try {
+          const detail = await fetch(`${apiBase}/managed-deployments/${deployment.id}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (!detail.ok) return null;
+          const body = await detail.json();
+          return body.deployment as Deployment;
+        } catch { return null; }
+      }));
+      const byId = new Map(updates.filter(Boolean).map((deployment: any) => [deployment.id, deployment]));
+      setDeployments(current.map((deployment) => ({ ...deployment, ...(byId.get(deployment.id) || {}) })));
     }
   }, [apiBase, accessToken, projectId]);
 
