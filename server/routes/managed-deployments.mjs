@@ -147,7 +147,8 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         [project.organization_id],
       );
       const verified = new Map(connectionResult.rows.map((row) => [row.provider_id, row]));
-      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id) && (provider.id !== 'netlify' || (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0)));
+      const containerImage = String(req.body?.containerImage || '').trim();
+      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id) && (!provider.requiresContainerImage || containerImage) && (provider.id !== 'netlify' || (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0)));
       if (!selected) {
         return fail(res, 409, 'No verified compatible managed provider is available. For Netlify static deployments, include artifact IDs from a completed Kestrel build.');
       }
@@ -155,9 +156,8 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const providerId = selected.id;
       const projectEnv = await loadProjectEnvironment(query, project.id);
       const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix) : null;
-      const containerImage = String(req.body?.containerImage || '').trim();
       if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
-        return fail(res, 422, 'This provider requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
+        return fail(res, 422, 'This provider requires a published OCI image. Trigger a successful default-branch Kestrel pipeline to build and publish it automatically.');
       }
       const connection = verified.get(providerId);
       let credentials;
