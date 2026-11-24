@@ -3,7 +3,7 @@ const API = 'https://api.vercel.com';
 function query(teamId) { return teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''; }
 
 async function request(token, path, { method = 'GET', body, teamId, fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(`${API}${path}${query(teamId)}`, {
+  const response = await fetchImpl(`${API}${path}${teamId ? (path.includes('?') ? '&' : '?') + `teamId=${encodeURIComponent(teamId)}` : ''}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
