@@ -45,20 +45,21 @@ async function resolveCommit(repository, branch, suppliedSha, fetchImpl) {
   return sha;
 }
 
-export async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch, artifactPrefix = '') {
+export async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch, artifactPrefix = '', commitSha = null) {
   if (!Array.isArray(artifactIds) || artifactIds.length < 1 || artifactIds.length > 5000 ||
       artifactIds.some((id) => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) ||
       new Set(artifactIds).size !== artifactIds.length) {
     throw Object.assign(new Error('Select between 1 and 5000 unique completed build artifacts for this static deployment'), { status: 422 });
   }
+  if (commitSha !== null && !/^[a-fA-F0-9]{40}$/.test(commitSha)) throw Object.assign(new Error('A valid commit SHA is required for static artifact deployment'), { status: 422 });
   const result = await query(
     `select a.id, a.name, a.object_key, a.size_bytes, a.sha256
      from public.artifacts a
      join public.pipeline_runs r on r.id = a.run_id
      join public.projects p on p.id = r.project_id
-     where a.id = any($1::uuid[]) and p.id = $2 and r.status = 'succeeded'
+     where a.id = any($1::uuid[]) and p.id = $2 and ($3::text is null or r.commit_sha = $3) and r.status = 'succeeded'
        and a.deleted_at is null and (a.expires_at is null or a.expires_at > now())`,
-    [artifactIds, projectId],
+    [artifactIds, projectId, commitSha],
   );
   if (result.rowCount !== artifactIds.length) throw Object.assign(new Error('One or more selected build artifacts are missing or do not belong to this project'), { status: 422 });
   const storageUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
