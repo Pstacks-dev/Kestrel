@@ -1,7 +1,5 @@
 const API = 'https://api.vercel.com';
 
-function query(teamId) { return teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''; }
-
 async function request(token, path, { method = 'GET', body, teamId, fetchImpl = fetch } = {}) {
   const response = await fetchImpl(`${API}${path}${teamId ? (path.includes('?') ? '&' : '?') + `teamId=${encodeURIComponent(teamId)}` : ''}`, {
     method,
@@ -55,6 +53,18 @@ function publicUrl(value) {
 
 async function createProject({ token, teamId, name, repositoryUrl, profile }, { fetchImpl = fetch } = {}) {
   const repo = repository(repositoryUrl);
+  try {
+    const existing = await request(token, `/v9/projects/${encodeURIComponent(name)}`, { teamId, fetchImpl });
+    if (existing.id) {
+      const linkedRepo = existing.link?.repo || existing.gitRepository?.repo;
+      if (linkedRepo && linkedRepo.toLowerCase() !== `${repo.org}/${repo.repo}`.toLowerCase()) {
+        throw new Error('A Vercel project with this name is already linked to another repository');
+      }
+      return { id: existing.id, name: existing.name || name, repo };
+    }
+  } catch (error) {
+    if (error.status !== 404) throw error;
+  }
   const created = await request(token, '/v11/projects', {
     method: 'POST', teamId, fetchImpl,
     body: { name, gitRepository: { type: 'github', repo: `${repo.org}/${repo.repo}` }, ...(framework(profile) ? { framework: framework(profile) } : {}) },
