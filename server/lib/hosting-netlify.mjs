@@ -6,13 +6,12 @@ async function request(token, path, { method = 'GET', body, rawBody, contentType
   const response = await fetchImpl(`${API}${path}`, {
     method,
     headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
+      Authorization: `Bearer ${token}`, Accept: 'application/json',
       ...(body ? { 'content-type': 'application/json' } : {}),
-      ...(rawBody ? { 'content-type': contentType || 'application/octet-stream' } : {}),
+      ...(rawBody !== undefined ? { 'content-type': contentType || 'application/octet-stream' } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
-    ...(rawBody ? { body: rawBody } : {}),
+    ...(rawBody !== undefined ? { body: rawBody } : {}),
     signal: AbortSignal.timeout(30000),
   });
   if (response.status === 204) return {};
@@ -38,28 +37,24 @@ function normalizeFiles(files) {
   const normalized = [];
   const seen = new Set();
   for (const file of files) {
-    const path = String(file?.path || '').replace(/^\/+/, '');
-    if (!path || path.length > 1024 || path.includes('\\') || path.includes('\0') ||
+    const path = String(file?.path || '');
+    if (!path || path.startsWith('/') || path.length > 1024 || path.includes('\\') || path.includes('\0') ||
         path.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error('Invalid static artifact path');
     if (seen.has(path)) throw new Error('Static artifact contains duplicate file paths');
     seen.add(path);
-    if (typeof file.contentBase64 !== 'string' || file.contentBase64.length > 14_000_000) throw new Error('Static artifact file content must be base64 encoded');
-    const content = Buffer.from(file.contentBase64, 'base64');
-    if (!content.length && file.contentBase64 !== '') throw new Error('Invalid base64 artifact content');
+    if (typeof file.content !== 'string' && !Buffer.isBuffer(file.content)) throw new Error('Static artifact file bytes are required');
+    const content = Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content, 'base64');
     total += content.length;
     if (total > 50 * 1024 * 1024) throw new Error('Netlify static artifact exceeds the 50 MiB API upload limit');
-    normalized.push({ path, content, sha1: requireSha1(content) });
+    normalized.push({ path, content, sha1: crypto.createHash('sha1').update(content).digest('hex') });
   }
   return normalized;
 }
 
-function requireSha1(content) { return crypto.createHash('sha1').update(content).digest('hex'); }
-
 function state(value) {
   if (value === 'ready') return 'live';
   if (value === 'error' || value === 'rejected') return 'failed';
-  if (value === 'enqueued' || value === 'building' || value === 'uploading' || value === 'new') return 'deploying';
-  if (value === 'uploaded' || value === 'prepared' || value === 'processing' || value === 'processed') return 'deploying';
+  if (['enqueued', 'building', 'uploading', 'new', 'uploaded', 'prepared', 'processing', 'processed'].includes(value)) return 'deploying';
   return 'queued';
 }
 
@@ -81,12 +76,11 @@ async function deployFiles({ token, siteId, files, branch = 'main', commitSha },
   const manifest = Object.fromEntries(normalized.map((file) => [file.path, file.sha1]));
   const deploy = await request(token, `/sites/${encodeURIComponent(siteId)}/deploys`, {
     method: 'POST', fetchImpl,
-    body: { files: manifest, branch, ...(commitSha ? { commit_sha: commitSha } : {}), async: false },
+    body: { files: manifest, branch, ...(commitSha ? { commit_sha: commitSha } : {}) },
   });
   if (!deploy.id) throw new Error('Netlify did not return a deployment identifier');
   const byPath = new Map(normalized.map((file) => [file.path, file]));
-  const required = Array.isArray(deploy.required) ? deploy.required : [];
-  for (const requiredPath of required) {
+  for (const requiredPath of deploy.required || []) {
     const file = byPath.get(requiredPath);
     if (!file) throw new Error(`Netlify requested an artifact that Kestrel did not provide: ${requiredPath}`);
     await request(token, `/deploys/${encodeURIComponent(deploy.id)}/files/${requiredPath.split('/').map(encodeURIComponent).join('/')}`, {
@@ -94,9 +88,8 @@ async function deployFiles({ token, siteId, files, branch = 'main', commitSha },
     });
   }
   return {
-    provider: 'netlify', deploymentId: deploy.id,
-    status: state(deploy.state), providerUrl: deploy.ssl_url || deploy.url || null,
-    buildId: deploy.build_id || null,
+    provider: 'netlify', deploymentId: deploy.id, status: state(deploy.state),
+    providerUrl: deploy.ssl_url || deploy.url || null, buildId: deploy.build_id || null,
   };
 }
 
@@ -117,8 +110,7 @@ export async function getNetlifyDeployment({ authToken, deploymentId }, { fetchI
   return {
     provider: 'netlify', deploymentId, providerStatus: deploy.state || 'unknown',
     status: state(deploy.state), providerUrl: deploy.ssl_url || deploy.url || null,
-    canRollback: deploy.state === 'ready',
-    buildId: deploy.build_id || null,
+    canRollback: deploy.state === 'ready', buildId: deploy.build_id || null,
   };
 }
 
