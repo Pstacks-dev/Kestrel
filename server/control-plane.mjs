@@ -1811,7 +1811,7 @@ app.get('/api/admin/audit', userAuth, platformAdmin, async (_req, res) => {
 
 // Periodic Lease Recovery (can also be invoked by Vercel Cron via /api/cron/recovery)
 app.get('/api/cron/recovery', async (req, res) => {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = process.env.KESTREL_CRON_SECRET || process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
   if (!cronSecret) return res.status(503).json({ error: 'Cron authentication is not configured' });
   if (authHeader !== `Bearer ${cronSecret}`) {
@@ -1825,8 +1825,8 @@ app.get('/api/cron/recovery', async (req, res) => {
   }
 });
 
-// Process durable post-CI managed deployment events. Configure this endpoint as a Vercel Cron
-// when running serverless; standalone mode also runs its own bounded queue poller.
+// Process durable post-CI managed deployment events. Supabase Cron invokes this endpoint
+// every minute on Hobby deployments; standalone mode also runs its own bounded queue poller.
 app.get('/api/cron/managed-deployments', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) return res.status(503).json({ error: 'Cron authentication is not configured' });

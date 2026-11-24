@@ -124,3 +124,20 @@ test('org authorization SECURITY DEFINER helpers are moved out of the exposed pu
   assert.match(sql, /revoke all on function private\.is_org_member\(uuid\) from public, anon, authenticated/i);
   assert.match(sql, /grant execute on function private\.is_org_member\(uuid\) to authenticated, service_role/i);
 });
+
+test('Supabase managed scheduler enables pg_cron and pg_net', async () => {
+  const sql = await readFile(new URL('../db/migrations/030_supabase_managed_scheduler.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create extension if not exists pg_cron/i);
+  assert.match(sql, /create extension if not exists pg_net/i);
+  assert.match(sql, /cron\.schedule\(\s*'kestrel-managed-deployments'/i);
+  assert.match(sql, /cron\.schedule\(\s*'kestrel-lease-recovery'/i);
+  assert.match(sql, /vault\.decrypted_secrets/i);
+  assert.doesNotMatch(sql, /Bearer [A-Za-z0-9_-]{20,}/i);
+});
+
+test('Vercel Hobby configuration does not schedule frequent managed cron jobs', async () => {
+  const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  assert.equal(config.crons.some((job) => job.path === '/api/cron/managed-deployments'), false);
+  assert.equal(config.crons.some((job) => job.path === '/api/cron/recovery'), false);
+  assert.equal(config.crons.some((job) => job.schedule === '* * * * *'), false);
+});
