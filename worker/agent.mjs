@@ -293,13 +293,13 @@ async function ensureJobImage() {
   });
 }
 
-async function runGit(args, cwd, onLine) {
+async function runGit(args, cwd, onLine, extraEnv = {}) {
   return new Promise((resolve) => {
     const start = Date.now();
     const child = spawn('git', args, {
       cwd,
       shell: false,
-      env: { ...process.env, CI: 'true', GIT_TERMINAL_PROMPT: '0' },
+      env: { ...process.env, ...extraEnv, CI: 'true', GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -514,7 +514,7 @@ async function executeManagedImageBuild(build) {
   const startedAt = Date.now();
   await fs.mkdir(ROOT, { recursive: true });
   const workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
-  const secretValues = [build.registryUsername, build.registryPassword].filter(Boolean);
+  const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
   let leaseLost = false;
   const heartbeat = setInterval(async () => {
     try {
@@ -526,13 +526,18 @@ async function executeManagedImageBuild(build) {
   try {
     const repository = new URL(build.repositoryUrl);
     if (repository.protocol !== 'https:' || repository.hostname !== 'github.com' || repository.username || repository.password) {
-      throw new Error('Managed OCI builds currently require a credential-free public GitHub repository');
+      throw new Error('Managed OCI builds require an HTTPS GitHub repository');
     }
+    const gitAuthEnv = build.sourceToken ? {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.extraheader',
+      GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + build.sourceToken).toString('base64'),
+    } : {};
     const clone = await runGit(['clone', '--no-checkout', '--filter=blob:none', '--', build.repositoryUrl, workspace], workspace,
-      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)));
-    if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build');
+      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+    if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build; verify the connected GitHub App has repository access');
     const fetch = await runGit(['fetch', '--depth=1', 'origin', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)));
+      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv);
     if (fetch.exitCode !== 0) throw new Error('Could not fetch the exact pipeline commit for OCI build');
     const checkout = await runGit(['checkout', '--detach', build.commitSha], workspace,
       (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)));
