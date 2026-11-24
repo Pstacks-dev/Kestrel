@@ -28,6 +28,7 @@ import { registerGitImportRoutes } from './routes/git-import.mjs';
 import { registerHostingRoutes } from './routes/hosting.mjs';
 import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
+import { processManagedDeploymentRun, processManagedDeploymentQueue } from './lib/managed-deployment-automation.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1342,7 +1343,7 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
 
   const runId = r.rows[0].run_id;
 
-  await transaction(async (c) => {
+  const pipelineStatus = await transaction(async (c) => {
     const completedStatus = r.rows[0].status;
     const deploymentJob = await c.query(
       'select deployment_release_id from public.jobs where id = $1 and job_type = \'deployment\'',
@@ -1408,14 +1409,38 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
       [runId]
     );
 
+    const pipeline = await c.query('select status from public.pipeline_runs where id = $1', [runId]);
+
     const remaining = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [req.worker.id]);
     await c.query(
       "update public.workers set state = case when state in ('draining', 'offline') then state when $2 > 0 then 'busy' else 'online' end, last_seen_at = now() where id = $1",
       [req.worker.id, remaining.rows[0].n]
     );
+    return pipeline.rows[0]?.status || 'running';
   });
 
-  res.json({ ok: true, status: r.rows[0].status });
+  if (pipelineStatus === 'succeeded') {
+    try {
+      await processManagedDeploymentRun({ runId, query, transaction });
+    } catch (error) {
+      console.error('Automatic managed deployment enqueue failed:', { runId, code: error.code || 'QUEUE_ERROR' });
+    }
+  }
+
+  res.json({ ok: true, status: r.rows[0].status, pipelineStatus });
+});
+
+app.post('/api/cron/managed-hosting-deployments/process', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return res.status(503).json({ error: 'Managed deployment retry cron is not configured' });
+  if (req.headers.authorization !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const results = await processManagedDeploymentQueue({ query, transaction, limit: req.body?.limit || 10 });
+    res.json({ ok: true, processed: results.length, results });
+  } catch (error) {
+    console.error('Managed deployment retry queue failed:', { code: error.code || 'QUEUE_ERROR' });
+    res.status(500).json({ error: 'Could not process managed deployment queue' });
+  }
 });
 
 // Artifact bytes are uploaded through registerArtifactRoutes; metadata-only registration is intentionally disabled.
