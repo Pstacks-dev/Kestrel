@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createRailwayDeployment, getRailwayDeployment,
+  createRailwayDeployment, deployRailwayService, getRailwayDeployment,
   getRailwayDeploymentLogs, rollbackRailwayDeployment,
 } from '../server/lib/hosting-railway.mjs';
 
@@ -90,4 +90,20 @@ test('rolls back only deployments Railway marks as rollback-capable', async () =
   assert.equal(calls.length, 2);
   assert.equal(result.deploymentId, 'rollback-1');
   assert.equal(result.status, 'deploying');
+});
+
+test('deploys new commits to an existing Railway service without creating duplicate projects', async () => {
+  let request;
+  const result = await deployRailwayService({
+    token: 'railway-token', serviceId: 'service-1', environmentId: 'env-1', commitSha: 'b'.repeat(40),
+  }, {
+    fetchImpl: async (_url, options) => {
+      request = JSON.parse(options.body);
+      return response({ serviceInstanceDeployV2: 'deployment-2' });
+    },
+  });
+  assert.equal(request.query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(request.variables.serviceId, 'service-1');
+  assert.equal(request.variables.environmentId, 'env-1');
+  assert.equal(result.deploymentId, 'deployment-2');
 });
