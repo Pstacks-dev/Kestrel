@@ -77,3 +77,15 @@ test('rejects unsafe artifact paths before download', async () => withStorageEnv
   );
   assert.equal(downloaded, false);
 }));
+
+test('rejects successful artifacts produced by a different commit', async () => withStorageEnv(async () => {
+  let parameters;
+  await assert.rejects(
+    loadStaticArtifactFiles(async (_sql, values) => {
+      parameters = values;
+      return { rowCount: 0, rows: [] };
+    }, 'project-1', [artifact.id], async () => new Response(bytes), '', 'b'.repeat(40)),
+    /missing or do not belong/,
+  );
+  assert.equal(parameters[2], 'b'.repeat(40));
+}));
