@@ -124,13 +124,13 @@ if [ -f "$WORKSPACE/Dockerfile" ] || [ -f "$WORKSPACE/dockerfile" ]; then
     DOCKERFILE="$DOCKERFILE.kestrel"
   fi
   DOCKER_BUILDKIT=1 $DOCKER build --pull --platform linux/amd64 -f "$DOCKERFILE" \
-    --build-arg HTTP_PROXY="${HTTP_PROXY:-}" \
-    --build-arg HTTPS_PROXY="${HTTPS_PROXY:-}" \
-    --build-arg NO_PROXY="${NO_PROXY:-}" \
+    --build-arg HTTP_PROXY="\${HTTP_PROXY:-}" \
+    --build-arg HTTPS_PROXY="\${HTTPS_PROXY:-}" \
+    --build-arg NO_PROXY="\${NO_PROXY:-}" \
     --tag "$IMAGE_REF" .
 else
   PACK_VERSION=0.37.0
-  curl -fsSL "https://github.com/buildpacks/pack/releases/download/v${PACK_VERSION}/pack-v${PACK_VERSION}-linux.tgz" -o /tmp/pack.tgz
+  curl -fsSL "https://github.com/buildpacks/pack/releases/download/v\${PACK_VERSION}/pack-v\${PACK_VERSION}-linux.tgz" -o /tmp/pack.tgz
   mkdir -p /tmp/pack && tar -xzf /tmp/pack.tgz -C /tmp/pack
   PACK_BIN=$(find /tmp/pack -type f -name pack -perm -u+x | head -n 1)
   if [ -z "$PACK_BIN" ]; then echo "Cloud Native Buildpacks CLI was not installed" >&2; exit 1; fi
@@ -141,7 +141,7 @@ else
     PACK_CA_ARGS+=(--env "SSL_CERT_FILE=/usr/local/share/ca-certificates/vercel-proxy-ca.crt")
   fi
   "$PACK_BIN" build "$IMAGE_REF" --builder paketobuildpacks/builder-jammy-base:latest --path "$WORKSPACE" \
-    --env "HTTP_PROXY=${HTTP_PROXY:-}" --env "HTTPS_PROXY=${HTTPS_PROXY:-}" --env "NO_PROXY=${NO_PROXY:-}" "${PACK_CA_ARGS[@]}"
+    --env "HTTP_PROXY=\${HTTP_PROXY:-}" --env "HTTPS_PROXY=\${HTTPS_PROXY:-}" --env "NO_PROXY=\${NO_PROXY:-}" "\${PACK_CA_ARGS[@]}"
 fi
 
 $DOCKER push "$IMAGE_REF"
