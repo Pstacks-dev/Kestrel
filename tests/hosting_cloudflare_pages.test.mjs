@@ -48,10 +48,11 @@ test('creates a Git-connected Pages project and deploys an exact commit', async 
 test('reuses a matching Cloudflare Pages project for subsequent commits', async () => {
   const result = await deployCloudflarePagesProject({
     apiToken: 'cf-token', accountId: 'a'.repeat(32), projectName: 'kestrel-demo',
-    branch: 'main', commitSha: 'c'.repeat(40),
+    branch: 'main', commitSha: 'c'.repeat(40), env: { API_KEY: 'secret' },
   }, { fetchImpl: async (url, options) => {
     if (url.endsWith('/pages/projects/kestrel-demo')) {
       assert.equal(options.method, 'PATCH');
+      assert.equal(JSON.parse(options.body).deployment_configs.production.env_vars.API_KEY.type, 'secret_text');
       return response({ name: 'kestrel-demo' });
     }
     assert.equal(url.endsWith('/pages/projects/kestrel-demo/deployments'), true);
