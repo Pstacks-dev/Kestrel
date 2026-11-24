@@ -10,6 +10,8 @@ create table if not exists public.hosting_provider_connections (
   credentials_iv text not null,
   credentials_auth_tag text not null,
   account_label text,
+  last_verified_at timestamptz,
+  last_error text,
   status text not null default 'configured'
     check (status in ('configured','verified','error')),
   connected_by uuid references auth.users(id) on delete set null,
