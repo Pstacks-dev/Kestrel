@@ -113,11 +113,25 @@ test('rolls back by updating the service to a retained prior revision image', as
     ...credentials, serviceArn: 'arn:aws:ecs:us-east-1:123456789012:service/default/demo',
     deploymentId: 'arn:aws:ecs:us-east-1:123456789012:service-revision/demo/previous',
   }, { fetchImpl: async (url, options) => {
-    if (options.headers['x-amz-target'].endsWith('.DescribeExpressGatewayService')) return response({ service: service() });
+    const target = options.headers['x-amz-target'];
+    if (target.endsWith('.DescribeServiceRevisions')) {
+      assert.equal(JSON.parse(options.body).serviceRevisionArns[0].endsWith('/previous'), true);
+      return response({ serviceRevisions: [{
+        serviceRevisionArn: 'arn:aws:ecs:us-east-1:123456789012:service-revision/demo/previous',
+        taskDefinitionArn: 'arn:aws:ecs:us-east-1:123456789012:task-definition/demo:2',
+        healthCheckPath: '/health', cpu: '1024', memory: '2048',
+      }] });
+    }
+    if (target.endsWith('.DescribeTaskDefinition')) return response({ taskDefinition: { containerDefinitions: [{
+      name: 'Main', image: '123456789012.dkr.ecr.us-east-1.amazonaws.com/demo:previous',
+      portMappings: [{ protocol: 'tcp', containerPort: 8080 }],
+      environment: [{ name: 'NODE_ENV', value: 'production' }],
+    }] } });
     const body = JSON.parse(options.body);
-    assert.equal(options.headers['x-amz-target'], 'AmazonEC2ContainerServiceV20141113.UpdateExpressGatewayService');
+    assert.equal(target, 'AmazonEC2ContainerServiceV20141113.UpdateExpressGatewayService');
     assert.match(body.primaryContainer.image, /:previous$/);
     assert.equal(body.primaryContainer.environment[0].name, 'NODE_ENV');
+    assert.equal(body.healthCheckPath, '/health');
     return response({ service: service('UPDATING', 'arn:aws:ecs:us-east-1:123456789012:service-revision/demo/rollback') });
   } });
   assert.match(result.deploymentId, /service-revision\/demo\/rollback$/);
