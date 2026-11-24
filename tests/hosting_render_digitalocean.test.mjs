@@ -67,6 +67,7 @@ test('creates a DigitalOcean App Platform app and starts its first deployment', 
   assert.equal(spec.services[0].github.deploy_on_push, false);
   assert.equal(result.projectId, 'app-1');
   assert.equal(result.deploymentId, 'do-dep-1');
+  assert.equal(result.status, 'queued');
 });
 
 test('deploys, polls and rolls back a DigitalOcean app', async () => {
@@ -74,6 +75,7 @@ test('deploys, polls and rolls back a DigitalOcean app', async () => {
     fetchImpl: async () => response({ deployment: { id: 'do-dep-2', phase: 'PENDING' } }, 201),
   });
   assert.equal(deployed.deploymentId, 'do-dep-2');
+  assert.equal(deployed.status, 'queued');
   const current = await getDigitalOceanDeployment({ accessToken: 'x', appId: 'app-1', deploymentId: 'do-dep-2' }, {
     fetchImpl: async (url) => url.endsWith('/apps/app-1')
       ? response({ app: { id: 'app-1', live_url: 'https://demo.ondigitalocean.app' } })
