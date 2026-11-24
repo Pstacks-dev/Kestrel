@@ -17,7 +17,7 @@ import {
   createRailwayDeployment, deployRailwayService, getRailwayDeployment, getRailwayDeploymentLogs, rollbackRailwayDeployment,
 } from './hosting-railway.mjs';
 
-export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel'];
+export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'netlify'];
 
 export async function createManagedProviderDeployment(provider, credentials, input, options) {
   if (provider === 'render') return createRenderDeployment({ ...input, ...credentials }, options);
