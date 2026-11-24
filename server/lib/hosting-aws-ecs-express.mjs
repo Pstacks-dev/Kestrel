@@ -112,7 +112,7 @@ export async function getEcsExpressDeployment({ accessKeyId, secretAccessKey, se
     providerStatus: status || 'UNKNOWN',
     status: ready ? 'live' : status === 'INACTIVE' ? 'failed' : 'deploying',
     providerUrl: endpoint(service),
-    canRollback: (service.activeConfigurations || []).some((item) => item.serviceRevisionArn && item.serviceRevisionArn !== current),
+    canRollback: Boolean(current),
   };
 }
 
