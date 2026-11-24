@@ -45,13 +45,27 @@ test('creates a Git-connected Pages project and deploys an exact commit', async 
   assert.equal(result.status, 'deploying');
 });
 
-test('reuses a matching Cloudflare Pages project for subsequent commits', async () => {
+test('reuses a matching Cloudflare Pages project and disables native Git deployments', async () => {
+  const calls = [];
   const result = await deployCloudflarePagesProject({
     apiToken: 'cf-token', accountId: 'a'.repeat(32), projectName: 'kestrel-demo',
     branch: 'main', commitSha: 'c'.repeat(40), env: { API_KEY: 'secret' },
-  }, { fetchImpl: async (url, options) => {
-    if (url.endsWith('/pages/projects/kestrel-demo')) {
-      assert.equal(options.method, 'PATCH');
+  }, { fetchImpl: async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/pages/projects/kestrel-demo') && !options.method) {
+      return response({ name: 'kestrel-demo', source: { type: 'github', config: {
+        owner: 'acme', repo_name: 'demo', production_branch: 'main',
+        deployments_enabled: true, production_deployments_enabled: true, preview_deployment_setting: 'all',
+      } } });
+    }
+    if (url.endsWith('/pages/projects/kestrel-demo') && options.method === 'PATCH' && JSON.parse(options.body).source) {
+      const config = JSON.parse(options.body).source.config;
+      assert.equal(config.deployments_enabled, false);
+      assert.equal(config.production_deployments_enabled, false);
+      assert.equal(config.preview_deployment_setting, 'none');
+      return response({ name: 'kestrel-demo' });
+    }
+    if (url.endsWith('/pages/projects/kestrel-demo') && options.method === 'PATCH') {
       assert.equal(JSON.parse(options.body).deployment_configs.production.env_vars.API_KEY.type, 'secret_text');
       return response({ name: 'kestrel-demo' });
     }
@@ -59,9 +73,9 @@ test('reuses a matching Cloudflare Pages project for subsequent commits', async 
     assert.equal(options.body.get('commit_hash'), 'c'.repeat(40));
     return response({ id: 'deploy-2', latest_stage: { name: 'deploy', status: 'active' } });
   } });
+  assert.equal(calls.length, 4);
   assert.equal(result.deploymentId, 'deploy-2');
 });
-
 test('polls Pages deployment stage and provider URL', async () => {
   const result = await getCloudflarePagesDeployment({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'kestrel-demo', deploymentId: 'deploy-1',
