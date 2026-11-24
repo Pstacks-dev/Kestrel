@@ -65,7 +65,7 @@ test('retrieves Heroku build output and rolls back to a previous release', async
     fetchImpl: async (url, options) => {
       if (url.endsWith('/builds/build-old')) return response({ id: 'build-old', status: 'succeeded', release: { id: 'release-old' } });
       assert.equal(url.endsWith('/apps/app-1/releases'), true);
-      assert.deepEqual(JSON.parse(options.body), { rollback: { release: 'release-old' } });
+      assert.deepEqual(JSON.parse(options.body), { release: 'release-old' });
       return response({ id: 'release-rollback' }, 201);
     },
   });
