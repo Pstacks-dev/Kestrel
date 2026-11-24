@@ -1383,13 +1383,13 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
     );
   });
 
-  const pipelineState = await query('select status from public.pipeline_runs where id = $1', [runId]);
-  if (pipelineState.rows[0]?.status === 'succeeded') {
-    try {
+  try {
+    const pipelineState = await query('select status from public.pipeline_runs where id = $1', [runId]);
+    if (pipelineState.rows[0]?.status === 'succeeded') {
       await triggerManagedDeploymentForPipelineRun({ query, transaction }, runId);
-    } catch (error) {
-      console.error('Automatic managed deployment trigger failed:', { runId, code: error.code || 'TRIGGER_ERROR' });
     }
+  } catch (error) {
+    console.error('Automatic managed deployment trigger failed:', { runId, code: error.code || 'TRIGGER_ERROR' });
   }
   res.json({ ok: true, status: r.rows[0].status });
 });
