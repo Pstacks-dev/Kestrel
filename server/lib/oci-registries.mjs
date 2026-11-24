@@ -105,7 +105,7 @@ async function ecrRequest(credentials, action, payload, fetchImpl) {
   const region = credentials.region;
   const host = `api.ecr.${region}.amazonaws.com`;
   const body = JSON.stringify(payload || {});
-  const amzDate = new Date().toISOString().replace(/[:-]|\\.\\d{3}/g, '');
+  const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
   const date = amzDate.slice(0, 8);
   const headers = {
     'content-type': 'application/x-amz-json-1.1', host, 'x-amz-date': amzDate,
@@ -113,10 +113,10 @@ async function ecrRequest(credentials, action, payload, fetchImpl) {
   };
   if (credentials.sessionToken) headers['x-amz-security-token'] = credentials.sessionToken;
   const signedHeaders = Object.keys(headers).sort().join(';');
-  const canonicalHeaders = Object.keys(headers).sort().map((key) => `${key}:${headers[key]}\\n`).join('');
-  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, crypto.createHash('sha256').update(body).digest('hex')].join('\\n');
+  const canonicalHeaders = Object.keys(headers).sort().map((key) => `${key}:${headers[key]}\n`).join('');
+  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, crypto.createHash('sha256').update(body).digest('hex')].join('\n');
   const scope = `${date}/${region}/ecr/aws4_request`;
-  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\\n');
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
   headers.Authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${crypto.createHmac('sha256', awsSigningKey(credentials.secretAccessKey, date, region, 'ecr')).update(stringToSign).digest('hex')}`;
   const response = await fetchImpl(`https://${host}/`, { method: 'POST', headers, body, signal: AbortSignal.timeout(30000) });
   const result = await response.json().catch(() => ({}));
