@@ -5,7 +5,7 @@ const LOGGING_API = 'https://logging.googleapis.com/v2';
 
 function encode(value) { return Buffer.from(JSON.stringify(value)).toString('base64url'); }
 
-async function accessToken(serviceAccountJson, fetchImpl = fetch, now = Date.now()) {
+export async function getGoogleAccessToken(serviceAccountJson, fetchImpl = fetch, now = Date.now()) {
   const account = typeof serviceAccountJson === 'string' ? JSON.parse(serviceAccountJson) : serviceAccountJson;
   if (account.type !== 'service_account' || !account.client_email || !account.private_key) throw new Error('A valid Google service account is required');
   const issuedAt = Math.floor(now / 1000);
@@ -86,7 +86,7 @@ async function startOperation(token, operation, fetchImpl) {
 export async function createCloudRunDeployment({ serviceAccountJson, projectId, region = 'us-central1', projectName, containerImage, port, env, maxInstances, cpu, memory }, { fetchImpl = fetch } = {}) {
   if (!projectId) throw new Error('Google Cloud project ID is required');
   const image = validateImage(containerImage);
-  const token = await accessToken(serviceAccountJson, fetchImpl);
+  const token = await getGoogleAccessToken(serviceAccountJson, fetchImpl);
   const name = serviceName(projectName);
   const operation = await request(token, `/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(region)}/services?serviceId=${encodeURIComponent(name)}`, {
     method: 'POST', fetchImpl,
@@ -97,7 +97,7 @@ export async function createCloudRunDeployment({ serviceAccountJson, projectId, 
 
 export async function deployCloudRunService({ serviceAccountJson, projectId, region = 'us-central1', serviceName: name, containerImage, port, env, maxInstances, cpu, memory }, { fetchImpl = fetch } = {}) {
   const image = validateImage(containerImage);
-  const token = await accessToken(serviceAccountJson, fetchImpl);
+  const token = await getGoogleAccessToken(serviceAccountJson, fetchImpl);
   const operation = await request(token, `${servicePath(projectId, region, name)}?updateMask=template.containers,template.scaling`, {
     method: 'PATCH', fetchImpl,
     body: { template: serviceTemplate({ image, port, env, maxInstances, cpu, memory }) },
@@ -106,7 +106,7 @@ export async function deployCloudRunService({ serviceAccountJson, projectId, reg
 }
 
 export async function getCloudRunDeployment({ serviceAccountJson, projectId, region = 'us-central1', serviceName: name, deploymentId }, { fetchImpl = fetch } = {}) {
-  const token = await accessToken(serviceAccountJson, fetchImpl);
+  const token = await getGoogleAccessToken(serviceAccountJson, fetchImpl);
   let operation = null;
   if (deploymentId.includes('/operations/')) {
     operation = await request(token, `/${deploymentId.replace(/^\/+/, '')}`, { fetchImpl });
@@ -128,7 +128,7 @@ export async function getCloudRunDeployment({ serviceAccountJson, projectId, reg
 }
 
 export async function getCloudRunDeploymentLogs({ serviceAccountJson, projectId, region = 'us-central1', serviceName: name, deploymentId }, { fetchImpl = fetch } = {}) {
-  const token = await accessToken(serviceAccountJson, fetchImpl);
+  const token = await getGoogleAccessToken(serviceAccountJson, fetchImpl);
   const filter = [
     'resource.type="cloud_run_revision"',
     `resource.labels.service_name="${name}"`,
@@ -149,7 +149,7 @@ export async function getCloudRunDeploymentLogs({ serviceAccountJson, projectId,
 export async function rollbackCloudRunDeployment({ serviceAccountJson, projectId, region = 'us-central1', serviceName: name, deploymentId }, { fetchImpl = fetch } = {}) {
   const revision = deploymentId.split('/').pop();
   if (!/^[-a-z0-9]{1,63}-[a-f0-9]{8,10}$/.test(revision)) throw new Error('A Cloud Run revision identifier is required for rollback');
-  const token = await accessToken(serviceAccountJson, fetchImpl);
+  const token = await getGoogleAccessToken(serviceAccountJson, fetchImpl);
   const operation = await request(token, `${servicePath(projectId, region, name)}?updateMask=traffic`, {
     method: 'PATCH', fetchImpl,
     body: { traffic: [{ type: 'TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION', revision, percent: 100 }] },
