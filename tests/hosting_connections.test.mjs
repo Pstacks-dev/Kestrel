@@ -9,6 +9,9 @@ test('validates required credential shapes for the six initial full-stack provid
   assert.equal(validateProviderCredentials('aws-ecs-express', { accessKeyId: 'key', secretAccessKey: 'secret', region: 'us-east-1', executionRoleArn: 'arn:aws:iam::123456789012:role/ecsExecution', infrastructureRoleArn: 'arn:aws:iam::123456789012:role/ecsInfrastructure' }), true);
   assert.equal(validateProviderCredentials('digitalocean-app-platform', { accessToken: 'do-token' }), true);
   assert.equal(validateProviderCredentials('heroku', { apiKey: 'heroku-token' }), true);
+  assert.equal(validateProviderCredentials('vercel', { token: 'vercel-token' }), true);
+  assert.equal(validateProviderCredentials('vercel', { token: 'vercel-token', teamId: 'team-123' }), true);
+  assert.equal(validateProviderCredentials('vercel', { token: 'vercel-token', teamId: 42 }), false);
 });
 
 test('requires a valid Google service account document', () => {
