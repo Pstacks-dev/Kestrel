@@ -296,7 +296,7 @@ Workspace owners, admins, and developers can manage provider credentials through
 - `GET /api/workspaces/:orgId/hosting/providers` lists provider connection state without returning credentials.
 - `PUT /api/workspaces/:orgId/hosting/providers/:providerId` stores validated credentials encrypted with AES-256-GCM.
 - `DELETE /api/workspaces/:orgId/hosting/providers/:providerId` removes a workspace's provider connection.
-- `POST /api/workspaces/:orgId/hosting/providers/:providerId/verify` validates stored credentials against the provider API for Render, Railway, Fly.io, Google Cloud Run, AWS ECS API (for ECS Express Mode credentials), DigitalOcean, and Heroku. Successful authentication marks the connection `verified`; it does not mean an application has been deployed.
+- `POST /api/workspaces/:orgId/hosting/providers/:providerId/verify` validates stored credentials against the provider API for Render, Railway, Fly.io, Google Cloud Run, AWS ECS API (for ECS Express Mode credentials), DigitalOcean, and Heroku, and Vercel. Successful authentication marks the connection `verified`; it does not mean an application has been deployed.
 
 
 Set a strong `KESTREL_ENCRYPTION_KEY` (at least 32 characters) before enabling these endpoints. Credentials are tenant-scoped, never returned by the API, and the table is inaccessible to browser roles. A newly saved connection is marked `configured`, not `verified`; successful API authentication and deployment smoke tests are still required before Kestrel can use it for production deployments. Apply migration `023_managed_hosting_providers.sql` before enabling the endpoints.

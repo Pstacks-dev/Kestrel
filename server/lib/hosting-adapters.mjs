@@ -101,6 +101,14 @@ export async function verifyHostingProvider(providerId, credentials, { fetchImpl
       await requireOk(response);
       const digitalocean = await response.json();
       return { verified: true, account: digitalocean.account?.email || 'DigitalOcean API authenticated' };
+    case 'vercel':
+      response = await fetchImpl(`https://api.vercel.com/v2/user${credentials.teamId ? `?teamId=${encodeURIComponent(credentials.teamId)}` : ''}`, {
+        headers: { Authorization: `Bearer ${credentials.token}`, Accept: 'application/json' }, signal: timeoutSignal(),
+      });
+      await requireOk(response);
+      const vercel = await response.json();
+      if (!vercel.id) throw new Error('Vercel rejected the credential');
+      return { verified: true, account: vercel.username || vercel.email || vercel.id };
     case 'heroku':
       response = await fetchImpl('https://api.heroku.com/account', {
         headers: { Authorization: `Bearer ${credentials.apiKey}`, Accept: 'application/vnd.heroku+json; version=3' }, signal: timeoutSignal(),

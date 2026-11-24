@@ -24,6 +24,7 @@ export function normalizeAppProfile(input = {}) {
   const kind = String(input.kind || 'web').toLowerCase();
   return {
     runtime,
+    framework: String(input.framework || '').toLowerCase() || null,
     kind,
     isStatic: input.isStatic === true || kind === 'static',
     needsContainer: input.needsContainer === true || input.dockerfile === true,
@@ -46,7 +47,9 @@ export function rankHostingProviders(profileInput, env = process.env) {
     if (profile.needsContainer && !provider.containers) return null;
     if (provider.requiresContainerImage && !profile.needsContainer) return null;
     if (profile.needsPersistentProcess && provider.persistentProcesses) { score += 25; reasons.push('Supports persistent application processes'); }
-    if (profile.needsPersistentProcess && !provider.persistentProcesses) return null;
+    const frameworkManagedServerless = provider.id === 'vercel' && profile.framework === 'nextjs';
+    if (profile.needsPersistentProcess && !provider.persistentProcesses && !frameworkManagedServerless) return null;
+    if (frameworkManagedServerless && profile.needsPersistentProcess) reasons.push('Runs Next.js server features through Vercel-managed functions');
     if (profile.needsBackgroundWorker && provider.backgroundWorkers) { score += 15; reasons.push('Supports background workers'); }
     if (profile.needsBackgroundWorker && !provider.backgroundWorkers) return null;
     if (profile.needsDatabase && provider.databases) { score += 10; reasons.push('Offers managed database options'); }
