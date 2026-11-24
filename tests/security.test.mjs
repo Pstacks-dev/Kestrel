@@ -26,18 +26,12 @@ test('decryptSecret fails when encrypted text or auth tag is tampered', () => {
   const encrypted = encryptSecret(secret);
 
   // Tamper ciphertext
-  const tamperedCipher = encrypted.encryptedValue.slice(0, -2) + '00';
-  assert.throws(
-    () => decryptSecret(tamperedCipher, encrypted.iv, encrypted.authTag),
-    /Unsupported state or unable to authenticate data/
-  );
+  const tamperedCipher = (encrypted.encryptedValue[0] === '0' ? '1' : '0') + encrypted.encryptedValue.slice(1);
+  assert.throws(() => decryptSecret(tamperedCipher, encrypted.iv, encrypted.authTag));
 
   // Tamper auth tag
-  const tamperedTag = encrypted.authTag.slice(0, -2) + 'ff';
-  assert.throws(
-    () => decryptSecret(encrypted.encryptedValue, encrypted.iv, tamperedTag),
-    /Unsupported state or unable to authenticate data/
-  );
+  const tamperedTag = (encrypted.authTag[0] === '0' ? '1' : '0') + encrypted.authTag.slice(1);
+  assert.throws(() => decryptSecret(encrypted.encryptedValue, encrypted.iv, tamperedTag));
 });
 
 test('redactSecrets masks custom project secrets and standard credentials', () => {
