@@ -73,8 +73,19 @@ async function createProject({ token, teamId, name, repositoryUrl, profile }, { 
   return { id: created.id, name: created.name || name, repo };
 }
 
-async function deploy({ token, teamId, projectId, name, repo, branch, commitSha, profile }, { fetchImpl = fetch } = {}) {
+async function syncVercelEnvironment({ token, teamId, projectId, env = {} }, fetchImpl) {
+  for (const [key, value] of Object.entries(env)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Vercel environment variable');
+    await request(token, `/v10/projects/${encodeURIComponent(projectId)}/env?upsert=true`, {
+      method: 'POST', teamId, fetchImpl,
+      body: { key, value, type: 'sensitive', visibility: 'secret', target: ['production', 'preview', 'development'] },
+    });
+  }
+}
+
+async function deploy({ token, teamId, projectId, name, repo, branch, commitSha, profile, env = {} }, { fetchImpl = fetch } = {}) {
   validCommit(commitSha);
+  await syncVercelEnvironment({ token, teamId, projectId, env }, fetchImpl);
   const source = repo || repository(profile.repositoryUrl);
   const deployment = await request(token, '/v13/deployments?forceNew=1', {
     method: 'POST', teamId, fetchImpl,
@@ -88,18 +99,18 @@ async function deploy({ token, teamId, projectId, name, repo, branch, commitSha,
   return { provider: 'vercel', deploymentId: deployment.id, status: status(deployment.readyState || deployment.status), providerUrl: publicUrl(deployment.url) };
 }
 
-export async function createVercelDeployment({ token, teamId = null, repositoryUrl, branch = 'main', commitSha, projectName: name, profile = {} }, options = {}) {
+export async function createVercelDeployment({ token, teamId = null, repositoryUrl, branch = 'main', commitSha, projectName: name, profile = {}, env = {} }, options = {}) {
   validCommit(commitSha);
   const repo = repository(repositoryUrl);
   const nameSafe = projectName(name);
   const project = await createProject({ token, teamId, name: nameSafe, repositoryUrl, profile }, options);
-  const result = await deploy({ token, teamId, projectId: project.id, name: project.name, repo, branch, commitSha, profile }, options);
+  const result = await deploy({ token, teamId, projectId: project.id, name: project.name, repo, branch, commitSha, profile, env }, options);
   return { ...result, projectId: project.id, serviceId: project.name, environmentId: null };
 }
 
-export async function deployVercelProject({ token, teamId = null, projectId, projectName: name, repositoryUrl, branch = 'main', commitSha, profile = {} }, options = {}) {
+export async function deployVercelProject({ token, teamId = null, projectId, projectName: name, repositoryUrl, branch = 'main', commitSha, profile = {}, env = {} }, options = {}) {
   const repo = repository(repositoryUrl);
-  const result = await deploy({ token, teamId, projectId, name: projectName(name), repo, branch, commitSha, profile }, options);
+  const result = await deploy({ token, teamId, projectId, name: projectName(name), repo, branch, commitSha, profile, env }, options);
   return { ...result, projectId, serviceId: projectName(name), environmentId: null };
 }
 
