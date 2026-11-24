@@ -29,6 +29,7 @@ import { registerHostingRoutes } from './routes/hosting.mjs';
 import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
 import { startManagedHostingAutomation, processManagedHostingQueue } from './lib/managed-hosting-automation.mjs';
+import { refreshProviderImageRegistryCredentials } from './lib/oci-registries.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1277,17 +1278,55 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
       if (!claimed.rowCount) return null;
       const row = claimed.rows[0];
       return {
-        id: row.id, leaseToken: row.lease_token, repositoryUrl: row.repository_url,
+        id: row.id, leaseToken: row.lease_token, organizationId: row.organization_id,
+        projectId: row.project_id, repositoryUrl: row.repository_url,
         branch: row.branch, commitSha: row.commit_sha, image: row.image,
         registry: row.registry, provider: row.provider_id,
         registryUsername: decryptSecret(row.registry_username_ciphertext, row.registry_username_iv, row.registry_username_auth_tag),
         registryPassword: decryptSecret(row.registry_password_ciphertext, row.registry_password_iv, row.registry_password_auth_tag),
       };
     });
+    if (!build) return res.json({ build: null });
+
+    // ECR authorization tokens expire after 12 hours. Refresh at claim time so a
+    // queued build never relies on credentials minted when the pipeline was queued.
+    if (build.provider === 'aws-ecs-express') {
+      const connection = await query(
+        `select credentials_ciphertext, credentials_iv, credentials_auth_tag
+         from public.hosting_provider_connections
+         where organization_id = $1 and provider_id = $2 and status = 'verified'`,
+        [build.organizationId, build.provider],
+      );
+      if (!connection.rowCount) throw new Error('A verified AWS provider connection is required to refresh ECR credentials');
+      const providerCredentials = JSON.parse(decryptSecret(
+        connection.rows[0].credentials_ciphertext,
+        connection.rows[0].credentials_iv,
+        connection.rows[0].credentials_auth_tag,
+      ));
+      const refreshed = await refreshProviderImageRegistryCredentials(build.provider, providerCredentials);
+      if (refreshed.registry !== build.registry) throw new Error('AWS ECR registry changed; create a fresh image build');
+      const username = encryptSecret(refreshed.username);
+      const password = encryptSecret(refreshed.password);
+      const saved = await query(
+        `update public.managed_hosting_image_builds
+         set registry_username_ciphertext = $3, registry_username_iv = $4, registry_username_auth_tag = $5,
+             registry_password_ciphertext = $6, registry_password_iv = $7, registry_password_auth_tag = $8,
+             updated_at = now()
+         where id = $1 and worker_id = $2 and status = 'running' and lease_expires_at > now()
+         returning id`,
+        [build.id, req.worker.id, username.encryptedValue, username.iv, username.authTag,
+          password.encryptedValue, password.iv, password.authTag],
+      );
+      if (!saved.rowCount) throw new Error('Managed OCI build lease expired while refreshing ECR credentials');
+      build.registryUsername = refreshed.username;
+      build.registryPassword = refreshed.password;
+    }
+    delete build.organizationId;
+    delete build.projectId;
     res.json({ build });
   } catch (error) {
-    console.error('Managed OCI build claim failed:', { code: error.code });
-    res.status(500).json({ error: 'Could not claim managed OCI build' });
+    console.error('Managed OCI build claim failed:', { code: error.code, message: redactSecrets(error.message) });
+    res.status(503).json({ error: 'Could not claim managed OCI build; the lease will be recovered automatically' });
   }
 });
 

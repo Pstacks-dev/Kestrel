@@ -81,3 +81,29 @@ test('requires a full immutable commit SHA and rejects unsupported providers', a
   await assert.rejects(provisionProviderImageRegistry('flyio', { token: 'x', orgSlug: 'personal' }, 'demo', 'main'), /full Git commit SHA/);
   await assert.rejects(provisionProviderImageRegistry('render', {}, 'demo', sha), /not supported/);
 });
+
+
+test('refreshes AWS ECR authorization independently of repository provisioning', async () => {
+  const { refreshProviderImageRegistryCredentials } = await import('../server/lib/oci-registries.mjs');
+  const token = Buffer.from('AWS:fresh-password').toString('base64');
+  const result = await refreshProviderImageRegistryCredentials('aws-ecs-express', {
+    accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'aws-secret', region: 'us-east-1',
+  }, { fetchImpl: async (_url, options) => {
+    assert.equal(options.headers['x-amz-target'], 'AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken');
+    return response({
+      authorizationData: [{ authorizationToken: token, proxyEndpoint: 'https://123456789012.dkr.ecr.us-east-1.amazonaws.com' }],
+    });
+  } });
+  assert.deepEqual(result, {
+    registry: '123456789012.dkr.ecr.us-east-1.amazonaws.com',
+    username: 'AWS',
+    password: 'fresh-password',
+  });
+});
+
+test('does not request short-lived registry credentials for providers without ECR auth', async () => {
+  const { refreshProviderImageRegistryCredentials } = await import('../server/lib/oci-registries.mjs');
+  assert.equal(await refreshProviderImageRegistryCredentials('flyio', {}, {
+    fetchImpl: async () => assert.fail('No registry request expected'),
+  }), null);
+});
