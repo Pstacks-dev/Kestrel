@@ -104,13 +104,15 @@ rm -rf "$WORKSPACE"
 git clone --filter=blob:none --no-checkout "$REPOSITORY_URL" "$WORKSPACE"
 git -C "$WORKSPACE" fetch --depth=1 origin "$COMMIT_SHA"
 git -C "$WORKSPACE" checkout --detach "$COMMIT_SHA"
-git -C "$WORKSPACE" submodule update --init --recursive || true
+git -C "$WORKSPACE" submodule update --init --recursive
 
 printf '%s' "$REGISTRY_PASSWORD" | $DOCKER login "$REGISTRY_HOST" --username "$REGISTRY_USER" --password-stdin
 
 if [ -f "$WORKSPACE/Dockerfile" ] || [ -f "$WORKSPACE/dockerfile" ]; then
   cd "$WORKSPACE"
-  DOCKER_BUILDKIT=1 $DOCKER build --pull --platform linux/amd64 \
+  DOCKERFILE=Dockerfile
+  if [ ! -f "$DOCKERFILE" ]; then DOCKERFILE=dockerfile; fi
+  DOCKER_BUILDKIT=1 $DOCKER build --pull --platform linux/amd64 -f "$DOCKERFILE" \
     --build-arg HTTP_PROXY="${HTTP_PROXY:-}" \
     --build-arg HTTPS_PROXY="${HTTPS_PROXY:-}" \
     --build-arg NO_PROXY="${NO_PROXY:-}" \
