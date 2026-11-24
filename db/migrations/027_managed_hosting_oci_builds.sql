@@ -41,3 +41,10 @@ alter table public.managed_hosting_automation_queue
 alter table public.managed_hosting_image_builds enable row level security;
 revoke all on public.managed_hosting_image_builds from anon, authenticated;
 grant all on public.managed_hosting_image_builds to service_role;
+
+-- Keep an automation event parked while its dedicated worker builds the OCI image.
+alter table public.managed_hosting_automation_queue
+  drop constraint if exists managed_hosting_automation_queue_status_check;
+alter table public.managed_hosting_automation_queue
+  add constraint managed_hosting_automation_queue_status_check
+  check (status in ('queued','running','waiting_for_image','succeeded','failed','skipped'));
