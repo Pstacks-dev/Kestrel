@@ -227,7 +227,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         providerUrl: providerDeployment.providerUrl || null,
       });
     } catch (error) {
-      const status = error.status === 404 ? 404 : error.status === 422 ? 422 : 502;
+      const status = [400, 404, 409, 413, 422, 429, 503].includes(error.status) ? error.status : 502;
       console.error('Managed deployment request failed:', { code: error.code || 'PROVIDER_ERROR' });
       return fail(res, status, status === 404 ? 'GitHub repository or commit was not found' : 'Could not start managed deployment');
     }
