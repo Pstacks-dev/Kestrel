@@ -114,26 +114,26 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
     const artifacts = profile.isStatic
       ? await query('select id from public.artifacts where run_id = $1 and deleted_at is null and (expires_at is null or expires_at > now()) order by created_at', [run.run_id])
       : { rows: [] };
+    const env = await loadProjectEnvironment(query, run.project_id);
     const selected = compatible.find((provider) =>
       KESTREL_TRIGGERED_PROVIDERS.has(provider.id) &&
       ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
       verified.has(provider.id) &&
-      (provider.id !== 'netlify' || artifacts.rows.length > 0));
+      (provider.id !== 'netlify' || (artifacts.rows.length > 0 && Object.keys(env).length === 0)));
     if (!selected) {
       const nativeGitProvider = ['railway', 'vercel'].some((id) => verified.has(id));
       const reason = nativeGitProvider
         ? 'Railway/Vercel native Git integrations handle pushes; Kestrel avoids creating a duplicate provider deployment.'
-        : 'No verified Kestrel-triggered provider is compatible with this project and build output';
+        : 'No verified Kestrel-triggered provider is compatible. Netlify requires successful static artifacts and currently cannot sync runtime project secrets.';
       await markQueue(query, item.id, 'skipped', reason, item.attempt_count);
       return { status: 'skipped' };
     }
 
     const connection = verified.get(selected.id);
     const credentials = JSON.parse(decryptSecret(connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag));
-    const env = await loadProjectEnvironment(query, run.project_id);
     redactionSecrets = [...Object.values(credentials), ...Object.values(env)];
     const files = selected.id === 'netlify'
-      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl)
+      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, '', run.commit_sha)
       : undefined;
     const existingResult = await query(
       `select * from public.managed_hosting_resources
