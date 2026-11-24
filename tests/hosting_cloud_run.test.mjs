@@ -32,6 +32,7 @@ function mockGoogle() {
       assert.equal(body.template.containers[0].env[0].name, 'NODE_ENV');
       return response({ name: 'projects/project-1/locations/us-central1/operations/op-1' }, 200);
     }
+    if (url.includes('/services/demo?updateMask=traffic')) return response({ name: 'projects/project-1/locations/us-central1/operations/rollback-1' });
     if (url.includes('/services/demo?updateMask=')) return response({ name: 'projects/project-1/locations/us-central1/operations/op-2' });
     if (url.includes('/operations/op-1')) return response({ name: 'projects/project-1/locations/us-central1/operations/op-1', done: true });
     if (url.includes('/services/demo')) return response({
