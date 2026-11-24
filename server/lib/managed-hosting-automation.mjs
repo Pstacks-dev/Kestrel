@@ -1,4 +1,5 @@
-import { decryptSecret, redactSecrets } from './security.mjs';
+import { encryptSecret, decryptSecret, redactSecrets } from './security.mjs';
+import { provisionProviderImageRegistry } from './oci-registries.mjs';
 import { detectProjectProfile, rankHostingProviders } from './hosting-providers.mjs';
 import {
   ACTIVE_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
@@ -123,6 +124,54 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
 
     const connection = verified.get(selected.id);
     const credentials = JSON.parse(decryptSecret(connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag));
+    let containerImage = null;
+    if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(selected.id)) {
+      let imageBuild = item.image_build_id ? (await query(
+        'select * from public.managed_hosting_image_builds where id = $1 and organization_id = $2 and project_id = $3',
+        [item.image_build_id, run.organization_id, run.project_id],
+      )).rows[0] : null;
+      if (!imageBuild) {
+        const registry = await provisionProviderImageRegistry(
+          selected.id, credentials, projectSlug({ name: run.project_name, id: run.project_id }), run.commit_sha, { fetchImpl },
+        );
+        const username = encryptSecret(registry.username);
+        const password = encryptSecret(registry.password);
+        const inserted = await query(
+          `insert into public.managed_hosting_image_builds
+             (automation_queue_id, organization_id, project_id, provider_id, repository_url, branch,
+              commit_sha, image, registry, registry_username_ciphertext, registry_username_iv,
+              registry_username_auth_tag, registry_password_ciphertext, registry_password_iv,
+              registry_password_auth_tag)
+           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           on conflict (automation_queue_id) do update set updated_at = now()
+           returning *`,
+          [item.id, run.organization_id, run.project_id, selected.id, run.repository_url, run.branch,
+            run.commit_sha, registry.image, registry.registry, username.encryptedValue, username.iv,
+            username.authTag, password.encryptedValue, password.iv, password.authTag],
+        );
+        imageBuild = inserted.rows[0] || (await query(
+          'select * from public.managed_hosting_image_builds where automation_queue_id = $1',
+          [item.id],
+        )).rows[0];
+        await query(
+          'update public.managed_hosting_automation_queue set image_build_id = $2, status = \'queued\', locked_at = null, available_at = now() + interval \'20 seconds\', updated_at = now() where id = $1',
+          [item.id, imageBuild.id],
+        );
+        return { status: 'waiting_for_image', imageBuildId: imageBuild.id, provider: selected.id };
+      }
+      if (imageBuild.status !== 'succeeded' || !imageBuild.image_digest_ref) {
+        if (imageBuild.status === 'failed' && imageBuild.attempt_count >= 4) {
+          await markQueue(query, item.id, 'skipped', 'Managed OCI image build exhausted its retry budget', item.attempt_count);
+          return { status: 'skipped' };
+        }
+        await query(
+          'update public.managed_hosting_automation_queue set status = \'queued\', locked_at = null, available_at = now() + interval \'30 seconds\', updated_at = now() where id = $1',
+          [item.id],
+        );
+        return { status: 'waiting_for_image', imageBuildId: imageBuild.id, buildStatus: imageBuild.status };
+      }
+      containerImage = imageBuild.image_digest_ref;
+    }
     const files = selected.id === 'netlify'
       ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, '', run.commit_sha)
       : undefined;
@@ -138,6 +187,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
       commitSha: run.commit_sha,
       profile,
       projectName: projectSlug({ name: run.project_name, id: run.project_id }),
+      containerImage,
       env,
       files,
       buildCommand: 'npm run build',
