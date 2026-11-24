@@ -1155,7 +1155,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
 
       // Find candidate job where all dependencies succeeded
       const candidate = await c.query(
-        `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id,
+        `select j.*, r.branch, r.commit_sha, p.repository_url, p.source_type, p.id as project_id, p.github_installation_id,
                 de.id as deployment_env_id, de.host_port as deployment_host_port,
                 de.container_port as deployment_container_port, de.health_path as deployment_health_path,
                 de.health_timeout_seconds as deployment_health_timeout,
@@ -1227,6 +1227,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         commitSha: j.commit_sha,
         runId: j.run_id,
         projectId: j.project_id,
+        githubInstallationId: j.github_installation_id,
         memoryLimitMb: j.memory_limit_mb,
         cpuMillicores: j.cpu_millicores,
         timeoutSeconds: j.timeout_seconds,
@@ -1249,9 +1250,28 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
       };
     });
 
+    if (job?.githubInstallationId) {
+      const parsed = new URL(job.repositoryUrl);
+      const parts = parsed.pathname.replace(/\\.git$/i, '').split('/').filter(Boolean);
+      if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || parts.length !== 2) {
+        return res.status(409).json({ error: 'Private GitHub repository URL is invalid' });
+      }
+      const linked = await query(
+        'select installation_id from public.github_app_installations where organization_id = $1 and installation_id = $2 and suspended_at is null',
+        [req.worker.organizationId, job.githubInstallationId],
+      );
+      if (!linked.rowCount) return res.status(409).json({ error: 'The GitHub App installation for this project is no longer connected' });
+      const sourceToken = await createGitHubInstallationToken(job.githubInstallationId, {
+        repository: `${parts[0]}/${parts[1]}`,
+        permissions: { contents: 'read' },
+      });
+      job.sourceToken = sourceToken.token;
+      delete job.githubInstallationId;
+    }
     res.json({ job });
   } catch (e) {
-    res.status(500).json({ error: 'Could not claim job' });
+    console.error('Worker job claim failed:', { code: e.code, message: redactSecrets(e.message) });
+    res.status(503).json({ error: 'Could not claim job; any acquired lease will recover automatically' });
   }
 });
 
