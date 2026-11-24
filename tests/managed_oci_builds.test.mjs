@@ -67,6 +67,7 @@ test('starts a detached Fly.io OCI build in an isolated Vercel sandbox', async (
   const command = sandboxClient.calls.find((call) => call.method === 'startCommand');
   assert.equal(command.input.env.REGISTRY_PASSWORD, 'fly-token');
   assert.equal(command.input.env.COMMIT_SHA, 'a'.repeat(40));
+  assert.equal(command.input.sudo, true);
   assert.match(command.input.args[1], /docker build/);
 });
 
