@@ -26,7 +26,7 @@ import { registerSandboxRoutes } from './routes/sandboxes.mjs';
 import { registerGitImportRoutes } from './routes/git-import.mjs';
 import { registerHostingRoutes } from './routes/hosting.mjs';
 import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
-import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
+import { registerManagedDeploymentRoutes, triggerManagedDeploymentForPipelineRun } from './routes/managed-deployments.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1383,6 +1383,14 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
     );
   });
 
+  const pipelineState = await query('select status from public.pipeline_runs where id = $1', [runId]);
+  if (pipelineState.rows[0]?.status === 'succeeded') {
+    try {
+      await triggerManagedDeploymentForPipelineRun({ query, transaction }, runId);
+    } catch (error) {
+      console.error('Automatic managed deployment trigger failed:', { runId, code: error.code || 'TRIGGER_ERROR' });
+    }
+  }
   res.json({ ok: true, status: r.rows[0].status });
 });
 
