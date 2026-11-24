@@ -146,6 +146,10 @@ async function processQueueItem(item, { query, transaction, fetchImpl, sandboxCl
         return { status: 'building' };
       }
       containerImage = build.imageRef;
+      item.build_sandbox_name = null;
+      item.build_session_id = null;
+      item.build_command_id = null;
+      item.container_image = containerImage;
       await query(
         `update public.managed_hosting_automation_queue
          set container_image = $2, build_image_ref = null, build_sandbox_name = null, build_session_id = null,
