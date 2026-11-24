@@ -40,6 +40,7 @@ export function rankHostingProviders(profileInput, env = process.env) {
   const compatible = catalog.map((provider) => {
     const reasons = [];
     let score = 0;
+    if (profile.isStatic && !provider.static) return null;
     if (profile.isStatic && provider.static) { score += 30; reasons.push('Supports static site hosting'); }
     if (!profile.isStatic && provider.fullStack) { score += 20; reasons.push('Supports application backends'); }
     if (profile.runtime !== 'unknown' && provider.runtimes.includes(profile.runtime)) { score += 20; reasons.push('Supports the detected runtime'); }
