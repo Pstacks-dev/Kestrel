@@ -155,7 +155,7 @@ export default function ManagedHostingPanel({
     setBusy(true);
     setMessage('');
     try {
-      const response = await fetch(`${apiBase}/api/managed-deployments/${deploymentId}/rollback`, {
+      const response = await fetch(`${apiBase}/managed-deployments/${deploymentId}/rollback`, {
         method: 'POST', headers, body: JSON.stringify({}),
       });
       const data = await response.json().catch(() => ({}));
@@ -220,7 +220,7 @@ export default function ManagedHostingPanel({
                   setEditingProvider(editingProvider === provider.id ? null : provider.id);
                   setCredentials({});
                 }}>
-                  {provider.connection?.connected ? 'Update credentials' : 'Connect provider'}
+                  {provider.connected ? 'Update credentials' : 'Connect provider'}
                 </button>
               </div>
               {editingProvider === provider.id && (
