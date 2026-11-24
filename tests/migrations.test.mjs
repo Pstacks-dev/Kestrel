@@ -59,6 +59,8 @@ test('managed hosting credentials are tenant-scoped, encrypted and inaccessible 
   assert.match(sql, /credentials_ciphertext text not null/i);
   assert.match(sql, /credentials_iv text not null/i);
   assert.match(sql, /credentials_auth_tag text not null/i);
+  assert.match(sql, /last_verified_at timestamptz/i);
+  assert.match(sql, /last_error text/i);
   assert.match(sql, /unique \(organization_id, provider_id\)/i);
   assert.match(sql, /enable row level security/i);
   assert.match(sql, /revoke all on public\.hosting_provider_connections from anon, authenticated/i);
