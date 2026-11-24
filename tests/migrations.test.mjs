@@ -80,6 +80,16 @@ test('managed hosting deployment migration persists provider resources and relea
   assert.match(sql, /grant all on public\.managed_hosting_resources, public\.managed_hosting_deployments to service_role/i);
 });
 
+test('managed hosting pipeline trigger migration makes successful-run deploys idempotent', async () => {
+  const sql = await readFile(new URL('../db/migrations/025_managed_hosting_pipeline_triggers.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.managed_hosting_pipeline_triggers/i);
+  assert.match(sql, /pipeline_run_id uuid primary key references public\.pipeline_runs/i);
+  assert.match(sql, /managed_deployment_id uuid references public\.managed_hosting_deployments/i);
+  assert.match(sql, /status in \('queued','deploying','succeeded','failed','skipped'\)/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on public\.managed_hosting_pipeline_triggers from anon, authenticated/i);
+});
+
 test('managed deployment routes keep provider selection inside Kestrel and expose lifecycle operations', async () => {
   const routes = await readFile(new URL('../server/routes/managed-deployments.mjs', import.meta.url), 'utf8');
   assert.match(routes, /rankHostingProviders\(profile, \{\}\)/);
