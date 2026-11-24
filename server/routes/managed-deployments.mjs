@@ -2,9 +2,9 @@ import { decryptSecret, redactSecrets } from '../lib/security.mjs';
 import { parseGitHubRepository } from './git-import.mjs';
 import { detectProjectProfile, rankHostingProviders } from '../lib/hosting-providers.mjs';
 import {
-  createRailwayDeployment, deployRailwayService, getRailwayDeployment,
-  getRailwayDeploymentLogs, rollbackRailwayDeployment,
-} from '../lib/hosting-railway.mjs';
+  ACTIVE_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
+  getManagedProviderDeployment, getManagedProviderDeploymentLogs, rollbackManagedProviderDeployment,
+} from '../lib/hosting-managed-adapters.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 const API_HEADERS = {
@@ -83,83 +83,70 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         [project.organization_id],
       );
       const verified = new Map(connectionResult.rows.map((row) => [row.provider_id, row]));
-      const selected = compatible.find((provider) => provider.id === 'railway' && verified.has(provider.id));
+      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id));
       if (!selected) {
-        return fail(res, 409, 'No verified compatible provider adapter is available. Railway is the first managed deployment adapter; connect and verify a compatible Railway workspace.');
+        return fail(res, 409, 'No verified compatible managed provider is available. Connect and verify Render, Railway or DigitalOcean App Platform.');
       }
 
-      const connection = verified.get(selected.id);
+      const providerId = selected.id;
+      const connection = verified.get(providerId);
       let credentials;
       try {
         credentials = JSON.parse(decryptSecret(connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag));
       } catch {
-        return fail(res, 503, 'Railway credentials could not be decrypted. Check the Kestrel encryption key.');
+        return fail(res, 503, 'Provider credentials could not be decrypted. Check the Kestrel encryption key.');
       }
 
       const existing = await query(
         `select * from public.managed_hosting_resources
-         where organization_id = $1 and project_id = $2 and provider_id = 'railway'`,
-        [project.organization_id, project.id],
+         where organization_id = $1 and project_id = $2 and provider_id = $3`,
+        [project.organization_id, project.id, providerId],
       );
-      let providerDeployment;
-      let resource;
-      if (existing.rowCount) {
-        resource = existing.rows[0];
-        providerDeployment = await deployRailwayService({
-          token: credentials.token,
-          serviceId: resource.provider_service_id,
-          environmentId: resource.provider_environment_id,
-          commitSha,
-        }, { fetchImpl });
-      } else {
-        providerDeployment = await createRailwayDeployment({
-          token: credentials.token,
-          workspaceId: credentials.workspaceId || null,
-          repositoryUrl: project.repository_url,
-          branch,
-          commitSha,
-          projectName: `Kestrel - ${project.name}`.slice(0, 100),
-          serviceName: project.name.slice(0, 100),
-        }, { fetchImpl });
-      }
+      const resource = existing.rows[0] || null;
+      const providerInput = {
+        repositoryUrl: project.repository_url, branch, commitSha, profile,
+        projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
+      };
+      const providerDeployment = resource
+        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl })
+        : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
       const saved = await transaction(async (client) => {
         let resourceId;
-        if (existing.rowCount) {
+        if (resource) {
           resourceId = resource.id;
         } else {
           const insertedResource = await client.query(
             `insert into public.managed_hosting_resources
                (organization_id, project_id, provider_id, provider_project_id,
-                provider_service_id, provider_environment_id, created_by)
-             values($1,$2,'railway',$3,$4,$5,$6)
+                provider_service_id, provider_environment_id, provider_url, created_by)
+             values($1,$2,$3,$4,$5,$6,$7,$8)
              returning id`,
-            [project.organization_id, project.id, providerDeployment.projectId,
-              providerDeployment.serviceId, providerDeployment.environmentId, req.user.id],
+            [project.organization_id, project.id, providerId, providerDeployment.projectId,
+              providerDeployment.serviceId, providerDeployment.environmentId || null,
+              providerDeployment.providerUrl || null, req.user.id],
           );
           resourceId = insertedResource.rows[0].id;
         }
         const inserted = await client.query(
           `insert into public.managed_hosting_deployments
              (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
-              branch, commit_sha, status, created_by)
-           values($1,$2,$3,'railway',$4,$5,$6,'queued',$7)
+              branch, commit_sha, status, provider_url, created_by)
+           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            returning *`,
-          [resourceId, project.organization_id, project.id, providerDeployment.deploymentId,
-            branch, commitSha, req.user.id],
+          [resourceId, project.organization_id, project.id, providerId, providerDeployment.deploymentId,
+            branch, commitSha, providerDeployment.status || 'queued', providerDeployment.providerUrl || null, req.user.id],
         );
         await client.query(
           `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
            values($1,$2,'managed_deployment.queued','managed_deployment',$3,$4::jsonb)`,
           [project.organization_id, req.user.id, inserted.rows[0].id,
-            JSON.stringify({ provider: 'railway', branch, commitSha })],
+            JSON.stringify({ provider: providerId, branch, commitSha })],
         );
         return inserted.rows[0];
       });
       return res.status(202).json({
-        deployment: deploymentView(saved),
-        selectedProvider: 'railway',
-        profile,
+        deployment: deploymentView(saved), selectedProvider: providerId, profile,
         providerUrl: providerDeployment.providerUrl || null,
       });
     } catch (error) {
@@ -192,14 +179,14 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
   async function loadAuthorizedDeployment(deploymentId, userId) {
     const result = await query(
       `select d.*, c.credentials_ciphertext, c.credentials_iv, c.credentials_auth_tag,
-              r.provider_service_id, r.provider_environment_id
+              r.provider_project_id, r.provider_service_id, r.provider_environment_id
        from public.managed_hosting_deployments d
        join public.managed_hosting_resources r on r.id = d.resource_id
        join public.hosting_provider_connections c
          on c.organization_id = d.organization_id and c.provider_id = d.provider_id
        join public.organization_members m on m.organization_id = d.organization_id
-       where d.id = $1 and m.user_id = $2 and d.provider_id = 'railway'`,
-      [deploymentId, userId],
+       where d.id = $1 and m.user_id = $2 and d.provider_id = any($3)`,
+      [deploymentId, userId, ACTIVE_MANAGED_PROVIDERS],
     );
     return result.rows[0] || null;
   }
@@ -209,7 +196,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const row = await loadAuthorizedDeployment(req.params.deploymentId, req.user.id);
       if (!row) return fail(res, 404, 'Managed deployment not found');
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
-      const current = await getRailwayDeployment({ token: credentials.token, deploymentId: row.provider_deployment_id }, { fetchImpl });
+      const current = await getManagedProviderDeployment(row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl });
       await query(
         `update public.managed_hosting_deployments set status = $2, provider_url = $3, updated_at = now() where id = $1`,
         [row.id, current.status, current.providerUrl],
@@ -231,13 +218,12 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const row = await loadAuthorizedDeployment(req.params.deploymentId, req.user.id);
       if (!row) return fail(res, 404, 'Managed deployment not found');
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
-      const logs = await getRailwayDeploymentLogs({
-        token: credentials.token, deploymentId: row.provider_deployment_id, limit: req.query.limit,
-      }, { fetchImpl });
-      const redact = (entries) => entries.map((entry) => ({
-        ...entry, message: redactSecrets(String(entry.message || ''), [credentials.token]),
+      const logs = await getManagedProviderDeploymentLogs(row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl });
+      const secrets = Object.values(credentials).filter((value) => typeof value === 'string' && value.length > 8);
+      const redact = (entries = []) => entries.map((entry) => ({
+        ...entry, message: redactSecrets(String(entry.message || ''), secrets),
       }));
-      res.json({ build: redact(logs.build), runtime: redact(logs.runtime) });
+      res.json({ build: redact(logs.build), runtime: redact(logs.runtime), ...(logs.unavailable ? { unavailable: true, message: logs.message } : {}), ...(logs.logUrls ? { logUrls: logs.logUrls } : {}) });
     } catch {
       fail(res, 502, 'Could not retrieve managed deployment logs');
     }
@@ -252,20 +238,20 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         [row.organization_id, req.user.id],
       )).rows[0]?.role)) return fail(res, 403, 'Developer access is required to roll back');
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
-      const rollback = await rollbackRailwayDeployment({ token: credentials.token, deploymentId: row.provider_deployment_id }, { fetchImpl });
+      const rollback = await rollbackManagedProviderDeployment(row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl });
       const saved = await transaction(async (client) => {
         const inserted = await client.query(
           `insert into public.managed_hosting_deployments
              (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
               branch, commit_sha, status, rollback_of, created_by)
-           values($1,$2,$3,'railway',$4,$5,$6,$7,$8,$9) returning *`,
+           values($1,$2,$3,$10,$4,$5,$6,$7,$8,$9) returning *`,
           [row.resource_id, row.organization_id, row.project_id, rollback.deploymentId,
-            row.branch, row.commit_sha, rollback.status, row.id, req.user.id],
+            row.branch, row.commit_sha, rollback.status, row.id, req.user.id, row.provider_id],
         );
         await client.query(
           `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
            values($1,$2,'managed_deployment.rollback_queued','managed_deployment',$3,$4::jsonb)`,
-          [row.organization_id, req.user.id, inserted.rows[0].id, JSON.stringify({ provider: 'railway', rollbackOf: row.id })],
+          [row.organization_id, req.user.id, inserted.rows[0].id, JSON.stringify({ provider: row.provider_id, rollbackOf: row.id })],
         );
         return inserted.rows[0];
       });

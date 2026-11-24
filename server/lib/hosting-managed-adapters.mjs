@@ -1,0 +1,46 @@
+import {
+  createRenderDeployment, deployRenderService, getRenderDeployment, getRenderDeploymentLogs, rollbackRenderDeployment,
+} from './hosting-render.mjs';
+import {
+  createDigitalOceanDeployment, deployDigitalOceanApp, getDigitalOceanDeployment, getDigitalOceanDeploymentLogs, rollbackDigitalOceanDeployment,
+} from './hosting-digitalocean.mjs';
+import {
+  createRailwayDeployment, deployRailwayService, getRailwayDeployment, getRailwayDeploymentLogs, rollbackRailwayDeployment,
+} from './hosting-railway.mjs';
+
+export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform'];
+
+export async function createManagedProviderDeployment(provider, credentials, input, options) {
+  if (provider === 'render') return createRenderDeployment({ ...input, ...credentials }, options);
+  if (provider === 'railway') return createRailwayDeployment({ ...input, ...credentials }, options);
+  if (provider === 'digitalocean-app-platform') return createDigitalOceanDeployment({ ...input, ...credentials }, options);
+  throw new Error('Managed deployment adapter is not available');
+}
+
+export async function deployManagedProviderService(provider, credentials, resource, commitSha, options) {
+  if (provider === 'render') return deployRenderService({ ...credentials, serviceId: resource.provider_service_id, commitSha }, options);
+  if (provider === 'railway') return deployRailwayService({ ...credentials, serviceId: resource.provider_service_id, environmentId: resource.provider_environment_id, commitSha }, options);
+  if (provider === 'digitalocean-app-platform') return deployDigitalOceanApp({ ...credentials, appId: resource.provider_project_id, commitSha }, options);
+  throw new Error('Managed deployment adapter is not available');
+}
+
+export async function getManagedProviderDeployment(provider, credentials, resource, deploymentId, options) {
+  if (provider === 'render') return getRenderDeployment({ ...credentials, serviceId: resource.provider_service_id, deploymentId }, options);
+  if (provider === 'railway') return getRailwayDeployment({ ...credentials, deploymentId }, options);
+  if (provider === 'digitalocean-app-platform') return getDigitalOceanDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
+  throw new Error('Managed deployment adapter is not available');
+}
+
+export async function getManagedProviderDeploymentLogs(provider, credentials, resource, deploymentId, options) {
+  if (provider === 'render') return getRenderDeploymentLogs({ ...credentials, serviceId: resource.provider_service_id, deploymentId }, options);
+  if (provider === 'railway') return getRailwayDeploymentLogs({ ...credentials, deploymentId }, options);
+  if (provider === 'digitalocean-app-platform') return getDigitalOceanDeploymentLogs({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
+  throw new Error('Managed deployment adapter is not available');
+}
+
+export async function rollbackManagedProviderDeployment(provider, credentials, resource, deploymentId, options) {
+  if (provider === 'render') return rollbackRenderDeployment({ ...credentials, serviceId: resource.provider_service_id, deploymentId }, options);
+  if (provider === 'railway') return rollbackRailwayDeployment({ ...credentials, deploymentId }, options);
+  if (provider === 'digitalocean-app-platform') return rollbackDigitalOceanDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
+  throw new Error('Managed deployment adapter is not available');
+}

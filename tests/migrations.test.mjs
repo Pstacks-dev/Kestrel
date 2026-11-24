@@ -83,7 +83,8 @@ test('managed hosting deployment migration persists provider resources and relea
 test('managed deployment routes keep provider selection inside Kestrel and expose lifecycle operations', async () => {
   const routes = await readFile(new URL('../server/routes/managed-deployments.mjs', import.meta.url), 'utf8');
   assert.match(routes, /rankHostingProviders\(profile, \{\}\)/);
-  assert.match(routes, /provider\.id === 'railway'/);
+  assert.match(routes, /ACTIVE_MANAGED_PROVIDERS\.includes\(provider\.id\)/);
+  assert.match(routes, /createManagedProviderDeployment/);
   assert.ok(routes.includes('/api/projects/:projectId/managed-deployments'));
   assert.ok(routes.includes('/api/managed-deployments/:deploymentId/logs'));
   assert.ok(routes.includes('/api/managed-deployments/:deploymentId/rollback'));
