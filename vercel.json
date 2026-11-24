@@ -9,6 +9,9 @@
     },
     "api/proxy.mjs": {
       "maxDuration": 15
+    },
+    "api/cron/managed-deployments.mjs": {
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -19,6 +22,10 @@
     {
       "path": "/api/cron/artifacts/cleanup",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/managed-deployments",
+      "schedule": "* * * * *"
     }
   ],
   "rewrites": [
