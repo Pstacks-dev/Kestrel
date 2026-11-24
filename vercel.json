@@ -16,10 +16,6 @@
   },
   "crons": [
     {
-      "path": "/api/cron/recovery",
-      "schedule": "0 0 * * *"
-    },
-    {
       "path": "/api/cron/artifacts/cleanup",
       "schedule": "0 1 * * *"
     }
