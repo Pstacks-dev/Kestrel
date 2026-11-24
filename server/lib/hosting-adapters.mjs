@@ -109,6 +109,22 @@ export async function verifyHostingProvider(providerId, credentials, { fetchImpl
       const vercel = await response.json();
       if (!vercel.id) throw new Error('Vercel rejected the credential');
       return { verified: true, account: vercel.username || vercel.email || vercel.id };
+    case 'netlify':
+      response = await fetchImpl('https://api.netlify.com/api/v1/user', {
+        headers: { Authorization: `Bearer ${credentials.authToken}`, Accept: 'application/json' }, signal: timeoutSignal(),
+      });
+      await requireOk(response);
+      const netlify = await response.json();
+      if (!netlify.id) throw new Error('Netlify rejected the credential');
+      return { verified: true, account: netlify.email || netlify.full_name || netlify.id };
+    case 'cloudflare-pages':
+      response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(credentials.accountId)}/pages/projects`, {
+        headers: { Authorization: `Bearer ${credentials.apiToken}`, Accept: 'application/json' }, signal: timeoutSignal(),
+      });
+      await requireOk(response);
+      const cloudflare = await response.json();
+      if (!cloudflare.success || !Array.isArray(cloudflare.result)) throw new Error('Cloudflare Pages rejected the credential or account permissions');
+      return { verified: true, account: credentials.accountId };
     case 'heroku':
       response = await fetchImpl('https://api.heroku.com/account', {
         headers: { Authorization: `Bearer ${credentials.apiKey}`, Accept: 'application/vnd.heroku+json; version=3' }, signal: timeoutSignal(),
