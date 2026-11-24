@@ -66,3 +66,26 @@ test('managed hosting credentials are tenant-scoped, encrypted and inaccessible 
   assert.match(sql, /revoke all on public\.hosting_provider_connections from anon, authenticated/i);
   assert.match(sql, /grant all on public\.hosting_provider_connections to service_role/i);
 });
+
+
+test('managed hosting deployment migration persists provider resources and release history securely', async () => {
+  const sql = await readFile(new URL('../db/migrations/024_managed_hosting_deployments.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.managed_hosting_resources/i);
+  assert.match(sql, /create table if not exists public\.managed_hosting_deployments/i);
+  assert.match(sql, /provider_service_id text not null/i);
+  assert.match(sql, /provider_deployment_id text not null/i);
+  assert.match(sql, /rollback_of uuid references public\.managed_hosting_deployments/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on public\.managed_hosting_resources, public\.managed_hosting_deployments from anon, authenticated/i);
+  assert.match(sql, /grant all on public\.managed_hosting_resources, public\.managed_hosting_deployments to service_role/i);
+});
+
+test('managed deployment routes keep provider selection inside Kestrel and expose lifecycle operations', async () => {
+  const routes = await readFile(new URL('../server/routes/managed-deployments.mjs', import.meta.url), 'utf8');
+  assert.match(routes, /rankHostingProviders\(profile, \{\}\)/);
+  assert.match(routes, /provider\.id === 'railway'/);
+  assert.match(routes, //api\/projects\/:projectId\/managed-deployments/);
+  assert.match(routes, //api\/managed-deployments\/:deploymentId\/logs/);
+  assert.match(routes, //api\/managed-deployments\/:deploymentId\/rollback/);
+  assert.match(routes, /decryptSecret\(/);
+});
