@@ -38,8 +38,7 @@ export async function createGitHubInstallationToken(installationId, {
   const body = {};
   if (repository) {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('Invalid GitHub repository name');
-    body.repository = repository.split('/')[1];
-    body.repositories = [body.repository];
+    body.repositories = [repository.split('/')[1]];
   }
   if (permissions) body.permissions = permissions;
   const response = await fetchImpl(`${API}/app/installations/${installationId}/access_tokens`, {
