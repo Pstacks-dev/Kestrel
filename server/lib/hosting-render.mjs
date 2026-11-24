@@ -65,7 +65,7 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
   const service = created.service || created;
   if (!service.id) throw new Error('Render did not return a service identifier');
   await syncRenderEnvironment(apiKey, service.id, env, fetchImpl);
-  const deploy = created.deployId ? { id: created.deployId, status: 'created' } : await request(apiKey, `/services/${encodeURIComponent(service.id)}/deploys`, {
+  const deploy = await request(apiKey, `/services/${encodeURIComponent(service.id)}/deploys`, {
     method: 'POST', fetchImpl, body: { commitId: commitSha, clearCache: 'do_not_clear' },
   });
   if (!deploy.id) throw new Error('Render did not return a deployment identifier');
