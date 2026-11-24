@@ -95,6 +95,18 @@ async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFet
   return files;
 }
 
+async function loadProjectEnvironment(query, projectId) {
+  const result = await query(
+    'select name, encrypted_value, iv, auth_tag from public.project_secrets where project_id = $1 order by name',
+    [projectId],
+  );
+  const env = {};
+  for (const row of result.rows) {
+    env[row.name] = decryptSecret(row.encrypted_value, row.iv, row.auth_tag);
+  }
+  return env;
+}
+
 function deploymentView(row) {
   return {
     id: row.id, projectId: row.project_id, provider: row.provider_id,
@@ -140,6 +152,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       }
 
       const providerId = selected.id;
+      const projectEnv = await loadProjectEnvironment(query, project.id);
       const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix) : null;
       const containerImage = String(req.body?.containerImage || '').trim();
       if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
@@ -164,7 +177,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
         containerImage,
         port: req.body?.port || (providerId === 'flyio' ? 3000 : 8080),
-        env: req.body?.env || {},
+        env: projectEnv,
         files: staticFiles,
         buildCommand: req.body?.buildCommand || 'npm run build',
         destinationDir: req.body?.destinationDir || 'dist',
@@ -285,7 +298,8 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       if (!row) return fail(res, 404, 'Managed deployment not found');
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
       const logs = await getManagedProviderDeploymentLogs(row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl });
-      const secrets = Object.values(credentials).filter((value) => typeof value === 'string' && value.length > 8);
+      const projectEnv = await loadProjectEnvironment(query, row.project_id);
+      const secrets = [...Object.values(credentials), ...Object.values(projectEnv)].filter((value) => typeof value === 'string' && value.length > 3);
       const redact = (entries = []) => entries.map((entry) => ({
         ...entry, message: redactSecrets(String(entry.message || ''), secrets),
       }));
