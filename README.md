@@ -286,7 +286,7 @@ The initial catalog covers Render, Railway, Fly.io, Google Cloud Run, AWS ECS Ex
 AWS App Runner is not included in the new-customer provider pool: AWS closed it to new customers on 2026-04-30 and recommends ECS Express Mode. ECS Express Mode requires a published OCI image plus task-execution and infrastructure IAM role ARNs; Kestrel's image-publishing pipeline is a prerequisite before this provider can accept production deployments.
  Vercel's container runtime, Netlify Server, and Cloudflare Pages/Workers have distinct runtime constraints; they are not interchangeable with general-purpose container hosts.
 
-Compatibility-aware provider selection and tenant-scoped encrypted credentials are implemented. Railway is the first provider with a managed deploy/status/log/rollback adapter. The other nine providers remain catalogued but are not yet enabled for deployment. No provider is marked production-live until real provider-account deployment smoke tests pass.
+Compatibility-aware provider selection and tenant-scoped encrypted credentials are implemented. Railway, Render and DigitalOcean App Platform now have managed create/deploy/status/rollback adapters. Render currently reports deployment-scoped logs as unavailable; DigitalOcean returns its provider log-stream URLs for the authenticated log proxy to retrieve. The other seven providers remain catalogued but are not yet enabled for deployment. No provider is marked production-live until real provider-account deployment smoke tests pass.
 
 
 ### Tenant hosting-provider credentials
@@ -304,12 +304,12 @@ Set a strong `KESTREL_ENCRYPTION_KEY` (at least 32 characters) before enabling t
 
 ## Provider-managed application deployments
 
-The first provider-backed deployment adapter is Railway. Apply migration 024 before enabling it. Kestrel detects the imported GitHub project's runtime and deployment requirements, then automatically selects Railway only when it is compatible and the workspace's Railway credentials have been verified.
+The first three provider-backed deployment adapters are Railway, Render and DigitalOcean App Platform. Apply migration 024 before enabling them. Kestrel detects the imported GitHub project's runtime and deployment requirements, then automatically selects the highest-ranked compatible active adapter for which the workspace has verified credentials.
 
-- `POST /api/projects/:projectId/managed-deployments` creates the Railway project/service on the first deploy and deploys later commits to that same service.
+- `POST /api/projects/:projectId/managed-deployments` creates a provider project/service on the first deploy and deploys later commits to that resource.
 - `GET /api/projects/:projectId/managed-deployments` lists deployment history.
 - `GET /api/managed-deployments/:deploymentId` refreshes provider status and the provider-generated application URL.
 - `GET /api/managed-deployments/:deploymentId/logs` retrieves build and runtime logs.
 - `POST /api/managed-deployments/:deploymentId/rollback` requests a provider rollback.
 
-Railway must already have GitHub repository access for the imported repository. Kestrel stores Railway project/service/environment identifiers and deployment history; Railway hosts the application and supplies its URL. Other providers remain in the catalog but are not selectable for deployment until their deployment adapters are implemented and tested.
+Provider-specific setup: Railway must have GitHub repository access; Render requires an API key and workspace owner ID; DigitalOcean requires a Personal Access Token. Kestrel stores provider resource identifiers and deployment history; the selected provider hosts the application and supplies its URL. Render deploy requests pin the resolved commit SHA. DigitalOcean App Platform's current deployment API triggers a build from the configured branch rather than accepting a commit SHA, so the stored Git SHA is the resolved trigger target but is not provider-enforced against a concurrent branch update. Render's current adapter does not yet expose deployment-scoped log retrieval. DigitalOcean log endpoints return provider log-stream URLs; streaming/proxy retrieval is a follow-up. These adapters have mock-tested API contracts only and require live account smoke tests before production use. The other seven providers remain in the catalog but are not selectable for deployment until their adapters are implemented and tested.
