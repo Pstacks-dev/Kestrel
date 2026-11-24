@@ -19,27 +19,41 @@ function awsSigningKey(secret, date, region, service) {
 }
 
 async function verifyAwsEcs(credentials, fetchImpl, now) {
-  const host = `ecs.${credentials.region}.amazonaws.com`;
-  const region = credentials.region;
-  const body = '{}';
-  const amzDate = new Date(now).toISOString().replace(/[:-]|\.\d{3}/g, '');
-  const date = amzDate.slice(0, 8);
-  const payloadHash = crypto.createHash('sha256').update(body).digest('hex');
-  const target = 'AmazonEC2ContainerServiceV20141113.ListClusters';
-  const contentType = 'application/x-amz-json-1.1';
-  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\nx-amz-date:${amzDate}\nx-amz-target:${target}\n`;
-  const signedHeaders = 'content-type;host;x-amz-date;x-amz-target';
-  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
-  const scope = `${date}/${region}/ecs/aws4_request`;
-  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
-  const signature = crypto.createHmac('sha256', awsSigningKey(credentials.secretAccessKey, date, region, 'ecs')).update(stringToSign).digest('hex');
-  const authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  const response = await fetchImpl(`https://${host}/`, {
-    method: 'POST', signal: timeoutSignal(), body,
-    headers: { 'content-type': contentType, 'x-amz-date': amzDate, 'x-amz-target': target, Authorization: authorization },
-  });
-  await requireOk(response);
-  return { account: 'AWS ECS API authenticated' };
+  async function signedRequest(service, action, payload = {}) {
+    const region = credentials.region;
+    const host = service === 'ecr' ? 'api.ecr.' + region + '.amazonaws.com' : 'ecs.' + region + '.amazonaws.com';
+    const body = JSON.stringify(payload);
+    const amzDate = new Date(now).toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const date = amzDate.slice(0, 8);
+    const target = service === 'ecr'
+      ? 'AmazonEC2ContainerRegistry_V20150921.' + action
+      : 'AmazonEC2ContainerServiceV20141113.' + action;
+    const headers = {
+      'content-type': 'application/x-amz-json-1.1',
+      host,
+      'x-amz-date': amzDate,
+      'x-amz-target': target,
+    };
+    if (credentials.sessionToken) headers['x-amz-security-token'] = credentials.sessionToken;
+    const signedHeaders = Object.keys(headers).sort().join(';');
+    const canonicalHeaders = Object.keys(headers).sort().map((key) => key + ':' + headers[key] + '\n').join('');
+    const payloadHash = crypto.createHash('sha256').update(body).digest('hex');
+    const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+    const scope = date + '/' + region + '/' + service + '/aws4_request';
+    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
+    const signature = crypto.createHmac('sha256', awsSigningKey(credentials.secretAccessKey, date, region, service)).update(stringToSign).digest('hex');
+    headers.Authorization = 'AWS4-HMAC-SHA256 Credential=' + credentials.accessKeyId + '/' + scope + ', SignedHeaders=' + signedHeaders + ', Signature=' + signature;
+    const response = await fetchImpl('https://' + host + '/', { method: 'POST', signal: timeoutSignal(), body, headers });
+    await requireOk(response);
+    return response;
+  }
+  await signedRequest('ecs', 'ListClusters', {});
+  const ecrResponse = await signedRequest('ecr', 'GetAuthorizationToken', {});
+  const ecr = await ecrResponse.json().catch(() => ({}));
+  if (!Array.isArray(ecr.authorizationData) || !ecr.authorizationData[0]?.authorizationToken) {
+    throw new Error('AWS ECR image registry permissions could not be verified');
+  }
+  return { account: 'AWS ECS and ECR APIs authenticated' };
 }
 
 async function verifyGoogle(credentials, fetchImpl, now) {
