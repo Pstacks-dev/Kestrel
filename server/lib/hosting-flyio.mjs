@@ -96,6 +96,7 @@ async function createMachine({ token, appName, image, port, env, region, cpuKind
 export async function createFlyDeployment({ token, orgSlug, projectName, containerImage, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl = fetch } = {}) {
   if (!token || !orgSlug) throw new Error('Fly.io token and organization slug are required');
   const image = validateImage(containerImage);
+  machineConfig({ image, port, env, cpuKind, cpus, memoryMb });
   const appName = safeAppName(projectName);
   await ensureFlyApp({ token, appName, orgSlug }, fetchImpl);
   await allocatePublicAddresses(token, appName, fetchImpl);
