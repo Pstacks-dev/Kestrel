@@ -6,7 +6,7 @@ test('catalog contains the ten selected hosting providers', () => {
   const providers = listHostingProviders({});
   assert.equal(providers.length, 10);
   assert.deepEqual(providers.map((provider) => provider.id), [
-    'render','railway','flyio','google-cloud-run','aws-app-runner',
+    'render','railway','flyio','google-cloud-run','aws-ecs-express',
     'digitalocean-app-platform','heroku','vercel','netlify','cloudflare-pages',
   ]);
 });
@@ -25,7 +25,7 @@ test('container and persistent backend projects exclude serverless-only provider
   assert.ok(ids.includes('railway'));
   assert.ok(ids.includes('flyio'));
   assert.ok(ids.includes('google-cloud-run'));
-  assert.ok(ids.includes('aws-app-runner'));
+  assert.ok(ids.includes('aws-ecs-express'));
   assert.ok(ids.includes('digitalocean-app-platform'));
   assert.ok(ids.includes('heroku'));
   assert.ok(!ids.includes('netlify'));
