@@ -683,7 +683,7 @@ app.post('/api/webhooks/github', async (req, res) => {
   try {
     // Find matching project
     const projQuery = await query(
-      `select p.*, w.webhook_secret, w.active
+      `select p.*, w.webhook_secret, w.active, w.events
        from public.projects p
        left join public.github_webhooks w on w.project_id = p.id
        where lower(p.repository_url) in ($1, $2, $3, $4, $5)`,
