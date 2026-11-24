@@ -8,6 +8,9 @@ import {
   createVercelDeployment, deployVercelProject, getVercelDeployment, getVercelDeploymentLogs, rollbackVercelDeployment,
 } from './hosting-vercel.mjs';
 import {
+  createHerokuDeployment, deployHerokuApp, getHerokuDeployment, getHerokuDeploymentLogs, rollbackHerokuDeployment,
+} from './hosting-heroku.mjs';
+import {
   createRailwayDeployment, deployRailwayService, getRailwayDeployment, getRailwayDeploymentLogs, rollbackRailwayDeployment,
 } from './hosting-railway.mjs';
 
@@ -18,6 +21,7 @@ export async function createManagedProviderDeployment(provider, credentials, inp
   if (provider === 'railway') return createRailwayDeployment({ ...input, ...credentials }, options);
   if (provider === 'digitalocean-app-platform') return createDigitalOceanDeployment({ ...input, ...credentials }, options);
   if (provider === 'vercel') return createVercelDeployment({ ...input, ...credentials }, options);
+  if (provider === 'heroku') return createHerokuDeployment({ ...input, ...credentials }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -26,6 +30,7 @@ export async function deployManagedProviderService(provider, credentials, resour
   if (provider === 'railway') return deployRailwayService({ ...credentials, serviceId: resource.provider_service_id, environmentId: resource.provider_environment_id, commitSha }, options);
   if (provider === 'digitalocean-app-platform') return deployDigitalOceanApp({ ...credentials, appId: resource.provider_project_id, commitSha }, options);
   if (provider === 'vercel') return deployVercelProject({ ...credentials, projectId: resource.provider_project_id, projectName: resource.provider_service_id, commitSha, ...context }, options);
+  if (provider === 'heroku') return deployHerokuApp({ ...credentials, appId: resource.provider_project_id, commitSha, ...context }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -34,6 +39,7 @@ export async function getManagedProviderDeployment(provider, credentials, resour
   if (provider === 'railway') return getRailwayDeployment({ ...credentials, deploymentId }, options);
   if (provider === 'digitalocean-app-platform') return getDigitalOceanDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'vercel') return getVercelDeployment({ ...credentials, deploymentId }, options);
+  if (provider === 'heroku') return getHerokuDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -42,6 +48,7 @@ export async function getManagedProviderDeploymentLogs(provider, credentials, re
   if (provider === 'railway') return getRailwayDeploymentLogs({ ...credentials, deploymentId }, options);
   if (provider === 'digitalocean-app-platform') return getDigitalOceanDeploymentLogs({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'vercel') return getVercelDeploymentLogs({ ...credentials, deploymentId }, options);
+  if (provider === 'heroku') return getHerokuDeploymentLogs({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -50,5 +57,6 @@ export async function rollbackManagedProviderDeployment(provider, credentials, r
   if (provider === 'railway') return rollbackRailwayDeployment({ ...credentials, deploymentId }, options);
   if (provider === 'digitalocean-app-platform') return rollbackDigitalOceanDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'vercel') return rollbackVercelDeployment({ ...credentials, projectId: resource.provider_project_id, projectName: resource.provider_service_id, deploymentId }, options);
+  if (provider === 'heroku') return rollbackHerokuDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   throw new Error('Managed deployment adapter is not available');
 }
