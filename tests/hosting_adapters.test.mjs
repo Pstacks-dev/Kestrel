@@ -73,7 +73,7 @@ test('verifies Google Cloud Run service-account credentials with OAuth and the C
 
 test('rejects unsupported provider verification without making a network request', async () => {
   await assert.rejects(
-    verifyHostingProvider('cloudflare-pages', { apiToken: 'x', accountId: 'y' }, { fetchImpl: async () => assert.fail('network should not be called') }),
+    verifyHostingProvider('future-provider', { apiToken: 'x', accountId: 'y' , { fetchImpl: async () => assert.fail('network should not be called') }),
     /not implemented/,
   );
 });
