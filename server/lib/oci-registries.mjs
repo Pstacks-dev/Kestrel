@@ -23,7 +23,7 @@ async function flyRequest(token, path, { method = 'GET', body, fetchImpl }) {
 
 async function provisionFly(credentials, projectName, commitSha, fetchImpl) {
   if (!credentials.token || !credentials.orgSlug) throw new Error('Verified Fly.io token and organization slug are required');
-  const appName = slug(`kestrel-${projectName}`, 60);
+  const appName = slug(projectName, 60);
   const existing = await flyRequest(credentials.token, `/apps/${encodeURIComponent(appName)}`, { fetchImpl });
   if (!existing) {
     await flyRequest(credentials.token, '/apps', { method: 'POST', body: { app_name: appName, org_slug: credentials.orgSlug }, fetchImpl });
