@@ -16,6 +16,7 @@ test('creates a Git-connected Vercel project and deploys the exact Git commit', 
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo App', profile: { framework: 'nextjs' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
+    if (url.includes('/v9/projects/')) return response({ error: { code: 'not_found' } }, 404);
     if (url.includes('/v11/projects')) return response({ id: 'prj-1', name: 'demo-app' }, 200);
     return response({ id: 'dpl-1', url: 'demo-app-abc.vercel.app', readyState: 'BUILDING' }, 200);
   } });
