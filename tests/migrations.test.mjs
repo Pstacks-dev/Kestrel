@@ -120,9 +120,9 @@ test('Supabase managed scheduler enables pg_cron and pg_net', async () => {
   const sql = await readFile(new URL('../db/migrations/030_supabase_managed_scheduler.sql', import.meta.url), 'utf8');
   assert.match(sql, /create extension if not exists pg_cron/i);
   assert.match(sql, /create extension if not exists pg_net/i);
-  assert.match(sql, /cron\\.schedule\\(\\s*'kestrel-managed-deployments'/i);
-  assert.match(sql, /cron\\.schedule\\(\\s*'kestrel-lease-recovery'/i);
-  assert.match(sql, /vault\\.decrypted_secrets/i);
+  assert.match(sql, /cron\.schedule\\(\\s*'kestrel-managed-deployments'/i);
+  assert.match(sql, /cron\.schedule\\(\\s*'kestrel-lease-recovery'/i);
+  assert.match(sql, /vault\.decrypted_secrets/i);
   assert.doesNotMatch(sql, /Bearer [A-Za-z0-9_-]{20,}/i);
 });
 
