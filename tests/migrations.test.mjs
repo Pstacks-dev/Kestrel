@@ -84,8 +84,8 @@ test('managed deployment routes keep provider selection inside Kestrel and expos
   const routes = await readFile(new URL('../server/routes/managed-deployments.mjs', import.meta.url), 'utf8');
   assert.match(routes, /rankHostingProviders\(profile, \{\}\)/);
   assert.match(routes, /provider\.id === 'railway'/);
-  assert.match(routes, //api\/projects\/:projectId\/managed-deployments/);
-  assert.match(routes, //api\/managed-deployments\/:deploymentId\/logs/);
-  assert.match(routes, //api\/managed-deployments\/:deploymentId\/rollback/);
+  assert.ok(routes.includes('/api/projects/:projectId/managed-deployments'));
+  assert.ok(routes.includes('/api/managed-deployments/:deploymentId/logs'));
+  assert.ok(routes.includes('/api/managed-deployments/:deploymentId/rollback'));
   assert.match(routes, /decryptSecret\(/);
 });
