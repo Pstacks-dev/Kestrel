@@ -4,6 +4,7 @@ import {
   ACTIVE_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
 } from './hosting-managed-adapters.mjs';
 import { loadStaticArtifactFiles } from '../routes/managed-deployments.mjs';
+import { startManagedOciBuild, pollManagedOciBuild, cleanupManagedOciBuild } from './managed-oci-builds.mjs';
 
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
@@ -71,7 +72,7 @@ async function markQueue(query, queueId, status, error = null, attemptCount = 0)
   );
 }
 
-async function processQueueItem(item, { query, transaction, fetchImpl }) {
+async function processQueueItem(item, { query, transaction, fetchImpl, sandboxClient }) {
   try {
     const result = await query(
       `select r.id as run_id, r.project_id, r.branch, r.commit_sha, r.status as run_status,
@@ -111,10 +112,12 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
     const artifacts = profile.isStatic
       ? await query('select id from public.artifacts where run_id = $1 and deleted_at is null and (expires_at is null or expires_at > now()) order by created_at', [run.run_id])
       : { rows: [] };
-    const selected = compatible.find((provider) =>
-      ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
-      verified.has(provider.id) &&
-      (provider.id !== 'netlify' || artifacts.rows.length > 0));
+    const selected = item.selected_provider_id
+      ? compatible.find((provider) => provider.id === item.selected_provider_id && ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id))
+      : compatible.find((provider) =>
+          ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
+          verified.has(provider.id) &&
+          (provider.id !== 'netlify' || artifacts.rows.length > 0));
     if (!selected) {
       await markQueue(query, item.id, 'skipped', 'No verified compatible provider is available for this project and build output', item.attempt_count);
       return { status: 'skipped' };
@@ -123,6 +126,51 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
     const connection = verified.get(selected.id);
     const credentials = JSON.parse(decryptSecret(connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag));
     const env = await loadProjectEnvironment(query, run.project_id);
+    const projectName = projectSlug({ name: run.project_name, id: run.project_id });
+    const requiresImage = ['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(selected.id);
+    let containerImage = item.container_image || null;
+
+    if (requiresImage && !containerImage && item.build_command_id && item.build_session_id && item.build_sandbox_name) {
+      const build = await pollManagedOciBuild({
+        sandboxName: item.build_sandbox_name,
+        sessionId: item.build_session_id,
+        commandId: item.build_command_id,
+      }, { sandboxClient });
+      if (build.state === 'building') {
+        await query(
+          `update public.managed_hosting_automation_queue
+           set status = 'building', locked_at = null, available_at = now() + interval '10 seconds', updated_at = now()
+           where id = $1`,
+          [item.id],
+        );
+        return { status: 'building' };
+      }
+      containerImage = build.imageRef;
+      await query(
+        `update public.managed_hosting_automation_queue
+         set container_image = $2, build_sandbox_name = null, build_session_id = null,
+             build_command_id = null, status = 'running', locked_at = now(), updated_at = now()
+         where id = $1`,
+        [item.id, containerImage],
+      );
+    }
+
+    if (requiresImage && !containerImage) {
+      const build = await startManagedOciBuild({
+        providerId: selected.id, credentials, projectName, repositoryUrl: run.repository_url,
+        commitSha: run.commit_sha, runId: run.run_id, fetchImpl, sandboxClient,
+      });
+      await query(
+        `update public.managed_hosting_automation_queue
+         set status = 'building', selected_provider_id = $2, build_sandbox_name = $3,
+             build_session_id = $4, build_command_id = $5, container_image = $6,
+             locked_at = null, available_at = now() + interval '10 seconds', updated_at = now()
+         where id = $1`,
+        [item.id, selected.id, build.sandboxName, build.sessionId, build.commandId, build.imageRef],
+      );
+      return { status: 'building', provider: selected.id };
+    }
+
     const files = selected.id === 'netlify'
       ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl)
       : undefined;
@@ -137,9 +185,11 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
       branch: run.branch,
       commitSha: run.commit_sha,
       profile,
-      projectName: projectSlug({ name: run.project_name, id: run.project_id }),
+      projectName,
       env,
       files,
+      containerImage,
+      port: selected.id === 'flyio' ? 3000 : 8080,
       buildCommand: 'npm run build',
       destinationDir: profile.outputDirectory || 'dist',
       rootDir: '/',
@@ -180,6 +230,20 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
     await markQueue(query, item.id, 'succeeded', null, item.attempt_count);
     return { status: 'succeeded', deploymentId: saved.id, provider: selected.id };
   } catch (error) {
+    if (item.build_sandbox_name || item.build_session_id) {
+      await cleanupManagedOciBuild({
+        sandboxName: item.build_sandbox_name,
+        sessionId: item.build_session_id,
+        sandboxClient,
+      });
+      await query(
+        `update public.managed_hosting_automation_queue
+         set build_sandbox_name = null, build_session_id = null, build_command_id = null,
+             container_image = null, updated_at = now()
+         where id = $1`,
+        [item.id],
+      );
+    }
     const safeMessage = redactSecrets(String(error?.message || 'Managed deployment failed'));
     await markQueue(query, item.id, 'failed', safeMessage, item.attempt_count);
     return { status: 'failed', error: safeMessage };
