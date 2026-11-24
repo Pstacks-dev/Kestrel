@@ -157,6 +157,7 @@ async function provisionEcr(credentials, projectName, commitSha, fetchImpl) {
 }
 
 export async function provisionProviderImageRegistry(provider, credentials, projectName, commitSha, { fetchImpl = fetch } = {}) {
+  imageTag(commitSha);
   if (provider === 'flyio') return provisionFly(credentials, projectName, commitSha, fetchImpl);
   if (provider === 'google-cloud-run') return provisionGoogle(credentials, projectName, commitSha, fetchImpl);
   if (provider === 'aws-ecs-express') return provisionEcr(credentials, projectName, commitSha, fetchImpl);
