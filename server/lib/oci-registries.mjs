@@ -122,7 +122,8 @@ async function ecrRequest(credentials, action, payload, fetchImpl) {
   const result = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = result.message || result.Message || '';
-    const errorType = response.headers.get('x-amzn-errortype') || '';\n    if (action === 'CreateRepository' && /RepositoryAlreadyExistsException/i.test(errorType + ' ' + message)) return {};
+    const errorType = response.headers.get('x-amzn-errortype') || '';
+    if (action === 'CreateRepository' && /RepositoryAlreadyExistsException/i.test(errorType + ' ' + message)) return {};
     throw new Error(`AWS ECR ${action} failed (${response.status})`);
   }
   return result;
