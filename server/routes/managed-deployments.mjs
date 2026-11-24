@@ -146,9 +146,9 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         [project.organization_id],
       );
       const verified = new Map(connectionResult.rows.map((row) => [row.provider_id, row]));
-      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id));
+      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id) && (provider.id !== 'netlify' || (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0)));
       if (!selected) {
-        return fail(res, 409, 'No verified compatible managed provider is available. Connect and verify Render, Railway or DigitalOcean App Platform.');
+        return fail(res, 409, 'No verified compatible managed provider is available. For Netlify static deployments, include artifact IDs from a completed Kestrel build.');
       }
 
       const providerId = selected.id;
