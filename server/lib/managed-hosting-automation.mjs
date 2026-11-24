@@ -21,20 +21,20 @@ function parsePublicGitHubRepository(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) return null;
-    const parts = url.pathname.replace(/\\.git$/i, '').split('/').filter(Boolean);
+    const parts = url.pathname.replace(/\.git$/i, '').split('/').filter(Boolean);
     if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9_.-]{1,100}$/.test(part))) return null;
     return { owner: parts[0], repo: parts[1] };
   } catch { return null; }
 }
 
-async function inspectSource(repository, branch, fetchImpl) {
+async function inspectSource(repository, commitSha, fetchImpl) {
   const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`;
-  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(branch)}`, fetchImpl);
+  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(commitSha)}`, fetchImpl);
   if (!Array.isArray(root)) throw new Error('GitHub repository root could not be inspected');
   const files = root.filter((item) => item.type === 'file').map((item) => item.name);
   let packageJson = null;
   if (files.some((name) => name.toLowerCase() === 'package.json')) {
-    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(branch)}`, fetchImpl);
+    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(commitSha)}`, fetchImpl);
     try { packageJson = JSON.parse(Buffer.from(file.content || '', 'base64').toString('utf8')); }
     catch { throw new Error('Repository package.json is invalid'); }
   }
@@ -99,7 +99,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
       return { status: 'skipped' };
     }
 
-    const profile = await inspectSource(repository, run.branch, fetchImpl);
+    const profile = await inspectSource(repository, run.commit_sha, fetchImpl);
     const compatible = rankHostingProviders(profile, {});
     const connections = await query(
       `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag
