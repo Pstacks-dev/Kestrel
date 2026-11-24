@@ -102,3 +102,16 @@ test('GitHub App installation migration scopes installation links to workspaces 
   assert.match(sql, /revoke all on public\.github_app_installations from anon, authenticated/i);
   assert.match(sql, /grant all on public\.github_app_installations to service_role/i);
 });
+
+
+test('deployed hosting schema reconciliation preserves encrypted credentials and webhook idempotency', async () => {
+  const sql = await readFile(new URL('../db/migrations/029_reconcile_deployed_hosting_schema.sql', import.meta.url), 'utf8');
+  assert.match(sql, /rename column encrypted_credentials to credentials_ciphertext/i);
+  assert.match(sql, /rename column display_name to account_label/i);
+  assert.match(sql, /rename column created_by to connected_by/i);
+  assert.match(sql, /when 'connected' then 'verified'/i);
+  assert.match(sql, /add column if not exists branch text/i);
+  assert.match(sql, /add column if not exists commit_sha text/i);
+  assert.match(sql, /unique index if not exists github_webhook_deliveries_delivery_id_uidx/i);
+  assert.match(sql, /revoke all on public\.github_webhook_deliveries from anon, authenticated/i);
+});
