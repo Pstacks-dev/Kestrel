@@ -88,3 +88,27 @@ test('rejects invalid GitHub URLs and unverified commit SHAs before provider cal
     token: 'x', projectId: 'prj-1', projectName: 'demo', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
 });
+
+
+test('syncs encrypted Kestrel project secrets to Vercel before deployment', async () => {
+  const calls = [];
+  const result = await deployVercelProject({
+    token: 'vercel-token', projectId: 'prj-1', projectName: 'demo-app',
+    repositoryUrl: 'https://github.com/acme/demo', branch: 'main',
+    commitSha: 'c'.repeat(40), env: { DATABASE_URL: 'postgres://secret' },
+  }, { fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    if (url.includes('/v10/projects/prj-1/env')) {
+      const body = JSON.parse(options.body);
+      assert.equal(body.key, 'DATABASE_URL');
+      assert.equal(body.value, 'postgres://secret');
+      assert.equal(body.type, 'sensitive');
+      assert.equal(body.visibility, 'secret');
+      assert.deepEqual(body.target, ['production', 'preview', 'development']);
+      return response({ created: { id: 'env-1' } });
+    }
+    return response({ id: 'dpl-env', readyState: 'BUILDING' });
+  } });
+  assert.equal(calls.length, 2);
+  assert.equal(result.deploymentId, 'dpl-env');
+});

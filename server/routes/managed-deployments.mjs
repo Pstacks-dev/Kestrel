@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { decryptSecret, redactSecrets } from '../lib/security.mjs';
 import { parseGitHubRepository } from './git-import.mjs';
 import { detectProjectProfile, rankHostingProviders } from '../lib/hosting-providers.mjs';
@@ -44,6 +45,69 @@ async function resolveCommit(repository, branch, suppliedSha, fetchImpl) {
   return sha;
 }
 
+export async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch, artifactPrefix = '') {
+  if (!Array.isArray(artifactIds) || artifactIds.length < 1 || artifactIds.length > 5000 ||
+      artifactIds.some((id) => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) ||
+      new Set(artifactIds).size !== artifactIds.length) {
+    throw Object.assign(new Error('Select between 1 and 5000 unique completed build artifacts for this static deployment'), { status: 422 });
+  }
+  const result = await query(
+    `select a.id, a.name, a.object_key, a.size_bytes, a.sha256
+     from public.artifacts a
+     join public.pipeline_runs r on r.id = a.run_id
+     join public.projects p on p.id = r.project_id
+     where a.id = any($1::uuid[]) and p.id = $2 and r.status = 'succeeded'
+       and a.deleted_at is null and (a.expires_at is null or a.expires_at > now())`,
+    [artifactIds, projectId],
+  );
+  if (result.rowCount !== artifactIds.length) throw Object.assign(new Error('One or more selected build artifacts are missing or do not belong to this project'), { status: 422 });
+  const storageUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
+  const storageKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!storageUrl || !storageKey) throw Object.assign(new Error('Private artifact storage is not configured'), { status: 503 });
+  const names = result.rows.map((artifact) => String(artifact.name || ''));
+  let prefix = String(artifactPrefix || '').replace(/^\/+|\/+$/g, '');
+  if (!prefix) {
+    const common = ['dist', 'build', 'out', 'public'].find((candidate) => names.every((name) => name.startsWith(`${candidate}/`)));
+    if (common) prefix = common;
+  }
+  let total = 0;
+  const files = [];
+  for (const artifact of result.rows) {
+    const storedName = String(artifact.name || '');
+    if (prefix && !storedName.startsWith(`${prefix}/`)) throw Object.assign(new Error('A selected artifact is outside the configured static output directory'), { status: 422 });
+    const name = prefix ? storedName.slice(prefix.length + 1) : storedName;
+    if (!name || name.startsWith('/') || name.includes('\\') ||
+        name.split('/').some((part) => !part || part === '.' || part === '..')) throw Object.assign(new Error('A build artifact contains an unsafe file path'), { status: 422 });
+    const encodedKey = String(artifact.object_key).split('/').map(encodeURIComponent).join('/');
+    const response = await storageFetch(`${storageUrl}/storage/v1/object/kestrel-artifacts/${encodedKey}`, {
+      headers: { apikey: storageKey, Authorization: `Bearer ${storageKey}` },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) throw Object.assign(new Error('A selected build artifact could not be downloaded from private storage'), { status: 502 });
+    const content = Buffer.from(await response.arrayBuffer());
+    if (content.length !== Number(artifact.size_bytes) ||
+        crypto.createHash('sha256').update(content).digest('hex') !== artifact.sha256) {
+      throw Object.assign(new Error('A selected build artifact failed its size or SHA-256 integrity check'), { status: 422 });
+    }
+    total += content.length;
+    if (total > 50 * 1024 * 1024) throw Object.assign(new Error('Static build output exceeds the 50 MiB provider upload limit'), { status: 413 });
+    files.push({ path: name, content });
+  }
+  return files;
+}
+
+async function loadProjectEnvironment(query, projectId) {
+  const result = await query(
+    'select name, encrypted_value, iv, auth_tag from public.project_secrets where project_id = $1 order by name',
+    [projectId],
+  );
+  const env = {};
+  for (const row of result.rows) {
+    env[row.name] = decryptSecret(row.encrypted_value, row.iv, row.auth_tag);
+  }
+  return env;
+}
+
 function deploymentView(row) {
   return {
     id: row.id, projectId: row.project_id, provider: row.provider_id,
@@ -53,7 +117,7 @@ function deploymentView(row) {
   };
 }
 
-export function registerManagedDeploymentRoutes(app, { userAuth, query, transaction, fetchImpl = fetch }) {
+export function registerManagedDeploymentRoutes(app, { userAuth, query, transaction, fetchImpl = fetch, storageFetch = fetch }) {
   app.post('/api/projects/:projectId/managed-deployments', userAuth, async (req, res) => {
     try {
       const projectResult = await query(
@@ -83,12 +147,14 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         [project.organization_id],
       );
       const verified = new Map(connectionResult.rows.map((row) => [row.provider_id, row]));
-      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id));
+      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id) && (provider.id !== 'netlify' || (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0)));
       if (!selected) {
-        return fail(res, 409, 'No verified compatible managed provider is available. Connect and verify Render, Railway or DigitalOcean App Platform.');
+        return fail(res, 409, 'No verified compatible managed provider is available. For Netlify static deployments, include artifact IDs from a completed Kestrel build.');
       }
 
       const providerId = selected.id;
+      const projectEnv = await loadProjectEnvironment(query, project.id);
+      const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix) : null;
       const containerImage = String(req.body?.containerImage || '').trim();
       if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
         return fail(res, 422, 'This provider requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
@@ -112,10 +178,14 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
         containerImage,
         port: req.body?.port || (providerId === 'flyio' ? 3000 : 8080),
-        env: req.body?.env || {},
+        env: projectEnv,
+        files: staticFiles,
+        buildCommand: req.body?.buildCommand || 'npm run build',
+        destinationDir: req.body?.destinationDir || 'dist',
+        rootDir: req.body?.rootDir || '/',
       };
       const providerDeployment = resource
-        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env })
+        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir })
         : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
       const saved = await transaction(async (client) => {
@@ -157,7 +227,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         providerUrl: providerDeployment.providerUrl || null,
       });
     } catch (error) {
-      const status = error.status === 404 ? 404 : error.status === 422 ? 422 : 502;
+      const status = [400, 404, 409, 413, 422, 429, 503].includes(error.status) ? error.status : 502;
       console.error('Managed deployment request failed:', { code: error.code || 'PROVIDER_ERROR' });
       return fail(res, status, status === 404 ? 'GitHub repository or commit was not found' : 'Could not start managed deployment');
     }
@@ -229,7 +299,8 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       if (!row) return fail(res, 404, 'Managed deployment not found');
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
       const logs = await getManagedProviderDeploymentLogs(row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl });
-      const secrets = Object.values(credentials).filter((value) => typeof value === 'string' && value.length > 8);
+      const projectEnv = await loadProjectEnvironment(query, row.project_id);
+      const secrets = [...Object.values(credentials), ...Object.values(projectEnv)].filter((value) => typeof value === 'string' && value.length > 3);
       const redact = (entries = []) => entries.map((entry) => ({
         ...entry, message: redactSecrets(String(entry.message || ''), secrets),
       }));

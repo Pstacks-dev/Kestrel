@@ -15,12 +15,13 @@ test('creates a Railway project, GitHub service and deployment for the exact com
     { projectCreate: { id: 'project-1', name: 'Demo' } },
     { project: { id: 'project-1', environments: { edges: [{ node: { id: 'env-1', name: 'production' } }] } } },
     { serviceCreate: { id: 'service-1', name: 'Demo API' } },
+    { variableCollectionUpsert: true },
     { serviceInstanceDeployV2: 'deployment-1' },
   ];
   const result = await createRailwayDeployment({
     token: 'railway-test-token', repositoryUrl: 'https://github.com/acme/demo.git',
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo', serviceName: 'Demo API',
-    workspaceId: 'workspace-1',
+    workspaceId: 'workspace-1', env: { DATABASE_URL: 'postgres://secret' },
   }, {
     fetchImpl: async (_url, options) => {
       calls.push(JSON.parse(options.body));
@@ -28,11 +29,14 @@ test('creates a Railway project, GitHub service and deployment for the exact com
       return response(responses[calls.length - 1]);
     },
   });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   assert.equal(calls[0].variables.input.workspaceId, 'workspace-1');
   assert.deepEqual(calls[2].variables.input.source, { repo: 'acme/demo' });
   assert.equal(calls[2].variables.input.branch, 'main');
-  assert.equal(calls[3].variables.commitSha, 'a'.repeat(40));
+  assert.equal(calls[3].query.includes('variableCollectionUpsert'), true);
+  assert.equal(calls[3].variables.input.variables.DATABASE_URL, 'postgres://secret');
+  assert.equal(calls[3].variables.input.skipDeploys, true);
+  assert.equal(calls[4].variables.commitSha, 'a'.repeat(40));
   assert.equal(result.deploymentId, 'deployment-1');
   assert.equal(result.status, 'queued');
 });
@@ -93,17 +97,20 @@ test('rolls back only deployments Railway marks as rollback-capable', async () =
 });
 
 test('deploys new commits to an existing Railway service without creating duplicate projects', async () => {
-  let request;
+  const requests = [];
   const result = await deployRailwayService({
-    token: 'railway-token', serviceId: 'service-1', environmentId: 'env-1', commitSha: 'b'.repeat(40),
+    token: 'railway-token', projectId: 'project-1', serviceId: 'service-1', environmentId: 'env-1', commitSha: 'b'.repeat(40), env: { API_KEY: 'secret' },
   }, {
     fetchImpl: async (_url, options) => {
-      request = JSON.parse(options.body);
-      return response({ serviceInstanceDeployV2: 'deployment-2' });
+      const request = JSON.parse(options.body); requests.push(request);
+      return response(request.query.includes('variableCollectionUpsert') ? { variableCollectionUpsert: true } : { serviceInstanceDeployV2: 'deployment-2' });
     },
   });
-  assert.equal(request.query.includes('serviceInstanceDeployV2'), true);
-  assert.equal(request.variables.serviceId, 'service-1');
-  assert.equal(request.variables.environmentId, 'env-1');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].query.includes('variableCollectionUpsert'), true);
+  assert.equal(requests[0].variables.input.variables.API_KEY, 'secret');
+  assert.equal(requests[1].query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(requests[1].variables.serviceId, 'service-1');
+  assert.equal(requests[1].variables.environmentId, 'env-1');
   assert.equal(result.deploymentId, 'deployment-2');
 });

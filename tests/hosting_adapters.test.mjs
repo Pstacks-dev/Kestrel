@@ -71,9 +71,30 @@ test('verifies Google Cloud Run service-account credentials with OAuth and the C
   assert.equal(result.account, 'kestrel-test');
 });
 
+test('verifies Netlify and Cloudflare Pages API access', async () => {
+  const netlify = await verifyHostingProvider('netlify', { authToken: 'netlify-token' }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(url, 'https://api.netlify.com/api/v1/user');
+      assert.equal(options.headers.Authorization, 'Bearer netlify-token');
+      return ok({ id: 'netlify-account', email: 'team@example.com' });
+    },
+  });
+  assert.equal(netlify.verified, true);
+
+  const accountId = 'a'.repeat(32);
+  const cloudflare = await verifyHostingProvider('cloudflare-pages', { apiToken: 'cf-token', accountId }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(url, `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`);
+      assert.equal(options.headers.Authorization, 'Bearer cf-token');
+      return ok({ success: true, result: [] });
+    },
+  });
+  assert.equal(cloudflare.verified, true);
+});
+
 test('rejects unsupported provider verification without making a network request', async () => {
   await assert.rejects(
-    verifyHostingProvider('cloudflare-pages', { apiToken: 'x', accountId: 'y' }, { fetchImpl: async () => assert.fail('network should not be called') }),
+    verifyHostingProvider('future-provider', { apiToken: 'x', accountId: 'y' }, { fetchImpl: async () => assert.fail('network should not be called') }),
     /not implemented/,
   );
 });

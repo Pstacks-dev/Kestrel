@@ -15,17 +15,18 @@ test('creates a Render web service with autodeploy disabled and deploys the veri
   const calls = [];
   const result = await createRenderDeployment({
     apiKey: 'render-token', ownerId: 'owner-123', repositoryUrl: 'https://github.com/acme/demo.git',
-    branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node', isStatic: false },
+    branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node', isStatic: false }, env: { DATABASE_URL: 'postgres://secret' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
     if (options.method === 'POST' && url.endsWith('/services')) return response({ service: { id: 'srv-1', serviceDetails: { url: 'https://demo.onrender.com' } } }, 201);
+    if (url.endsWith('/services/srv-1/env-vars')) { assert.equal(options.method, 'PUT'); assert.equal(JSON.parse(options.body)[0].key, 'DATABASE_URL'); return response({}); }
     return response({ id: 'dep-1', status: 'created' }, 201);
   } });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   const service = JSON.parse(calls[0].options.body);
   assert.equal(service.autoDeployTrigger, 'off');
   assert.equal(service.repo, 'https://github.com/acme/demo');
-  assert.equal(JSON.parse(calls[1].options.body).commitId, 'a'.repeat(40));
+  assert.equal(JSON.parse(calls[2].options.body).commitId, 'a'.repeat(40));
   assert.equal(result.serviceId, 'srv-1');
   assert.equal(result.deploymentId, 'dep-1');
 });
@@ -55,7 +56,7 @@ test('creates a DigitalOcean App Platform app and starts its first deployment', 
   const calls = [];
   const result = await createDigitalOceanDeployment({
     accessToken: 'do-token', region: 'nyc', repositoryUrl: 'https://github.com/acme/demo',
-    branch: 'main', commitSha: 'c'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node' },
+    branch: 'main', commitSha: 'c'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node' }, env: { NODE_ENV: 'production' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
     if (url.endsWith('/apps')) return response({ app: { id: 'app-1', live_url: 'https://demo.ondigitalocean.app' } }, 201);
@@ -65,14 +66,22 @@ test('creates a DigitalOcean App Platform app and starts its first deployment', 
   const spec = JSON.parse(calls[0].options.body).spec;
   assert.equal(spec.services[0].github.repo, 'acme/demo');
   assert.equal(spec.services[0].github.deploy_on_push, false);
+  assert.equal(spec.services[0].envs[0].key, 'NODE_ENV');
+  assert.equal(spec.services[0].envs[0].type, 'SECRET');
   assert.equal(result.projectId, 'app-1');
   assert.equal(result.deploymentId, 'do-dep-1');
   assert.equal(result.status, 'queued');
 });
 
 test('deploys, polls and rolls back a DigitalOcean app', async () => {
-  const deployed = await deployDigitalOceanApp({ accessToken: 'x', appId: 'app-1', commitSha: 'd'.repeat(40) }, {
-    fetchImpl: async () => response({ deployment: { id: 'do-dep-2', phase: 'PENDING' } }, 201),
+  const deployed = await deployDigitalOceanApp({ accessToken: 'x', appId: 'app-1', commitSha: 'd'.repeat(40), env: { API_KEY: 'secret' } }, {
+    fetchImpl: async (url, options) => {
+      if (options.method === 'GET') return response({ app: { id: 'app-1', spec: { services: [{ name: 'api', envs: [] }] } } });
+      assert.equal(options.method, 'PUT');
+      const spec = JSON.parse(options.body).spec;
+      assert.equal(spec.services[0].envs[0].key, 'API_KEY');
+      return response({ app: { id: 'app-1', in_progress_deployment: { id: 'do-dep-2', phase: 'PENDING', services: [{ source_commit_hash: 'd'.repeat(40) }] } } }, 200);
+    },
   });
   assert.equal(deployed.deploymentId, 'do-dep-2');
   assert.equal(deployed.status, 'queued');
