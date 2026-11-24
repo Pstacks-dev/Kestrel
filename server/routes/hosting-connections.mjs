@@ -4,7 +4,7 @@ import { listHostingProviders } from '../lib/hosting-providers.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
-const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express', 'digitalocean-app-platform', 'heroku', 'vercel']);
+const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express', 'digitalocean-app-platform', 'heroku', 'vercel', 'cloudflare-pages']);
 
 const CREDENTIAL_FIELDS = {
   render: ['apiKey', 'ownerId'],
@@ -15,6 +15,7 @@ const CREDENTIAL_FIELDS = {
   'digitalocean-app-platform': ['accessToken'],
   heroku: ['apiKey'],
   vercel: ['token'],
+  'cloudflare-pages': ['apiToken', 'accountId'],
   netlify: ['authToken'],
   'cloudflare-pages': ['apiToken', 'accountId'],
 };
@@ -29,6 +30,7 @@ export function validateProviderCredentials(providerId, credentials) {
     const roleArn = /^arn:aws:iam::\d{12}:role\/[A-Za-z0-9+=,.@_\/-]{1,512}$/;
     if (!roleArn.test(credentials.executionRoleArn) || !roleArn.test(credentials.infrastructureRoleArn)) return false;
   }
+  if (providerId === 'cloudflare-pages' && !/^[a-f0-9]{32}$/i.test(credentials.accountId)) return false;
   if (providerId === 'google-cloud-run') {
     try {
       const account = JSON.parse(credentials.serviceAccountJson);
