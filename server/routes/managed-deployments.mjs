@@ -89,6 +89,10 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       }
 
       const providerId = selected.id;
+      const containerImage = String(req.body?.containerImage || '').trim();
+      if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
+        return fail(res, 422, 'This provider requires a published OCI image. Kestrel must build and publish the project image before deployment.');
+      }
       const connection = verified.get(providerId);
       let credentials;
       try {
@@ -106,9 +110,12 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const providerInput = {
         repositoryUrl: project.repository_url, branch, commitSha, profile,
         projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
+        containerImage,
+        port: req.body?.port || 8080,
+        env: req.body?.env || {},
       };
       const providerDeployment = resource
-        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName })
+        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env })
         : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
       const saved = await transaction(async (client) => {
@@ -198,8 +205,11 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
       const current = await getManagedProviderDeployment(row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl });
       await query(
-        `update public.managed_hosting_deployments set status = $2, provider_url = $3, updated_at = now() where id = $1`,
-        [row.id, current.status, current.providerUrl],
+        `update public.managed_hosting_deployments
+         set status = $2, provider_url = $3,
+             provider_deployment_id = coalesce($4, provider_deployment_id), updated_at = now()
+         where id = $1`,
+        [row.id, current.status, current.providerUrl, current.providerDeploymentId || null],
       );
       if (current.providerUrl) {
         await query(
