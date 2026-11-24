@@ -5,7 +5,7 @@ ENV KESTREL_WORKER_EXECUTOR=docker \
     KESTREL_WORKER_WORKDIR=/var/lib/kestrel/work
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends docker.io git ca-certificates \
+ && apt-get install -y --no-install-recommends docker.io docker-buildx git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/kestrel
