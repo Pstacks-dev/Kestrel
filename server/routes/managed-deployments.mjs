@@ -45,7 +45,7 @@ async function resolveCommit(repository, branch, suppliedSha, fetchImpl) {
   return sha;
 }
 
-export async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch, artifactPrefix = '', expectedCommitSha = null) {
+export async function loadStaticArtifactFiles(query, projectId, artifactIds, storageFetch = fetch, artifactPrefix = '') {
   if (!Array.isArray(artifactIds) || artifactIds.length < 1 || artifactIds.length > 5000 ||
       artifactIds.some((id) => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) ||
       new Set(artifactIds).size !== artifactIds.length) {
@@ -57,9 +57,8 @@ export async function loadStaticArtifactFiles(query, projectId, artifactIds, sto
      join public.pipeline_runs r on r.id = a.run_id
      join public.projects p on p.id = r.project_id
      where a.id = any($1::uuid[]) and p.id = $2 and r.status = 'succeeded'
-       and ($3::text is null or r.commit_sha = $3)
        and a.deleted_at is null and (a.expires_at is null or a.expires_at > now())`,
-    [artifactIds, projectId, expectedCommitSha],
+    [artifactIds, projectId],
   );
   if (result.rowCount !== artifactIds.length) throw Object.assign(new Error('One or more selected build artifacts are missing or do not belong to this project'), { status: 422 });
   const storageUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
@@ -148,17 +147,17 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         [project.organization_id],
       );
       const verified = new Map(connectionResult.rows.map((row) => [row.provider_id, row]));
-      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id) && (provider.id !== 'netlify' || (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0)));
+      const containerImage = String(req.body?.containerImage || '').trim();
+      const selected = compatible.find((provider) => ACTIVE_MANAGED_PROVIDERS.includes(provider.id) && verified.has(provider.id) && (!provider.requiresContainerImage || containerImage) && (provider.id !== 'netlify' || (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0)));
       if (!selected) {
         return fail(res, 409, 'No verified compatible managed provider is available. For Netlify static deployments, include artifact IDs from a completed Kestrel build.');
       }
 
       const providerId = selected.id;
       const projectEnv = await loadProjectEnvironment(query, project.id);
-      const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix, commitSha) : null;
-      const containerImage = String(req.body?.containerImage || '').trim();
+      const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix) : null;
       if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId) && !containerImage) {
-        return fail(res, 422, 'This provider requires a published OCI image. Connect the Kestrel image build and registry pipeline before deploying this project.');
+        return fail(res, 422, 'This provider requires a published OCI image. Trigger a successful default-branch Kestrel pipeline to build and publish it automatically.');
       }
       const connection = verified.get(providerId);
       let credentials;
