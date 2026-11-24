@@ -10,7 +10,7 @@ RUN apt-get update \
  && mkdir -p /usr/local/lib/docker/cli-plugins \
  && curl -fsSL "https://github.com/docker/buildx/releases/download/v0.20.1/buildx-v0.20.1.linux-$TARGETARCH" -o /usr/local/lib/docker/cli-plugins/docker-buildx \
  && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-buildx \
- && docker buildx version \\
+ && docker buildx version \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/kestrel
