@@ -37,7 +37,7 @@ export function validateProviderCredentials(providerId, credentials) {
   }
   const allowed = new Set([...required, 'accountLabel', ...(providerId === 'railway' ? ['workspaceId'] : []), ...(providerId === 'digitalocean-app-platform' ? ['region'] : [])]);
   if (credentials.workspaceId !== undefined && (typeof credentials.workspaceId !== 'string' || credentials.workspaceId.length > 200)) return false;
-  if (credentials.region !== undefined && (typeof credentials.region !== 'string' || !/^[a-z]{3}$/.test(credentials.region))) return false;
+  if (providerId === 'digitalocean-app-platform' && credentials.region !== undefined && !/^[a-z]{3}$/.test(credentials.region)) return false;
   if (providerId === 'render' && !/^[A-Za-z0-9_-]{3,100}$/.test(credentials.ownerId)) return false;
   return Object.keys(credentials).every((field) => allowed.has(field));
 }
