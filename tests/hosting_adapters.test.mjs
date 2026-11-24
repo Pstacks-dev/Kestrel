@@ -31,27 +31,29 @@ test('verifies Render, Railway, Fly.io, DigitalOcean and Heroku API credentials'
   }
 });
 
-test('verifies AWS ECS Express Mode credentials using a signed ECS API request', async () => {
-  let authorization = '';
-  let target = '';
-  let requestUrl = '';
+test('verifies AWS ECS and ECR access using signed requests including temporary credentials', async () => {
+  const calls = [];
   const result = await verifyHostingProvider('aws-ecs-express', {
-    accessKeyId: 'AKIATESTKEY', secretAccessKey: 'test-secret', region: 'us-east-1',
+    accessKeyId: 'AKIATESTKEY', secretAccessKey: 'test-secret', sessionToken: 'session-token', region: 'us-east-1',
   }, {
     now: Date.parse('2026-11-24T00:00:00.000Z'),
     fetchImpl: async (url, options) => {
-      requestUrl = url;
-      target = options.headers['x-amz-target'];
-      authorization = options.headers.Authorization;
+      calls.push({ url, options });
+      if (options.headers['x-amz-target'].endsWith('.GetAuthorizationToken')) {
+        return new Response(JSON.stringify({ authorizationData: [{ authorizationToken: 'QVdTOnBhc3M=' }] }), { status: 200 });
+      }
       return new Response('{}', { status: 200 });
     },
   });
-  assert.match(authorization, /^AWS4-HMAC-SHA256 Credential=AKIATESTKEY\//);
-  assert.equal(requestUrl, 'https://ecs.us-east-1.amazonaws.com/');
-  assert.equal(target, 'AmazonEC2ContainerServiceV20141113.ListClusters');
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].options.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKIATESTKEY\\//);
+  assert.equal(calls[0].url, 'https://ecs.us-east-1.amazonaws.com/');
+  assert.equal(calls[0].options.headers['x-amz-target'], 'AmazonEC2ContainerServiceV20141113.ListClusters');
+  assert.equal(calls[1].url, 'https://api.ecr.us-east-1.amazonaws.com/');
+  assert.equal(calls[1].options.headers['x-amz-target'], 'AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken');
+  assert.equal(calls[1].options.headers['x-amz-security-token'], 'session-token');
   assert.equal(result.verified, true);
 });
-
 test('verifies Google Cloud Run service-account credentials with OAuth and the Cloud Run API', async () => {
   const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const serviceAccountJson = JSON.stringify({
