@@ -17,10 +17,19 @@ import {
   createCloudRunDeployment, deployCloudRunService, getCloudRunDeployment, getCloudRunDeploymentLogs, rollbackCloudRunDeployment,
 } from './hosting-cloud-run.mjs';
 import {
+  createEcsExpressDeployment, updateEcsExpressDeployment, getEcsExpressDeployment, getEcsExpressDeploymentLogs, rollbackEcsExpressDeployment,
+} from './hosting-aws-ecs-express.mjs';
+import {
+  createNetlifyDeployment, deployNetlifySite, getNetlifyDeployment, getNetlifyDeploymentLogs, rollbackNetlifyDeployment,
+} from './hosting-netlify.mjs';
+import {
+  createCloudflarePagesDeployment, deployCloudflarePagesProject, getCloudflarePagesDeployment, getCloudflarePagesDeploymentLogs, rollbackCloudflarePagesDeployment,
+} from './hosting-cloudflare-pages.mjs';
+import {
   createRailwayDeployment, deployRailwayService, getRailwayDeployment, getRailwayDeploymentLogs, rollbackRailwayDeployment,
 } from './hosting-railway.mjs';
 
-export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel'];
+export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'netlify', 'cloudflare-pages'];
 
 export async function createManagedProviderDeployment(provider, credentials, input, options) {
   if (provider === 'render') return createRenderDeployment({ ...input, ...credentials }, options);
@@ -30,6 +39,9 @@ export async function createManagedProviderDeployment(provider, credentials, inp
   if (provider === 'heroku') return createHerokuDeployment({ ...input, ...credentials }, options);
   if (provider === 'flyio') return createFlyDeployment({ ...input, ...credentials }, options);
   if (provider === 'google-cloud-run') return createCloudRunDeployment({ ...input, ...credentials }, options);
+  if (provider === 'aws-ecs-express') return createEcsExpressDeployment({ ...input, ...credentials }, options);
+  if (provider === 'netlify') return createNetlifyDeployment({ ...input, ...credentials }, options);
+  if (provider === 'cloudflare-pages') return createCloudflarePagesDeployment({ ...input, ...credentials }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -41,6 +53,9 @@ export async function deployManagedProviderService(provider, credentials, resour
   if (provider === 'heroku') return deployHerokuApp({ ...credentials, appId: resource.provider_project_id, commitSha, ...context }, options);
   if (provider === 'flyio') return deployFlyApp({ ...credentials, appName: resource.provider_project_id, commitSha, ...context }, options);
   if (provider === 'google-cloud-run') return deployCloudRunService({ ...credentials, projectId: resource.provider_project_id, serviceName: resource.provider_service_id, region: resource.provider_environment_id, commitSha, ...context }, options);
+  if (provider === 'aws-ecs-express') return updateEcsExpressDeployment({ ...credentials, serviceArn: resource.provider_project_id, ...context }, options);
+  if (provider === 'netlify') return deployNetlifySite({ ...credentials, siteId: resource.provider_project_id, commitSha, ...context }, options);
+  if (provider === 'cloudflare-pages') return deployCloudflarePagesProject({ ...credentials, accountId: resource.provider_project_id, projectName: resource.provider_service_id, commitSha, ...context }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -52,6 +67,9 @@ export async function getManagedProviderDeployment(provider, credentials, resour
   if (provider === 'heroku') return getHerokuDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'flyio') return getFlyDeployment({ ...credentials, appName: resource.provider_project_id, deploymentId }, options);
   if (provider === 'google-cloud-run') return getCloudRunDeployment({ ...credentials, projectId: resource.provider_project_id, serviceName: resource.provider_service_id, region: resource.provider_environment_id, deploymentId }, options);
+  if (provider === 'aws-ecs-express') return getEcsExpressDeployment({ ...credentials, serviceArn: resource.provider_project_id, deploymentId }, options);
+  if (provider === 'netlify') return getNetlifyDeployment({ ...credentials, deploymentId }, options);
+  if (provider === 'cloudflare-pages') return getCloudflarePagesDeployment({ ...credentials, accountId: resource.provider_project_id, projectName: resource.provider_service_id, deploymentId }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -63,6 +81,9 @@ export async function getManagedProviderDeploymentLogs(provider, credentials, re
   if (provider === 'heroku') return getHerokuDeploymentLogs({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'flyio') return getFlyDeploymentLogs({ ...credentials, appName: resource.provider_project_id, deploymentId }, options);
   if (provider === 'google-cloud-run') return getCloudRunDeploymentLogs({ ...credentials, projectId: resource.provider_project_id, serviceName: resource.provider_service_id, region: resource.provider_environment_id, deploymentId }, options);
+  if (provider === 'aws-ecs-express') return getEcsExpressDeploymentLogs({ ...credentials, serviceArn: resource.provider_project_id }, options);
+  if (provider === 'netlify') return getNetlifyDeploymentLogs({ ...credentials, deploymentId }, options);
+  if (provider === 'cloudflare-pages') return getCloudflarePagesDeploymentLogs({ ...credentials, accountId: resource.provider_project_id, projectName: resource.provider_service_id, deploymentId }, options);
   throw new Error('Managed deployment adapter is not available');
 }
 
@@ -74,5 +95,8 @@ export async function rollbackManagedProviderDeployment(provider, credentials, r
   if (provider === 'heroku') return rollbackHerokuDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'flyio') return rollbackFlyDeployment({ ...credentials, appName: resource.provider_project_id, deploymentId }, options);
   if (provider === 'google-cloud-run') return rollbackCloudRunDeployment({ ...credentials, projectId: resource.provider_project_id, serviceName: resource.provider_service_id, region: resource.provider_environment_id, deploymentId }, options);
+  if (provider === 'aws-ecs-express') return rollbackEcsExpressDeployment({ ...credentials, serviceArn: resource.provider_project_id, deploymentId }, options);
+  if (provider === 'netlify') return rollbackNetlifyDeployment({ ...credentials, siteId: resource.provider_project_id, deploymentId }, options);
+  if (provider === 'cloudflare-pages') return rollbackCloudflarePagesDeployment({ ...credentials, accountId: resource.provider_project_id, projectName: resource.provider_service_id, deploymentId }, options);
   throw new Error('Managed deployment adapter is not available');
 }
