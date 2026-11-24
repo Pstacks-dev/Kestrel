@@ -46,7 +46,7 @@ test('verifies AWS ECS and ECR access using signed requests including temporary 
     },
   });
   assert.equal(calls.length, 2);
-  assert.match(calls[0].options.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKIATESTKEY\\//);
+  assert.match(calls[0].options.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKIATESTKEY\//);
   assert.equal(calls[0].url, 'https://ecs.us-east-1.amazonaws.com/');
   assert.equal(calls[0].options.headers['x-amz-target'], 'AmazonEC2ContainerServiceV20141113.ListClusters');
   assert.equal(calls[1].url, 'https://api.ecr.us-east-1.amazonaws.com/');
