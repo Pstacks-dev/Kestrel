@@ -1267,6 +1267,9 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
       await client.query(
         "update public.managed_hosting_image_builds set status = case when attempt_count < 4 then 'queued' else 'failed' end, worker_id = null, lease_token = null, lease_expires_at = null, available_at = case when attempt_count < 4 then now() + interval '15 seconds' else available_at end, updated_at = now() where status = 'running' and lease_expires_at <= now()",
       );
+      await client.query(
+        "update public.managed_hosting_automation_queue q set status = 'queued', locked_at = null, available_at = now(), updated_at = now() where q.status = 'waiting_for_image' and exists (select 1 from public.managed_hosting_image_builds b where b.automation_queue_id = q.id and b.status = 'failed')",
+      );
       const claimed = await client.query(
         "with candidate as (select b.id from public.managed_hosting_image_builds b join public.projects p on p.id = b.project_id where p.organization_id = $1 and b.status = 'queued' and b.attempt_count < 4 and b.available_at <= now() order by b.created_at for update of b skip locked limit 1) update public.managed_hosting_image_builds b set status = 'running', attempt_count = attempt_count + 1, worker_id = $2, lease_token = $3, lease_expires_at = now() + interval '45 seconds', started_at = coalesce(started_at, now()), updated_at = now() from candidate where b.id = candidate.id returning b.*",
         [worker.rows[0].organization_id, req.worker.id, crypto.randomBytes(32).toString('hex')],
@@ -1316,8 +1319,11 @@ app.post('/api/workers/managed-image-builds/:buildId/complete', workerAuth, asyn
         imageDigestRef || null, redactSecrets(String(error || 'OCI build failed')).slice(0, 500)],
     );
     if (!updated.rowCount) return null;
-    if (updated.rows[0].status === 'succeeded') {
-      await client.query('update public.managed_hosting_automation_queue set available_at = now(), updated_at = now() where id = $1', [updated.rows[0].automation_queue_id]);
+    if (['succeeded', 'failed'].includes(updated.rows[0].status)) {
+      await client.query(
+        "update public.managed_hosting_automation_queue set status = 'queued', locked_at = null, available_at = now(), updated_at = now() where id = $1",
+        [updated.rows[0].automation_queue_id],
+      );
     }
     return updated.rows[0];
   });
