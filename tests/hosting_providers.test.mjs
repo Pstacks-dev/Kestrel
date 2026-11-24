@@ -34,8 +34,8 @@ test('container and persistent backend projects exclude serverless-only provider
 
 test('static frontend projects can use compatible platforms without image-only providers', () => {
   const ranked = rankHostingProviders({ runtime: 'javascript', kind: 'static', isStatic: true }, {});
-  assert.equal(ranked.length, 9);
-  assert.ok(!ranked.some((provider) => provider.id === 'aws-ecs-express'));
+  assert.equal(ranked.length, 8);
+  assert.ok(!ranked.some((provider) => ['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(provider.id)));
 });
 
 test('managed database requirement only returns providers with database offerings', () => {
