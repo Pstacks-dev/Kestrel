@@ -130,6 +130,10 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
         'select * from public.managed_hosting_image_builds where id = $1 and organization_id = $2 and project_id = $3',
         [item.image_build_id, run.organization_id, run.project_id],
       )).rows[0] : null;
+      if (imageBuild && imageBuild.provider_id !== selected.id) {
+        await markQueue(query, item.id, 'skipped', 'The provider connection changed after the image registry was provisioned; retry the deployment with a fresh pipeline run', item.attempt_count);
+        return { status: 'skipped' };
+      }
       if (!imageBuild) {
         const registry = await provisionProviderImageRegistry(
           selected.id, credentials, projectSlug({ name: run.project_name, id: run.project_id }), run.commit_sha, { fetchImpl },
