@@ -39,7 +39,17 @@ function status(value) {
   return 'unknown';
 }
 
-export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {} }, { fetchImpl = fetch } = {}) {
+async function syncRenderEnvironment(apiKey, serviceId, env = {}, fetchImpl = fetch) {
+  const variables = Object.entries(env).map(([key, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Render environment variable');
+    return { key, value };
+  });
+  await request(apiKey, `/services/${encodeURIComponent(serviceId)}/env-vars`, {
+    method: 'PUT', fetchImpl, body: variables,
+  });
+}
+
+export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {} }, { fetchImpl = fetch } = {}) {
   if (!apiKey || !ownerId) throw new Error('Render API key and workspace owner ID are required');
   validate({ branch, commitSha });
   const repo = repoPath(repositoryUrl);
@@ -54,6 +64,7 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
   });
   const service = created.service || created;
   if (!service.id) throw new Error('Render did not return a service identifier');
+  await syncRenderEnvironment(apiKey, service.id, env, fetchImpl);
   const deploy = created.deployId ? { id: created.deployId, status: 'created' } : await request(apiKey, `/services/${encodeURIComponent(service.id)}/deploys`, {
     method: 'POST', fetchImpl, body: { commitId: commitSha, clearCache: 'do_not_clear' },
   });
@@ -61,9 +72,10 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
   return { provider: 'render', projectId: ownerId, serviceId: service.id, environmentId: null, deploymentId: deploy.id, status: status(deploy.status || 'created'), providerUrl: service.serviceDetails?.url || service.url || null };
 }
 
-export async function deployRenderService({ apiKey, serviceId, commitSha }, { fetchImpl = fetch } = {}) {
+export async function deployRenderService({ apiKey, serviceId, commitSha, env = {} }, { fetchImpl = fetch } = {}) {
   if (!serviceId) throw new Error('Render service identifier is required');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
+  await syncRenderEnvironment(apiKey, serviceId, env, fetchImpl);
   const deploy = await request(apiKey, `/services/${encodeURIComponent(serviceId)}/deploys`, { method: 'POST', fetchImpl, body: { commitId: commitSha, clearCache: 'do_not_clear' } });
   if (!deploy.id) throw new Error('Render did not return a deployment identifier');
   return { provider: 'render', serviceId, deploymentId: deploy.id, status: status(deploy.status || 'created') };
