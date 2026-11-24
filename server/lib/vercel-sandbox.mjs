@@ -91,6 +91,79 @@ export function createVercelSandboxClient({ env = process.env, fetchImpl = fetch
       const response = await request(`/v2/sandboxes/${encodeURIComponent(name)}?projectId=${encodeURIComponent(c.projectId)}&deleteOrphanSnapshots=true`, { method: 'DELETE' });
       return response.json();
     },
+    async startCommand(sessionId, { command, args = [], cwd, timeoutMs = 1_800_000, env: commandEnv = {} }) {
+      if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 18_000_000) {
+        throw new SandboxProviderError('Command timeout must be between 100ms and 5 hours', 400, 'sandbox_invalid_timeout');
+      }
+      const response = await request(`/v2/sandboxes/sessions/${encodeURIComponent(sessionId)}/cmd`, {
+        method: 'POST',
+        body: { command, args, cwd, env: commandEnv, sudo: false, wait: false, timeout: timeoutMs },
+      });
+      const data = await response.json();
+      if (!data?.command?.id) throw new SandboxProviderError('Sandbox provider did not return a command ID', 502, 'sandbox_command_missing_id');
+      return data.command;
+    },
+    async getCommand(sessionId, commandId) {
+      const response = await request(`/v2/sandboxes/sessions/${encodeURIComponent(sessionId)}/cmd/${encodeURIComponent(commandId)}?wait=false`);
+      const data = await response.json();
+      if (!data?.command?.id) throw new SandboxProviderError('Sandbox provider did not return command status', 502, 'sandbox_command_missing_status');
+      return data.command;
+    },
+    async getCommandLogs(sessionId, commandId, { maxWaitMs = 6500, maxBytes = 64 * 1024 } = {}) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(Math.max(maxWaitMs, 250), 7000));
+      let stdout = '';
+      let stderr = '';
+      let pending = '';
+      let truncated = false;
+      const append = (current, value) => {
+        const remaining = Math.max(0, maxBytes - stdout.length - stderr.length);
+        if (remaining <= 0) { truncated = true; return current; }
+        if (value.length > remaining) truncated = true;
+        return current + value.slice(0, remaining);
+      };
+      try {
+        const response = await request(
+          `/v2/sandboxes/sessions/${encodeURIComponent(sessionId)}/cmd/${encodeURIComponent(commandId)}/logs`,
+          { signal: controller.signal },
+        );
+        if (!(response.headers.get('content-type') || '').includes('application/x-ndjson') || !response.body) {
+          throw new SandboxProviderError('Sandbox logs API returned an unexpected response format', 502, 'sandbox_bad_logs_response');
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+            let newline;
+            while ((newline = pending.indexOf('\n')) >= 0) {
+              const line = pending.slice(0, newline).trim();
+              pending = pending.slice(newline + 1);
+              if (!line) continue;
+              const item = JSON.parse(line);
+              if (item.stream === 'stdout') stdout = append(stdout, item.data || '');
+              else if (item.stream === 'stderr') stderr = append(stderr, item.data || '');
+              else if (item.stream === 'error') throw new SandboxProviderError(item.data?.message || 'Sandbox log stream failed', 502, item.data?.code || 'sandbox_log_stream_error');
+            }
+            if (done) break;
+          }
+          if (pending.trim() && !controller.signal.aborted) {
+            const item = JSON.parse(pending.trim());
+            if (item.stream === 'stdout') stdout = append(stdout, item.data || '');
+            else if (item.stream === 'stderr') stderr = append(stderr, item.data || '');
+            else if (item.stream === 'error') throw new SandboxProviderError(item.data?.message || 'Sandbox log stream failed', 502, item.data?.code || 'sandbox_log_stream_error');
+          }
+        } catch (error) {
+          if (!controller.signal.aborted) throw error;
+        } finally {
+          reader.releaseLock();
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      return { stdout, stderr, truncated };
+    },
     async runCommand(sessionId, { command, args, cwd, timeoutMs }) {
       const response = await request(`/v2/sandboxes/sessions/${encodeURIComponent(sessionId)}/cmd`, {
         method: 'POST',
