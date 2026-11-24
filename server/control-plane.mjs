@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
 import { validatePipelineJobs } from './lib/pipeline.mjs';
+import { isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush, isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha } from './lib/github-webhooks.mjs';
 import {
   encryptSecret,
   decryptSecret,
@@ -655,17 +656,17 @@ app.post('/api/webhooks/github', async (req, res) => {
     return res.json({ ok: true, message: 'Pong! Webhook configured successfully.' });
   }
 
-  if (event !== 'push' && event !== 'pull_request') {
+  if (!isSupportedGitHubWebhookEvent(event)) {
     return res.status(200).json({ message: `Ignored event: ${event}` });
   }
   const deliveryId = String(req.headers['x-github-delivery'] || '').trim();
-  if (!deliveryId || deliveryId.length > 128) {
+  if (!isValidGitHubDeliveryId(deliveryId)) {
     return res.status(400).json({ error: 'A valid GitHub delivery ID is required' });
   }
-  if (event === 'pull_request' && !['opened', 'synchronize', 'reopened', 'ready_for_review'].includes(body?.action)) {
+  if (event === 'pull_request' && !shouldQueuePullRequestAction(body?.action)) {
     return res.status(200).json({ message: `Ignored pull request action: ${body?.action || 'unknown'}` });
   }
-  if (event === 'push' && (body?.deleted === true || /^0{40}$/.test(body?.after || ''))) {
+  if (event === 'push' && shouldIgnoreGitHubPush(body)) {
     return res.status(200).json({ message: 'Branch deletion does not trigger a pipeline' });
   }
 
@@ -724,10 +725,10 @@ app.post('/api/webhooks/github', async (req, res) => {
       commitMessage = `PR #${body.pull_request?.number}: ${body.pull_request?.title || 'Pull request'}`;
     }
 
-    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) {
+    if (!isValidGitBranch(branch)) {
       return res.status(400).json({ error: 'Invalid Git branch in webhook payload' });
     }
-    if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) {
+    if (!isValidGitCommitSha(commitSha)) {
       return res.status(400).json({ error: 'Webhook payload did not contain a valid commit SHA' });
     }
 
