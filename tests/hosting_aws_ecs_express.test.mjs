@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createEcsExpressDeployment, updateEcsExpressDeployment, getEcsExpressDeployment,
-  getEcsExpressDeploymentLogs, rollbackEcsExpressDeployment,
+  getEcsExpressDeploymentLogs, rollbackEcsExpressDeployment, prepareEcsImageRegistry,
 } from '../server/lib/hosting-aws-ecs-express.mjs';
 
 const response = (payload, status = 200) => new Response(JSON.stringify(payload), {
@@ -141,4 +141,30 @@ test('rejects non-image deployments before contacting AWS', async () => {
   await assert.rejects(createEcsExpressDeployment({
     ...credentials, projectName: 'demo', containerImage: 'not-an-image',
   }, { fetchImpl: async () => assert.fail('AWS must not be called') }), /published OCI image/);
+});
+
+
+test('creates or reuses an immutable ECR repository and returns scoped registry credentials', async () => {
+  const calls = [];
+  const authToken = Buffer.from('AWS:ecr-password').toString('base64');
+  const result = await prepareEcsImageRegistry({
+    accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'secret', region: 'us-east-1',
+    executionRoleArn: 'arn:aws:iam::123456789012:role/KestrelExecution',
+    projectName: 'kestrel-demo', commitSha: 'a'.repeat(40),
+  }, { fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    const target = options.headers['x-amz-target'];
+    if (target.endsWith('.DescribeRepositories')) return response({ code: 'RepositoryNotFoundException' }, 400);
+    if (target.endsWith('.CreateRepository')) return response({ repository: { repositoryUri: '123456789012.dkr.ecr.us-east-1.amazonaws.com/kestrel/kestrel-demo' } });
+    if (target.endsWith('.GetAuthorizationToken')) return response({ authorizationData: [{ authorizationToken: authToken, proxyEndpoint: 'https://123456789012.dkr.ecr.us-east-1.amazonaws.com' }] });
+    throw new Error(`Unexpected ECR target: ${target}`);
+  } });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].options.headers['x-amz-target'], 'AmazonEC2ContainerRegistry_V20150921.DescribeRepositories');
+  assert.equal(calls[1].options.headers['x-amz-target'], 'AmazonEC2ContainerRegistry_V20150921.CreateRepository');
+  assert.equal(calls[2].options.headers['x-amz-target'], 'AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken');
+  assert.equal(result.registryHost, '123456789012.dkr.ecr.us-east-1.amazonaws.com');
+  assert.equal(result.registryUser, 'AWS');
+  assert.equal(result.registryPassword, 'ecr-password');
+  assert.equal(result.imageRef, `123456789012.dkr.ecr.us-east-1.amazonaws.com/kestrel/kestrel-demo:${'a'.repeat(40)}`);
 });
