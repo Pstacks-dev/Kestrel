@@ -1,3 +1,5 @@
+import { createVercelSandboxClient, makeSandboxName } from './vercel-sandbox.mjs';
+
 const API = 'https://api.machines.dev/v1';
 
 async function request(token, path, { method = 'GET', body, fetchImpl = fetch, allowNotFound = false } = {}) {
@@ -24,88 +26,147 @@ function safeAppName(value) {
   return name.length >= 3 ? name : 'kestrel-app';
 }
 
-function validateImage(image) {
-  if (typeof image !== 'string' || image.length > 512 ||
-      !/^(?:[a-z0-9.-]+(?::\d+)?\/)?[a-z0-9._/-]+(?::[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$/i.test(image)) {
-    throw new Error('A valid published OCI image reference is required for Fly.io deployment');
+function validateSource(repositoryUrl, commitSha) {
+  let url;
+  try { url = new URL(repositoryUrl); } catch { throw new Error('A public GitHub repository URL is required for Fly.io source builds'); }
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com' ||
+      url.username || url.password || url.search || url.hash ||
+      !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/.test(url.pathname) ||
+      !/^[a-f0-9]{40}$/i.test(String(commitSha || ''))) {
+    throw new Error('Fly.io source builds require a public GitHub repository and a full 40-character commit SHA');
   }
-  return image;
+  return \`https://github.com\${url.pathname.replace(/\.git$/i, '').replace(/\/$/, '')}\`;
 }
 
-function machineConfig({ image, port, env, cpuKind, cpus, memoryMb }) {
-  const internalPort = Number(port || 3000);
-  if (!Number.isInteger(internalPort) || internalPort < 1 || internalPort > 65535) throw new Error('Application port must be between 1 and 65535');
-  return {
-    image,
-    env: env && typeof env === 'object' ? env : {},
-    guest: { cpu_kind: cpuKind || 'shared', cpus: Number(cpus || 1), memory_mb: Number(memoryMb || 512) },
-    services: [{
-      protocol: 'tcp',
-      internal_port: internalPort,
-      ports: [{ port: 80, handlers: ['http'] }, { port: 443, handlers: ['tls', 'http'] }],
-      force_instance_key: null,
-    }],
-    restart: { policy: 'always' },
-    auto_destroy: false,
-  };
+function flySourceBuildScript() {
+  return String.raw\`set -euo pipefail
+export PATH="$HOME/.fly/bin:$PATH"
+if ! command -v flyctl >/dev/null 2>&1; then
+  curl -fsSL https://fly.io/install.sh | sh
+fi
+export PATH="$HOME/.fly/bin:$PATH"
+
+if [ ! -f fly.toml ]; then
+  if [ -f Dockerfile ] || [ -f dockerfile ]; then
+    cat > fly.toml <<'FLYTOML'
+app = "\${KESTREL_FLY_APP}"
+primary_region = "\${KESTREL_FLY_REGION}"
+[http_service]
+  internal_port = \${KESTREL_FLY_PORT}
+  force_https = true
+  auto_start_machines = true
+  auto_stop_machines = "off"
+  min_machines_running = 1
+FLYTOML
+  else
+    cat > fly.toml <<'FLYTOML'
+app = "\${KESTREL_FLY_APP}"
+primary_region = "\${KESTREL_FLY_REGION}"
+[build]
+  builder = "paketobuildpacks/builder-jammy-base"
+[http_service]
+  internal_port = \${KESTREL_FLY_PORT}
+  force_https = true
+  auto_start_machines = true
+  auto_stop_machines = "off"
+  min_machines_running = 1
+FLYTOML
+  fi
+fi
+
+node --input-type=module -e '
+import fs from "node:fs";
+const values = JSON.parse(process.env.KESTREL_ENV_JSON || "{}");
+const rows = Object.entries(values).filter(([key, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof value === "string");
+fs.writeFileSync(".kestrel-secrets.env", rows.map(([key, value]) => key + "=" + JSON.stringify(value)).join("\\n"), { mode: 0o600 });
+'
+if [ -s .kestrel-secrets.env ]; then
+  flyctl secrets import --app "$KESTREL_FLY_APP" < .kestrel-secrets.env
+fi
+rm -f .kestrel-secrets.env
+
+flyctl deploy --remote-only --app "$KESTREL_FLY_APP" --region "$KESTREL_FLY_REGION" --yes
+flyctl machine list --json --app "$KESTREL_FLY_APP" > .kestrel-machines.json
+node --input-type=module -e '
+import fs from "node:fs";
+const machines = JSON.parse(fs.readFileSync(".kestrel-machines.json", "utf8"));
+const active = machines.filter((machine) => machine.state === "started")
+  .sort((a, b) => Date.parse(b.updated_at || b.created_at || 0) - Date.parse(a.updated_at || a.created_at || 0));
+if (!active[0]?.id) process.exit(12);
+console.log("KESTREL_MACHINE_ID=" + active[0].id);
+'
+\`;
 }
 
-async function allocatePublicAddresses(token, appName, fetchImpl) {
-  const response = await fetchImpl('https://api.fly.io/graphql', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      query: 'mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { app { sharedIpAddress } } }',
-      variables: { input: { appId: appName, type: 'shared_v4', region: 'global' } },
-    }),
-    signal: AbortSignal.timeout(20000),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.errors?.length) {
-    const message = payload.errors?.[0]?.message || `Fly.io IP allocation failed (${response.status})`;
-    if (!/already|exists|allocated/i.test(message)) throw new Error(message);
+async function deployFlySource({
+  token, appName, repositoryUrl, commitSha, env, port, region,
+}, {
+  sandboxClient = createVercelSandboxClient(), sandboxRegion = process.env.KESTREL_SANDBOX_REGION || 'iad1',
+  timeoutMs = 1_800_000,
+} = {}) {
+  const sourceUrl = validateSource(repositoryUrl, commitSha);
+  const sandboxName = makeSandboxName();
+  let sessionId;
+  try {
+    const created = await sandboxClient.create({
+      name: sandboxName, vcpus: 2, timeoutMs, region: sandboxRegion,
+      tags: { managedBy: 'kestrel', provider: 'flyio' },
+      source: { type: 'git', url: sourceUrl, revision: commitSha },
+    });
+    sessionId = created?.session?.id || created?.sandbox?.currentSessionId;
+    if (!sessionId) throw new Error('Kestrel build sandbox did not return a session');
+    const result = await sandboxClient.runCommand(sessionId, {
+      command: 'bash',
+      args: ['-lc', flySourceBuildScript()],
+      cwd: '/vercel/sandbox',
+      timeoutMs,
+      env: {
+        FLY_API_TOKEN: token,
+        KESTREL_FLY_APP: appName,
+        KESTREL_FLY_REGION: region || 'iad',
+        KESTREL_FLY_PORT: String(port || 8080),
+        KESTREL_ENV_JSON: JSON.stringify(env || {}),
+      },
+    });
+    if (result.exitCode !== 0) throw new Error('Fly.io remote source build or deployment failed');
+    const machineId = String(result.stdout || '').match(/^KESTREL_MACHINE_ID=([a-z0-9]+)$/m)?.[1];
+    if (!machineId) throw new Error('Fly.io deployment completed without returning a running Machine identifier');
+    return machineId;
+  } finally {
+    try { await sandboxClient.delete(sandboxName); } catch {}
   }
 }
 
-async function ensureFlyApp({ token, appName, orgSlug }, fetchImpl) {
-  const existing = await request(token, `/apps/${encodeURIComponent(appName)}`, { fetchImpl, allowNotFound: true });
-  if (existing) {
-    if (existing.organization?.slug && existing.organization.slug !== orgSlug) throw new Error('Fly.io app name is already owned by another organization');
-    return existing;
-  }
-  return request(token, '/apps', {
-    method: 'POST', fetchImpl,
-    body: { app_name: appName, org_slug: orgSlug },
-  });
-}
-
-async function createMachine({ token, appName, image, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl = fetch } = {}) {
-  const machine = await request(token, `/apps/${encodeURIComponent(appName)}/machines`, {
-    method: 'POST', fetchImpl,
-    body: { name: `kestrel-${Date.now().toString(36)}`, region: region || 'iad', config: machineConfig({ image, port, env, cpuKind, cpus, memoryMb }), skip_service_checks: false },
-  });
-  if (!machine.id) throw new Error('Fly.io did not return a Machine identifier');
-  return machine;
-}
-
-export async function createFlyDeployment({ token, orgSlug, projectName, containerImage, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl = fetch } = {}) {
+export async function createFlyDeployment({
+  token, orgSlug, projectName, repositoryUrl, commitSha, port, env, region,
+}, {
+  fetchImpl = fetch, sandboxClient = createVercelSandboxClient(), sandboxRegion,
+} = {}) {
   if (!token || !orgSlug) throw new Error('Fly.io token and organization slug are required');
-  const image = validateImage(containerImage);
+  validateSource(repositoryUrl, commitSha);
   const appName = safeAppName(projectName);
   await ensureFlyApp({ token, appName, orgSlug }, fetchImpl);
   await allocatePublicAddresses(token, appName, fetchImpl);
-  const machine = await createMachine({ token, appName, image, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl });
+  const machineId = await deployFlySource({
+    token, appName, repositoryUrl, commitSha, port, env, region,
+  }, { sandboxClient, sandboxRegion });
   return {
     provider: 'flyio', projectId: appName, serviceId: appName, environmentId: region || 'iad',
-    deploymentId: machine.id, status: machine.state === 'started' ? 'deploying' : 'queued',
-    providerUrl: `https://${appName}.fly.dev`,
+    deploymentId: machineId, status: 'deploying', providerUrl: \`https://\${appName}.fly.dev\`,
   };
 }
 
-export async function deployFlyApp({ token, appName, containerImage, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl = fetch } = {}) {
-  const image = validateImage(containerImage);
-  const machine = await createMachine({ token, appName, image, port, env, region, cpuKind, cpus, memoryMb }, { fetchImpl });
-  return { provider: 'flyio', deploymentId: machine.id, status: machine.state === 'started' ? 'deploying' : 'queued', providerUrl: `https://${appName}.fly.dev` };
+export async function deployFlyApp({
+  token, appName, repositoryUrl, commitSha, port, env, region,
+}, { sandboxClient = createVercelSandboxClient(), sandboxRegion } = {}) {
+  if (!token || !appName) throw new Error('Fly.io token and app name are required');
+  const machineId = await deployFlySource({
+    token, appName, repositoryUrl, commitSha, port, env, region,
+  }, { sandboxClient, sandboxRegion });
+  return {
+    provider: 'flyio', deploymentId: machineId, status: 'deploying',
+    providerUrl: \`https://\${appName}.fly.dev\`,
+  };
 }
 
 export async function getFlyDeployment({ token, appName, deploymentId }, { fetchImpl = fetch } = {}) {
