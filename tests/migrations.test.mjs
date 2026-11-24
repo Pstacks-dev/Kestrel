@@ -112,5 +112,5 @@ test('deployed hosting schema reconciliation preserves encrypted credentials and
   assert.match(sql, /add column if not exists branch text/i);
   assert.match(sql, /add column if not exists commit_sha text/i);
   assert.match(sql, /unique index if not exists github_webhook_deliveries_delivery_id_uidx/i);
-  assert.match(sql, /revoke all on public\\.github_webhook_deliveries from anon, authenticated/i);
+  assert.match(sql, /revoke all on public\.github_webhook_deliveries from anon, authenticated/i);
 });
