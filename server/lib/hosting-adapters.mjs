@@ -19,7 +19,7 @@ function awsSigningKey(secret, date, region, service) {
 }
 
 async function verifyAws(credentials, fetchImpl, now) {
-  const host = 'sts.amazonaws.com';
+  const host = `sts.${credentials.region}.amazonaws.com`;
   const region = credentials.region;
   const body = 'Action=GetCallerIdentity&Version=2011-06-15';
   const amzDate = new Date(now).toISOString().replace(/[:-]|\.\d{3}/g, '');
@@ -86,7 +86,7 @@ export async function verifyHostingProvider(providerId, credentials, { fetchImpl
       if (railway.errors?.length || !railway.data?.me?.id) throw new Error('Railway rejected the credential');
       return { verified: true, account: railway.data.me.name || railway.data.me.id };
     case 'flyio':
-      response = await fetchImpl('https://api.machines.dev/v1/apps', {
+      response = await fetchImpl('`https://api.machines.dev/v1/apps?org_slug=${encodeURIComponent(credentials.orgSlug)}`, {
         headers: { Authorization: `Bearer ${credentials.token}` }, signal: timeoutSignal(),
       });
       await requireOk(response);
