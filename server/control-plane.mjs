@@ -659,10 +659,6 @@ app.post('/api/webhooks/github', async (req, res) => {
   if (!isSupportedGitHubWebhookEvent(event)) {
     return res.status(200).json({ message: `Ignored event: ${event}` });
   }
-  const deliveryId = String(req.headers['x-github-delivery'] || '').trim();
-  if (!isValidGitHubDeliveryId(deliveryId)) {
-    return res.status(400).json({ error: 'A valid GitHub delivery ID is required' });
-  }
   if (event === 'pull_request' && !shouldQueuePullRequestAction(body?.action)) {
     return res.status(200).json({ message: `Ignored pull request action: ${body?.action || 'unknown'}` });
   }
@@ -677,6 +673,11 @@ app.post('/api/webhooks/github', async (req, res) => {
 
   if (!repoFullName && !repoHtmlUrl) {
     return res.status(400).json({ error: 'Missing repository information in webhook payload' });
+  }
+
+  const deliveryId = String(req.headers['x-github-delivery'] || '').trim();
+  if (!isValidGitHubDeliveryId(deliveryId)) {
+    return res.status(400).json({ error: 'A valid GitHub delivery ID is required' });
   }
 
   try {
