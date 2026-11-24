@@ -1,12 +1,37 @@
+import crypto from 'node:crypto';
 import { createGitHubInstallationToken, getGitHubInstallation, getGitHubAppConfig } from '../lib/github-app.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
-export function registerGitHubAppRoutes(app, { userAuth, query, transaction, signJwt, verifyJwt }) {
+function signInstallationState(payload, secret = process.env.GITHUB_APP_STATE_SECRET, now = Date.now()) {
+  if (!secret || String(secret).length < 32) throw new Error('GITHUB_APP_STATE_SECRET must contain at least 32 characters');
+  const body = Buffer.from(JSON.stringify({ ...payload, iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + 600 })).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return body + '.' + signature;
+}
+
+function verifyInstallationState(token, secret = process.env.GITHUB_APP_STATE_SECRET, now = Date.now()) {
+  if (!secret || String(secret).length < 32 || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const expected = crypto.createHmac('sha256', secret).update(parts[0]).digest();
+  let supplied;
+  try { supplied = Buffer.from(parts[1], 'base64url'); } catch { return null; }
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    const nowSeconds = Math.floor(now / 1000);
+    if (!Number.isFinite(payload.exp) || payload.exp <= nowSeconds || payload.iat > nowSeconds + 30 ||
+        payload.purpose !== 'github_app_install') return null;
+    return payload;
+  } catch { return null; }
+}
+
+export function registerGitHubAppRoutes(app, { userAuth, query, transaction }) {
   app.post('/api/git/app/install', userAuth, async (req, res) => {
     const organizationId = String(req.body?.organizationId || '');
     if (!organizationId) return res.status(400).json({ error: 'Workspace is required' });
-    if (!getGitHubAppConfig()) return res.status(503).json({ error: 'GitHub App integration is not configured' });
+    if (!getGitHubAppConfig() || !process.env.GITHUB_APP_STATE_SECRET || process.env.GITHUB_APP_STATE_SECRET.length < 32) return res.status(503).json({ error: 'GitHub App integration or secure state signing is not configured' });
     try {
       const member = await query(
         'select role from public.organization_members where organization_id = $1 and user_id = $2',
@@ -15,7 +40,7 @@ export function registerGitHubAppRoutes(app, { userAuth, query, transaction, sig
       if (!member.rowCount || !WRITE_ROLES.includes(member.rows[0].role)) {
         return res.status(403).json({ error: 'Developer access to this workspace is required' });
       }
-      const state = signJwt({ purpose: 'github_app_install', organizationId, userId: req.user.id }, 10 * 60);
+      const state = signInstallationState({ purpose: 'github_app_install', organizationId, userId: req.user.id });
       const slug = getGitHubAppConfig().appSlug;
       return res.json({ installUrl: `https://github.com/apps/${encodeURIComponent(slug)}/installations/new?state=${encodeURIComponent(state)}` });
     } catch {
@@ -26,7 +51,7 @@ export function registerGitHubAppRoutes(app, { userAuth, query, transaction, sig
   // GitHub redirects here after an installation. Signed state binds the callback to
   // the initiating workspace and user; membership is rechecked before persisting.
   app.get('/api/git/app/callback', async (req, res) => {
-    const state = verifyJwt(String(req.query.state || ''));
+    const state = verifyInstallationState(String(req.query.state || ''));
     const installationId = String(req.query.installation_id || '');
     if (!state || state.purpose !== 'github_app_install' || !state.organizationId || !state.userId ||
         !/^\d+$/.test(installationId)) {
