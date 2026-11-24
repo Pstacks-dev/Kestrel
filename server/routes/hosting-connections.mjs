@@ -4,7 +4,7 @@ import { listHostingProviders } from '../lib/hosting-providers.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
-const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express', 'digitalocean-app-platform', 'heroku', 'vercel']);
+const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express', 'digitalocean-app-platform', 'heroku', 'vercel', 'netlify', 'cloudflare-pages']);
 
 const CREDENTIAL_FIELDS = {
   render: ['apiKey', 'ownerId'],
