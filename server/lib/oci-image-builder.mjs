@@ -3,9 +3,8 @@ import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const IMAGE_REF = /^(?:[a-z0-9.-]+(?::\\d+)?\\/)?[a-z0-9._/-]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/i;
+const IMAGE_REF = /^(?:[a-z0-9.-]+(?::\d+)?\/)?[a-z0-9._/-]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/i;
 const COMMIT_SHA = /^[a-f0-9]{40}$/i;
-const REGISTRY_HOST = /^(?:[a-z0-9.-]+(?::\\d+)?|[a-z0-9.-]+)$/i;
 
 export class OciBuildError extends Error {
   constructor(message, code = 'oci_build_failed', status = 502) {
@@ -38,12 +37,12 @@ function validateInput(input) {
   }
   const dockerfile = input.dockerfile || 'Dockerfile';
   if (typeof dockerfile !== 'string' || path.isAbsolute(dockerfile) ||
-      dockerfile.replace(/\\\\/g, '/').split('/').some((part) => part === '..' || part === '')) {
+      dockerfile.replace(/\\/g, '/').split('/').some((part) => part === '..' || part === '')) {
     throw new OciBuildError('Dockerfile must be a safe path inside the build context', 'oci_invalid_dockerfile', 400);
   }
   const platforms = input.platforms || ['linux/amd64'];
   if (!Array.isArray(platforms) || !platforms.length || platforms.length > 4 ||
-      platforms.some((platform) => !/^linux\\/(?:amd64|arm64|arm\/v[6-8])$/.test(platform))) {
+      platforms.some((platform) => !/^linux\/(?:amd64|arm64|arm\/v[6-8])$/.test(platform))) {
     throw new OciBuildError('One or more supported Linux target platforms are required', 'oci_invalid_platform', 400);
   }
   const buildArgs = input.buildArgs || {};
