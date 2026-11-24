@@ -658,6 +658,16 @@ app.post('/api/webhooks/github', async (req, res) => {
   if (event !== 'push' && event !== 'pull_request') {
     return res.status(200).json({ message: `Ignored event: ${event}` });
   }
+  const deliveryId = String(req.headers['x-github-delivery'] || '').trim();
+  if (!deliveryId || deliveryId.length > 128) {
+    return res.status(400).json({ error: 'A valid GitHub delivery ID is required' });
+  }
+  if (event === 'pull_request' && !['opened', 'synchronize', 'reopened', 'ready_for_review'].includes(body?.action)) {
+    return res.status(200).json({ message: `Ignored pull request action: ${body?.action || 'unknown'}` });
+  }
+  if (event === 'push' && (body?.deleted === true || /^0{40}$/.test(body?.after || ''))) {
+    return res.status(200).json({ message: 'Branch deletion does not trigger a pipeline' });
+  }
 
   // Identify repository from payload
   const repoFullName = body?.repository?.full_name?.toLowerCase();
@@ -689,11 +699,15 @@ app.post('/api/webhooks/github', async (req, res) => {
     }
 
     const project = projQuery.rows[0];
-    if (project.webhook_secret) {
-      const isValid = verifyGitHubSignature(req.rawBody || JSON.stringify(body), signature, project.webhook_secret);
-      if (!isValid) {
-        return res.status(401).json({ error: 'Invalid webhook signature' });
-      }
+    if (!project.active || !project.webhook_secret) {
+      return res.status(403).json({ error: 'GitHub webhook is not active for this project' });
+    }
+    if (!Array.isArray(project.events) || !project.events.includes(event)) {
+      return res.status(200).json({ message: `Webhook event is not subscribed: ${event}` });
+    }
+    const isValid = verifyGitHubSignature(req.rawBody || JSON.stringify(body), signature, project.webhook_secret);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid webhook signature' });
     }
 
     let branch = project.default_branch;
@@ -710,6 +724,13 @@ app.post('/api/webhooks/github', async (req, res) => {
       commitMessage = `PR #${body.pull_request?.number}: ${body.pull_request?.title || 'Pull request'}`;
     }
 
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) {
+      return res.status(400).json({ error: 'Invalid Git branch in webhook payload' });
+    }
+    if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) {
+      return res.status(400).json({ error: 'Webhook payload did not contain a valid commit SHA' });
+    }
+
     // Default CI jobs pipeline
     const defaultJobs = [
       { id: 'install', name: 'Install dependencies', stage: 'build', command: "if [ -f package.json ]; then if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci; else npm install; fi; elif [ -f requirements.txt ]; then python -m pip install -r requirements.txt; elif [ -f go.mod ]; then go mod download; elif [ -f Cargo.toml ]; then cargo fetch; else echo 'No dependency manifest found; skipping'; fi" },
@@ -718,8 +739,14 @@ app.post('/api/webhooks/github', async (req, res) => {
     ];
     const safe = validatePipelineJobs(defaultJobs);
 
-    const run = await transaction(async (c) => {
-      const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1', [project.id]);
+    const result = await transaction(async (c) => {
+      const accepted = await c.query(
+        `insert into public.github_webhook_deliveries(project_id, delivery_id, event_name, branch, commit_sha)
+         values($1,$2,$3,$4,$5) on conflict (delivery_id) do nothing returning id`,
+        [project.id, deliveryId, event, branch, commitSha],
+      );
+      if (!accepted.rowCount) return { duplicate: true };
+      const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1 for update', [project.id]);
       const rr = await c.query(
         'insert into public.pipeline_runs(project_id, run_number, branch, commit_sha, commit_message) values($1, $2, $3, $4, $5) returning *',
         [project.id, n.rows[0].n, branch, commitSha, commitMessage.slice(0, 300)]
@@ -732,14 +759,16 @@ app.post('/api/webhooks/github', async (req, res) => {
         );
       }
       await c.query('update public.github_webhooks set last_triggered_at = now() where project_id = $1', [project.id]);
+      await c.query('update public.github_webhook_deliveries set run_id = $2 where id = $1', [accepted.rows[0].id, rr.rows[0].id]);
       await c.query(
         'insert into public.audit_events(organization_id, action, target_type, target_id, metadata) values($1, $2, $3, $4, $5)',
-        [project.organization_id, 'pipeline.run.webhook_triggered', 'pipeline_run', rr.rows[0].id, JSON.stringify({ event, branch, commitSha })]
+        [project.organization_id, 'pipeline.run.webhook_triggered', 'pipeline_run', rr.rows[0].id, JSON.stringify({ event, deliveryId, branch, commitSha })]
       );
-      return rr.rows[0];
+      return { duplicate: false, run: rr.rows[0] };
     });
 
-    res.status(201).json({ ok: true, runId: run.id, runNumber: run.run_number });
+    if (result.duplicate) return res.status(200).json({ ok: true, duplicate: true, deliveryId });
+    res.status(201).json({ ok: true, runId: result.run.id, runNumber: result.run.run_number, deliveryId });
   } catch (e) {
     res.status(500).json({ error: 'Webhook processing failed' });
   }
