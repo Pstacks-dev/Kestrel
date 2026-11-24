@@ -5,6 +5,8 @@ import {
 } from './hosting-managed-adapters.mjs';
 import { loadStaticArtifactFiles } from '../routes/managed-deployments.mjs';
 
+const KESTREL_TRIGGERED_PROVIDERS = new Set(['render', 'digitalocean-app-platform', 'netlify', 'cloudflare-pages']);
+
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
   'X-GitHub-Api-Version': '2022-11-28',
@@ -72,6 +74,7 @@ async function markQueue(query, queueId, status, error = null, attemptCount = 0)
 }
 
 async function processQueueItem(item, { query, transaction, fetchImpl }) {
+  let redactionSecrets = [];
   try {
     const result = await query(
       `select r.id as run_id, r.project_id, r.branch, r.commit_sha, r.status as run_status,
@@ -112,17 +115,23 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
       ? await query('select id from public.artifacts where run_id = $1 and deleted_at is null and (expires_at is null or expires_at > now()) order by created_at', [run.run_id])
       : { rows: [] };
     const selected = compatible.find((provider) =>
+      KESTREL_TRIGGERED_PROVIDERS.has(provider.id) &&
       ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
       verified.has(provider.id) &&
       (provider.id !== 'netlify' || artifacts.rows.length > 0));
     if (!selected) {
-      await markQueue(query, item.id, 'skipped', 'No verified compatible provider is available for this project and build output', item.attempt_count);
+      const nativeGitProvider = ['railway', 'vercel'].some((id) => verified.has(id));
+      const reason = nativeGitProvider
+        ? 'Railway/Vercel native Git integrations handle pushes; Kestrel avoids creating a duplicate provider deployment.'
+        : 'No verified Kestrel-triggered provider is compatible with this project and build output';
+      await markQueue(query, item.id, 'skipped', reason, item.attempt_count);
       return { status: 'skipped' };
     }
 
     const connection = verified.get(selected.id);
     const credentials = JSON.parse(decryptSecret(connection.credentials_ciphertext, connection.credentials_iv, connection.credentials_auth_tag));
     const env = await loadProjectEnvironment(query, run.project_id);
+    redactionSecrets = [...Object.values(credentials), ...Object.values(env)];
     const files = selected.id === 'netlify'
       ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl)
       : undefined;
@@ -180,7 +189,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
     await markQueue(query, item.id, 'succeeded', null, item.attempt_count);
     return { status: 'succeeded', deploymentId: saved.id, provider: selected.id };
   } catch (error) {
-    const safeMessage = redactSecrets(String(error?.message || 'Managed deployment failed'));
+    const safeMessage = redactSecrets(String(error?.message || 'Managed deployment failed'), redactionSecrets);
     await markQueue(query, item.id, 'failed', safeMessage, item.attempt_count);
     return { status: 'failed', error: safeMessage };
   }
@@ -193,13 +202,14 @@ export async function processManagedHostingQueue({ query, transaction, fetchImpl
       `with candidate as (
          select q.id
          from public.managed_hosting_automation_queue q
-         where q.status in ('queued','failed')
+         where q.status in ('queued','failed','running')
            and q.attempt_count < 6
            and q.available_at <= now()
+           and (q.status <> 'running' or q.locked_at < now() - interval '10 minutes')
            and (q.locked_at is null or q.locked_at < now() - interval '10 minutes')
            and not exists (
              select 1 from public.managed_hosting_automation_queue running
-             where running.project_id = q.project_id and running.status = 'running'
+             where running.project_id = q.project_id and running.status = 'running' and running.id <> q.id
            )
          order by q.created_at
          for update skip locked
