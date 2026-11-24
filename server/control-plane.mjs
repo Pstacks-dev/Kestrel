@@ -27,6 +27,7 @@ import { registerGitImportRoutes } from './routes/git-import.mjs';
 import { registerHostingRoutes } from './routes/hosting.mjs';
 import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
+import { startManagedHostingAutomation } from './lib/managed-hosting-automation.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1375,6 +1376,15 @@ app.post('/api/workers/jobs/:jobId/complete', workerAuth, async (req, res) => {
        where r.id = $1`,
       [runId]
     );
+    await c.query(
+      `insert into public.managed_hosting_automation_queue
+         (pipeline_run_id, organization_id, project_id, branch, commit_sha)
+       select r.id, p.organization_id, p.id, r.branch, r.commit_sha
+       from public.pipeline_runs r join public.projects p on p.id = r.project_id
+       where r.id = $1 and r.status = 'succeeded' and r.commit_sha is not null
+       on conflict (pipeline_run_id) do nothing`,
+      [runId],
+    );
 
     const remaining = await c.query("select count(*)::int n from public.jobs where worker_id = $1 and status = 'running'", [req.worker.id]);
     await c.query(
@@ -1606,12 +1616,14 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && isMain) {
     }
   }, 5000).unref();
 
+  const stopManagedHostingAutomation = startManagedHostingAutomation({ query, transaction, logger: console });
   const server = app.listen(port, '0.0.0.0', () =>
     console.log(`Kestrel control plane listening on :${port}`)
   );
 
   async function shutdown() {
     clearInterval(recovery);
+    stopManagedHostingAutomation();
     server.close();
     try {
       await pool.end();
