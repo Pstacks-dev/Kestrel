@@ -150,6 +150,108 @@ export function registerSandboxRoutes(app, { userAuth, platformAdmin, query, tra
     }
   });
 
+  // Cloud builds run inside Vercel-managed microVMs; no customer or Kestrel-owned worker is required.
+  app.post('/api/sandboxes/:sandboxId/builds', userAuth, async (req, res) => {
+    const result = await query(
+      `select s.* from public.sandbox_instances s
+       join public.organization_members m on m.organization_id = s.organization_id
+       where s.id = $1 and m.user_id = $2 and m.role = any($3) and s.deleted_at is null`,
+      [req.params.sandboxId, req.user.id, MEMBER_ROLES],
+    );
+    if (!result.rowCount) return fail(res, 404, 'Sandbox not found or access denied');
+    const record = result.rows[0];
+    if (record.status !== 'running' && record.status !== 'unknown') return fail(res, 409, 'Sandbox must be running before starting a cloud build');
+
+    const repositoryUrl = String(req.body?.repositoryUrl || '').trim();
+    const branch = String(req.body?.branch || 'main').trim();
+    let parsedUrl;
+    try { parsedUrl = new URL(repositoryUrl); } catch { return fail(res, 400, 'A valid public Git repository URL is required'); }
+    if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password ||
+        !['github.com', 'gitlab.com', 'bitbucket.org'].includes(parsedUrl.hostname.toLowerCase()) ||
+        parsedUrl.search || parsedUrl.hash || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/.test(parsedUrl.pathname)) {
+      return fail(res, 400, 'Repository must be a public GitHub, GitLab, or Bitbucket HTTPS URL');
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) {
+      return fail(res, 400, 'Invalid Git branch name');
+    }
+
+    const quote = (value) => "'" + String(value).replace(/'/g, "'\\''") + "'";
+    const projectDirectory = '/vercel/sandbox/kestrel-project';
+    const script = [
+      'set -eu',
+      'rm -rf ' + quote(projectDirectory),
+      'git clone --depth 1 --single-branch --branch ' + quote(branch) + ' -- ' + quote(repositoryUrl) + ' ' + quote(projectDirectory),
+      'cd ' + quote(projectDirectory),
+      'if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; elif [ -f yarn.lock ]; then corepack enable && yarn install --frozen-lockfile; else npm install --no-audit --no-fund; fi',
+      'npm run build',
+    ].join(' && ');
+
+    try {
+      const current = await provider.get(record.provider_name, true);
+      const sessionId = current?.session?.id || current?.sandbox?.currentSessionId || record.provider_session_id;
+      if (!sessionId) return fail(res, 409, 'Sandbox session is unavailable; restart the sandbox and try again');
+      const command = await provider.startCommand(sessionId, {
+        command: 'bash',
+        args: ['-lc', script],
+        cwd: '/vercel/sandbox',
+        timeoutMs: Math.min(Number(record.timeout_seconds || 2700), 2700) * 1000,
+      });
+      await query(
+        'update public.sandbox_instances set provider_session_id=$2,last_activity_at=now(),updated_at=now() where id=$1',
+        [record.id, sessionId],
+      );
+      await query(
+        `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+         values($1,$2,'sandbox.build.started','sandbox',$3,$4)`,
+        [record.organization_id, req.user.id, record.id, JSON.stringify({ repositoryHost: parsedUrl.hostname, branch, commandId: command.id })],
+      );
+      res.status(202).json({
+        build: {
+          sandboxId: record.id,
+          sessionId,
+          commandId: command.id,
+          status: 'running',
+          repositoryUrl,
+          branch,
+          startedAt: command.startedAt || null,
+        },
+      });
+    } catch (error) {
+      fail(res, error instanceof SandboxProviderError ? error.status : 502, error.message || 'Could not start cloud build');
+    }
+  });
+
+  app.get('/api/sandboxes/:sandboxId/builds/:commandId', userAuth, async (req, res) => {
+    const result = await query(
+      `select s.* from public.sandbox_instances s
+       join public.organization_members m on m.organization_id = s.organization_id
+       where s.id = $1 and m.user_id = $2 and m.role = any($3) and s.deleted_at is null`,
+      [req.params.sandboxId, req.user.id, MEMBER_ROLES],
+    );
+    if (!result.rowCount) return fail(res, 404, 'Sandbox not found or access denied');
+    const record = result.rows[0];
+    try {
+      const current = await provider.get(record.provider_name, true);
+      const sessionId = current?.session?.id || current?.sandbox?.currentSessionId || record.provider_session_id;
+      if (!sessionId) return fail(res, 409, 'Sandbox session is unavailable');
+      const command = await provider.getCommand(sessionId, req.params.commandId);
+      const exitCode = command.exitCode === null || command.exitCode === undefined ? null : Number(command.exitCode);
+      res.json({
+        build: {
+          sandboxId: record.id,
+          commandId: command.id,
+          status: exitCode === null ? 'running' : exitCode === 0 ? 'succeeded' : 'failed',
+          exitCode,
+          durationMs: command.durationMs ? Number(command.durationMs) : null,
+          startedAt: command.startedAt || null,
+          command: command.name,
+        },
+      });
+    } catch (error) {
+      fail(res, error instanceof SandboxProviderError ? error.status : 502, error.message || 'Could not retrieve cloud build status');
+    }
+  });
+
   app.post('/api/sandboxes/:sandboxId/actions', userAuth, async (req, res) => {
     const action = String(req.body?.action || '');
     if (!['start', 'stop'].includes(action)) return fail(res, 400, 'Supported actions are start and stop');
