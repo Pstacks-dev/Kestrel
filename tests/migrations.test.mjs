@@ -90,3 +90,14 @@ test('managed deployment routes keep provider selection inside Kestrel and expos
   assert.ok(routes.includes('/api/managed-deployments/:deploymentId/rollback'));
   assert.match(routes, /decryptSecret\(/);
 });
+
+test('managed hosting automation queue migration is durable and idempotent', async () => {
+  const sql = await readFile(new URL('../db/migrations/026_managed_hosting_automation_queue.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.managed_hosting_automation_queue/i);
+  assert.match(sql, /pipeline_run_id uuid not null unique references public\.pipeline_runs/i);
+  assert.match(sql, /attempt_count integer not null default 0/i);
+  assert.match(sql, /for each row/i) === false;
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on public\.managed_hosting_automation_queue from anon, authenticated/i);
+});
+
