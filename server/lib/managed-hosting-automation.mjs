@@ -261,13 +261,14 @@ export async function processManagedHostingQueue({ query, transaction, fetchImpl
       `with candidate as (
          select q.id
          from public.managed_hosting_automation_queue q
-         where q.status in ('queued','failed','building')
+         where q.status in ('queued','failed','building','running')
            and q.attempt_count < 6
            and q.available_at <= now()
            and (q.locked_at is null or q.locked_at < now() - interval '10 minutes')
            and not exists (
              select 1 from public.managed_hosting_automation_queue running
              where running.id <> q.id and running.status in ('running','building')
+               and (running.locked_at is null or running.locked_at >= now() - interval '10 minutes')
            )
          order by q.created_at
          for update skip locked
