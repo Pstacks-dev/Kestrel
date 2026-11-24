@@ -3,7 +3,7 @@ create table if not exists public.hosting_provider_connections (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   provider_id text not null check (provider_id in (
-    'render','railway','flyio','google-cloud-run','aws-app-runner',
+    'render','railway','flyio','google-cloud-run','aws-ecs-express',
     'digitalocean-app-platform','heroku','vercel','netlify','cloudflare-pages'
   )),
   credentials_ciphertext text not null,
