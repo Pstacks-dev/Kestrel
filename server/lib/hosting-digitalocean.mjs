@@ -61,6 +61,8 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   } else {
     component.build_command = 'npm install && npm run build';
     component.run_command = 'npm start';
+    component.environment_slug = ({ node: 'node-js', python: 'python', ruby: 'ruby', go: 'go' })[profile.runtime] || 'node-js';
+    component.routes = [{ path: '/' }];
     component.instance_size_slug = 'apps-s-1vcpu-0.5gb';
     component.instance_count = 1;
     component.http_port = 8080;
@@ -69,8 +71,9 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   const created = await request(accessToken, '/apps', { method: 'POST', fetchImpl, body: { spec } });
   const app = created.app;
   if (!app?.id) throw new Error('DigitalOcean did not return an app identifier');
-  const deploymentResult = await request(accessToken, `/apps/${encodeURIComponent(app.id)}/deployments`, { method: 'POST', fetchImpl, body: { force_build: true } });
-  const deployment = deploymentResult.deployment || deploymentResult;
+  const initialDeployment = app.in_progress_deployment || app.pending_deployment || app.active_deployment || null;
+  const deploymentResult = initialDeployment ? null : await request(accessToken, `/apps/${encodeURIComponent(app.id)}/deployments`, { method: 'POST', fetchImpl, body: { force_build: true } });
+  const deployment = initialDeployment || deploymentResult?.deployment || deploymentResult;
   assertResolvedCommit(deployment, commitSha);
   const deploymentId = deployment.id;
   if (!deploymentId) throw new Error('DigitalOcean did not return a deployment identifier');
