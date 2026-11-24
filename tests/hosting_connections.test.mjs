@@ -28,6 +28,30 @@ test('rejects missing credentials, unsupported providers and extra secret fields
   assert.equal(validateProviderCredentials('cloudflare-pages', { apiToken: 'token' }), false);
 });
 
+test('validates Netlify and Cloudflare Pages account credentials', () => {
+  assert.equal(validateProviderCredentials('netlify', { authToken: 'netlify-token' }), true);
+  assert.equal(validateProviderCredentials('cloudflare-pages', { apiToken: 'cloudflare-token', accountId: 'a'.repeat(32) }), true);
+  assert.equal(validateProviderCredentials('cloudflare-pages', { apiToken: 'cloudflare-token' }), false);
+});
+
+test('accepts Cloud Run region and AWS temporary session credentials', () => {
+  assert.equal(validateProviderCredentials('google-cloud-run', {
+    projectId: 'demo', region: 'europe-west1',
+    serviceAccountJson: '{"type":"service_account","client_email":"x@example.com","private_key":"key"}',
+  }), true);
+  assert.equal(validateProviderCredentials('aws-ecs-express', {
+    accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'temporary-session',
+    region: 'us-east-1',
+    executionRoleArn: 'arn:aws:iam::123456789012:role/ecsExecution',
+    infrastructureRoleArn: 'arn:aws:iam::123456789012:role/ecsInfrastructure',
+  }), true);
+  assert.equal(validateProviderCredentials('aws-ecs-express', {
+    accessKeyId: 'key', secretAccessKey: 'secret', region: 'not-a-region',
+    executionRoleArn: 'arn:aws:iam::123456789012:role/ecsExecution',
+    infrastructureRoleArn: 'arn:aws:iam::123456789012:role/ecsInfrastructure',
+  }), false);
+});
+
 test('accepts optional Railway workspace-scoped token metadata', () => {
   assert.equal(validateProviderCredentials('railway', { token: 'railway-secret', workspaceId: 'workspace-123' }), true);
   assert.equal(validateProviderCredentials('railway', { token: 'railway-secret', workspaceId: 42 }), false);
