@@ -7,7 +7,7 @@ type Provider = {
 };
 type Deployment = {
   id: string; provider: string; status: string; branch: string; commitSha: string;
-  providerUrl?: string | null; createdAt?: string;
+  providerUrl?: string | null; createdAt?: string; providerStatus?: string;
 };
 type Field = { key: string; label: string; placeholder?: string; multiline?: boolean; optional?: boolean };
 
@@ -31,6 +31,9 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [logs, setLogs] = useState<Record<string, string>>({});
+  const [loadingLogs, setLoadingLogs] = useState<string | null>(null);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [artifactIds, setArtifactIds] = useState('');
@@ -65,7 +68,16 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
     if (!projectId) { setDeployments([]); return; }
     try {
       const result = await request(`/projects/${projectId}/managed-deployments`);
-      setDeployments(result.deployments || []);
+      const items: Deployment[] = result.deployments || [];
+      const pending = items.filter((item) => ['queued', 'deploying', 'rolling_back', 'unknown'].includes(item.status)).slice(0, 12);
+      const refreshed = await Promise.all(items.map(async (item) => {
+        if (!pending.some((candidate) => candidate.id === item.id)) return item;
+        try {
+          const current = await request(`/managed-deployments/${item.id}`);
+          return current.deployment || item;
+        } catch { return item; }
+      }));
+      setDeployments(refreshed);
     } catch (e: any) { setError(e.message || 'Could not load deployment history'); }
   }
 
@@ -105,6 +117,27 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
       setMessage('Provider disconnected. Existing hosted applications are unchanged.');
       await refresh();
     } catch (e: any) { setError(e.message || 'Could not disconnect provider'); }
+  }
+
+  async function loadLogs(deploymentId: string) {
+    setLoadingLogs(deploymentId); setError('');
+    try {
+      const result = await request(`/managed-deployments/${deploymentId}/logs`);
+      const entries = [...(result.build || []).map((item: any) => `[build] ${item.message || ''}`), ...(result.runtime || []).map((item: any) => `[runtime] ${item.message || ''}`)];
+      setLogs((old) => ({ ...old, [deploymentId]: entries.join('\\n') || result.message || 'No logs are available for this deployment yet.' }));
+    } catch (e: any) { setError(e.message || 'Could not load deployment logs'); }
+    finally { setLoadingLogs(null); }
+  }
+
+  async function rollback(deploymentId: string) {
+    if (!window.confirm('Roll back this provider deployment? Kestrel will ask the hosting provider to restore the previous release.')) return;
+    setRollingBack(deploymentId); setError(''); setMessage('');
+    try {
+      await request(`/managed-deployments/${deploymentId}/rollback`, { method: 'POST', body: '{}' });
+      setMessage('Rollback requested. The provider is starting the previous release.');
+      await refreshDeployments();
+    } catch (e: any) { setError(e.message || 'Could not roll back deployment'); }
+    finally { setRollingBack(null); }
   }
 
   async function deploy() {
@@ -159,6 +192,11 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
           <div><b>{item.provider}</b><small>{item.branch} · {item.commitSha?.slice(0, 8)}</small></div>
           <span className={item.status === 'live' ? 'pill pill-green' : 'pill pill-muted'}>{item.status}</span>
           {item.providerUrl ? <a href={item.providerUrl} target="_blank" rel="noreferrer">Open app ↗</a> : <small>URL pending</small>}
+          <div className="managed-deployment-actions">
+            <button className="btn btn-light" onClick={() => loadLogs(item.id)} disabled={loadingLogs === item.id}>{loadingLogs === item.id ? 'Loading logs…' : 'View logs'}</button>
+            {item.status === 'live' && <button className="btn btn-light" onClick={() => rollback(item.id)} disabled={rollingBack === item.id}>{rollingBack === item.id ? 'Rolling back…' : 'Roll back'}</button>}
+          </div>
+          {logs[item.id] !== undefined && <pre className="managed-deployment-logs">{logs[item.id]}</pre>}
         </div>)}
       </div>}
     </div>
