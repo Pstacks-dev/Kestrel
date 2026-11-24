@@ -59,12 +59,12 @@ test('queues a provider deployment exactly once after a successful default-branc
   const result = await triggerManagedDeploymentForPipelineRun({
     query: f.query, transaction: f.transaction, fetchImpl: f.fetchImpl,
   }, 'run-1');
-  assert.equal(result.status, 'succeeded');
+  assert.equal(result.status, 'deploying');
   assert.equal(result.provider, 'render');
   assert.equal(result.deploymentId, 'deployment-1');
   assert.equal(f.calls.filter((call) => call.url.endsWith('/services')).length, 1);
   assert.equal(f.calls.filter((call) => call.url.endsWith('/services/render-service-1/deploys')).length, 1);
-  assert.equal(f.triggerUpdates.at(-1)[1], 'succeeded');
+  assert.equal(f.triggerUpdates.at(-1)[1], 'deploying');
 });
 
 test('does not create duplicate provider deployments for the same pipeline run', async () => {
