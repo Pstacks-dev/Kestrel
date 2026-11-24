@@ -318,3 +318,8 @@ Provider-specific setup: Railway must have GitHub repository access; Render requ
 ### Fly.io Machine adapter
 
 Kestrel includes a Fly.io Machines API adapter for OCI-image deployments. It creates or reuses an app in the connected organization, provisions a Machine from an immutable image reference, allocates a shared IPv4 address for public routing, tracks Machine lifecycle events, replaces prior running Machines after a new Machine starts, and rolls back by restarting a retained prior Machine. The adapter requires a published OCI image and an explicit application port. Fly's Machines API does not expose application stdout/stderr through the Machine resource; configure a Fly log drain for runtime logs. The adapter is not included in automatic selection until Kestrel's managed OCI build-and-publish pipeline is available, so a Git repository alone is not yet sufficient to deploy through Fly.io.
+
+
+### Google Cloud Run managed deployment adapter
+
+Kestrel supports Cloud Run v2 services from published OCI images. The adapter authenticates using a tenant service account, creates and updates services, tracks long-running operations and ready revisions, retrieves runtime entries through Cloud Logging, and rolls traffic back to a previously recorded revision. The service account needs Cloud Run service administration, registry image-read access, and Cloud Logging read permissions. The adapter is not automatically selected until Kestrel's OCI image build-and-publish pipeline is connected.
