@@ -102,3 +102,16 @@ test('GitHub App installation migration scopes installation links to workspaces 
   assert.match(sql, /revoke all on public\.github_app_installations from anon, authenticated/i);
   assert.match(sql, /grant all on public\.github_app_installations to service_role/i);
 });
+
+
+test('Supabase managed scheduler enables pg_cron and pg_net', async () => {
+  const sql = await readFile(new URL('../db/migrations/030_supabase_managed_scheduler.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create extension if not exists pg_cron/i);
+  assert.match(sql, /create extension if not exists pg_net/i);
+});
+
+test('Vercel Hobby configuration does not schedule an every-minute cron', async () => {
+  const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  assert.equal(config.crons.some((job) => job.path === '/api/cron/managed-deployments'), false);
+  assert.equal(config.crons.some((job) => job.schedule === '* * * * *'), false);
+});
