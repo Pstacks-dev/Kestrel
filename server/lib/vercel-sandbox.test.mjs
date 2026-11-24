@@ -82,7 +82,7 @@ test('collects detached command stdout and stderr logs', async () => {
   const client = createVercelSandboxClient({
     env,
     fetchImpl: async (url) => {
-      assert.match(String(url), /\\/cmd\\/cmd_123\\/logs/);
+      assert.match(String(url), /\/cmd\/cmd_123\/logs/);
       return new Response(stream, {
         status: 200,
         headers: { 'content-type': 'application/x-ndjson' },
