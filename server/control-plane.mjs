@@ -660,6 +660,37 @@ app.post('/api/webhooks/github', async (req, res) => {
     return res.json({ ok: true, message: 'Pong! Webhook configured successfully.' });
   }
 
+  if (event === 'installation') {
+    const appSecret = process.env.GITHUB_APP_WEBHOOK_SECRET;
+    if (!appSecret) return res.status(503).json({ error: 'GitHub App webhook is not configured' });
+    if (!verifyGitHubSignature(req.rawBody || JSON.stringify(body), signature, appSecret)) {
+      return res.status(401).json({ error: 'Invalid GitHub App webhook signature' });
+    }
+    const installationId = String(body?.installation?.id || '');
+    if (!/^\\d+$/.test(installationId)) return res.status(400).json({ error: 'Invalid GitHub installation event' });
+    const action = String(body?.action || '');
+    if (!['deleted', 'suspend', 'unsuspend', 'created', 'new_permissions_accepted'].includes(action)) {
+      return res.status(200).json({ message: `Ignored installation action: ${action || 'unknown'}` });
+    }
+    try {
+      const suspendedAt = ['deleted', 'suspend'].includes(action) ? new Date().toISOString() : null;
+      const updated = await query(
+        'update public.github_app_installations set suspended_at = $2, updated_at = now() where installation_id = $1 returning organization_id',
+        [installationId, suspendedAt],
+      );
+      if (updated.rowCount) {
+        await query(
+          `insert into public.audit_events(organization_id, action, target_type, target_id, metadata)
+           values($1,$2,'github_app_installation',$3,$4::jsonb)`,
+          [updated.rows[0].organization_id, `github_app.installation_${action}`, installationId, JSON.stringify({ action })],
+        );
+      }
+      return res.json({ ok: true, linked: Boolean(updated.rowCount) });
+    } catch {
+      return res.status(500).json({ error: 'Could not update GitHub App installation state' });
+    }
+  }
+
   if (!isSupportedGitHubWebhookEvent(event)) {
     return res.status(200).json({ message: `Ignored event: ${event}` });
   }
@@ -687,16 +718,21 @@ app.post('/api/webhooks/github', async (req, res) => {
   try {
     // Find matching project
     const projQuery = await query(
-      `select p.*, w.webhook_secret, w.active, w.events
+      `select p.*, w.webhook_secret, w.active, w.events,
+              i.installation_id as linked_installation_id, i.suspended_at as installation_suspended_at
        from public.projects p
        left join public.github_webhooks w on w.project_id = p.id
-       where lower(p.repository_url) in ($1, $2, $3, $4, $5)`,
+       left join public.github_app_installations i
+         on i.organization_id = p.organization_id and i.installation_id = p.github_installation_id
+       where lower(p.repository_url) in ($1, $2, $3, $4, $5)
+         and (p.github_installation_id is null or p.github_installation_id = $6)`,
       [
         repoHtmlUrl || '',
         repoCloneUrl || '',
         `https://github.com/${repoFullName}`,
         `https://github.com/${repoFullName}.git`,
         repoFullName || '',
+        String(body?.installation?.id || ''),
       ]
     );
 
@@ -711,8 +747,14 @@ app.post('/api/webhooks/github', async (req, res) => {
     if (!Array.isArray(project.events) || !project.events.includes(event)) {
       return res.status(200).json({ message: `Webhook event is not subscribed: ${event}` });
     }
-    const isValid = verifyGitHubSignature(req.rawBody || JSON.stringify(body), signature, project.webhook_secret);
-    if (!isValid) {
+    const isAppDelivery = Boolean(project.github_installation_id);
+    if (isAppDelivery && (String(project.github_installation_id) !== String(body?.installation?.id || '') ||
+        String(project.linked_installation_id || '') !== String(project.github_installation_id) ||
+        project.installation_suspended_at)) {
+      return res.status(403).json({ error: 'GitHub App installation is missing, mismatched, or suspended' });
+    }
+    const webhookSecret = isAppDelivery ? process.env.GITHUB_APP_WEBHOOK_SECRET : project.webhook_secret;
+    if (!webhookSecret || !verifyGitHubSignature(req.rawBody || JSON.stringify(body), signature, webhookSecret)) {
       return res.status(401).json({ error: 'Invalid webhook signature' });
     }
 
