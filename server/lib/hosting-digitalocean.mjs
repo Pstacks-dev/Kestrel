@@ -88,7 +88,7 @@ export async function deployDigitalOceanApp({ accessToken, appId, commitSha }, {
   assertResolvedCommit(deployment, commitSha);
   const deploymentId = deployment.id;
   if (!deploymentId) throw new Error('DigitalOcean did not return a deployment identifier');
-  return { provider: 'digitalocean-app-platform', projectId: appId, deploymentId, status: status(deployment.deployment?.phase || deployment.deployment?.status) };
+  return { provider: 'digitalocean-app-platform', projectId: appId, deploymentId, status: status(deployment.phase || deployment.status) };
 }
 
 export async function getDigitalOceanDeployment({ accessToken, appId, deploymentId }, { fetchImpl = fetch } = {}) {
