@@ -94,7 +94,7 @@ test('verifies Netlify and Cloudflare Pages API access', async () => {
 
 test('rejects unsupported provider verification without making a network request', async () => {
   await assert.rejects(
-    verifyHostingProvider('future-provider', { apiToken: 'x', accountId: 'y' , { fetchImpl: async () => assert.fail('network should not be called') }),
+    verifyHostingProvider('future-provider', { apiToken: 'x', accountId: 'y' }, { fetchImpl: async () => assert.fail('network should not be called') }),
     /not implemented/,
   );
 });
