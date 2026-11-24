@@ -250,32 +250,32 @@ async function processQueueItem(item, { query, transaction, fetchImpl, sandboxCl
   }
 }
 
-export async function processManagedHostingQueue({ query, transaction, fetchImpl = fetch, logger = console }, limit = 5) {
+export async function processManagedHostingQueue({ query, transaction, fetchImpl = fetch, logger = console, sandboxClient }, limit = 5) {
   let processed = 0;
   for (let count = 0; count < Math.max(1, Math.min(20, Number(limit) || 5)); count += 1) {
     const claimed = await query(
       `with candidate as (
          select q.id
          from public.managed_hosting_automation_queue q
-         where q.status in ('queued','failed')
+         where q.status in ('queued','failed','building')
            and q.attempt_count < 6
            and q.available_at <= now()
            and (q.locked_at is null or q.locked_at < now() - interval '10 minutes')
            and not exists (
              select 1 from public.managed_hosting_automation_queue running
-             where running.project_id = q.project_id and running.status = 'running'
+             where running.project_id = q.project_id and running.id <> q.id and running.status in ('running','building')
            )
          order by q.created_at
          for update skip locked
          limit 1
        )
        update public.managed_hosting_automation_queue q
-       set status = 'running', attempt_count = attempt_count + 1, locked_at = now(), updated_at = now()
+       set status = 'running', attempt_count = case when q.status = 'building' then q.attempt_count else q.attempt_count + 1 end, locked_at = now(), updated_at = now()
        from candidate where q.id = candidate.id
        returning q.*`,
     );
     if (!claimed.rowCount) break;
-    const outcome = await processQueueItem(claimed.rows[0], { query, transaction, fetchImpl });
+    const outcome = await processQueueItem(claimed.rows[0], { query, transaction, fetchImpl, sandboxClient });
     if (outcome.status === 'failed') logger.error?.('Managed deployment automation attempt failed', { queueId: claimed.rows[0].id, error: outcome.error });
     processed += 1;
   }
