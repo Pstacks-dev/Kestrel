@@ -358,3 +358,18 @@ Cloudflare Pages creates or reuses a GitHub-connected Pages project, disables du
 Successful pipeline runs on a project's configured default branch are written to a durable managed-hosting queue in the same database transaction that marks the run successful. The queue is idempotent per pipeline run, serializes deployments per project, retries transient provider failures with bounded exponential backoff, and records the deployment history and audit event. Failed, canceled, non-default-branch, or non-Git runs are not automatically deployed.
 
 Standalone control-plane deployments poll the queue in the background. Serverless deployments can invoke `GET /api/cron/managed-deployments` with `Authorization: Bearer $CRON_SECRET`; schedule that endpoint using the hosting platform's cron facility. Migrations 025 and 026 must be applied before enabling webhook idempotency and automatic managed deployments. Automatic deployment still requires a verified compatible provider connection and a successful build; OCI-only providers remain gated until image publishing is connected.
+
+
+### Managed OCI image builds for Fly.io, Cloud Run and ECS Express Mode
+
+Kestrel now builds container images in short-lived, isolated Vercel Sandbox microVMs. The builder checks out the exact successful pipeline commit, uses the repository's Dockerfile when present or Cloud Native Buildpacks otherwise, targets `linux/amd64`, and pushes an immutable commit-SHA tag directly to the selected provider's registry:
+
+- Fly.io: `registry.fly.io` using the verified Fly API token.
+- Google Cloud Run: Artifact Registry using a short-lived OAuth token generated from the connected service account.
+- AWS ECS Express Mode: ECR using SigV4 and the connected AWS credentials (including temporary session tokens).
+
+The build command runs detached and the durable queue polls its command status. The image reference is persisted only after the push command succeeds; provider deployment begins afterward. Failed builds clean up their sandbox and use bounded retries. The queue allows one active managed OCI build at a time to control compute and registry costs. Repositories can provide a Dockerfile or use the supported Cloud Native Buildpacks detection.
+
+Required platform configuration: `VERCEL_TOKEN` (or `VERCEL_OIDC_TOKEN`), `VERCEL_PROJECT_ID`, `VERCEL_TEAM_ID` (or `VERCEL_ORG_ID`), and `KESTREL_SANDBOX_REGION` (optional). The Vercel account must have Sandbox access and sufficient compute quota. Fly credentials need app/registry access; Google service accounts need Artifact Registry writer plus Cloud Run deployment and logging roles; AWS credentials need ECR push permissions in addition to ECS Express and IAM PassRole permissions.
+
+The image builder and API contracts are covered by mocked tests. A live build-and-deploy smoke test against real Fly.io, Google Cloud and AWS accounts is still required before claiming those integrations production-verified.
