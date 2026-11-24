@@ -46,16 +46,22 @@ export function registerGitHubAppRoutes(app, { userAuth, query, transaction, sig
         return res.status(409).json({ error: 'This GitHub App installation is suspended or invalid' });
       }
       await transaction(async (client) => {
-        await client.query(
+        const linked = await client.query(
           `insert into public.github_app_installations
              (organization_id, installation_id, account_login, account_type, installed_by, suspended_at, updated_at)
            values ($1,$2,$3,$4,$5,null,now())
            on conflict (installation_id) do update set
-             organization_id = excluded.organization_id, account_login = excluded.account_login,
-             account_type = excluded.account_type, installed_by = excluded.installed_by,
-             suspended_at = null, updated_at = now()`,
+             account_login = excluded.account_login, account_type = excluded.account_type,
+             installed_by = excluded.installed_by, suspended_at = null, updated_at = now()
+           where public.github_app_installations.organization_id = excluded.organization_id
+           returning organization_id`,
           [state.organizationId, installation.id, installation.account.login, installation.account.type, state.userId],
         );
+        if (!linked.rowCount) {
+          const error = new Error('This GitHub App installation is already linked to another Kestrel workspace');
+          error.status = 409;
+          throw error;
+        }
         await client.query(
           `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
            values($1,$2,'github_app.installation_linked','github_app_installation',$3,$4::jsonb)`,
