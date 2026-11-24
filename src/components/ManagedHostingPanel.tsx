@@ -62,6 +62,8 @@ export default function ManagedHostingPanel({
   const [message, setMessage] = useState('');
   const [logs, setLogs] = useState<string | null>(null);
 
+  const canDeploy = providers.some((provider) => provider.connection?.status === 'verified' && ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'netlify', 'cloudflare-pages'].includes(provider.id));
+
   const headers = useMemo(() => ({
     Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
@@ -204,7 +206,7 @@ export default function ManagedHostingPanel({
           <h3>Managed hosting providers</h3>
           <p>Connect your provider accounts once. Kestrel selects a compatible host and manages deployment history.</p>
         </div>
-        <button className="btn btn-dark" onClick={startDeployment} disabled={!projectId || deploying}>
+        <button className="btn btn-dark" onClick={startDeployment} disabled={!projectId || !canDeploy || deploying}>
           {deploying ? 'Starting deployment…' : 'Deploy latest successful build'}
         </button>
       </div>
@@ -289,7 +291,7 @@ export default function ManagedHostingPanel({
                 </div>
                 <div className="flex gap-2">
                   <button className="btn btn-light text-xs" onClick={() => showLogs(deployment.id)}>Logs</button>
-                  <button className="btn btn-light text-xs" disabled={busy} onClick={() => rollback(deployment.id)}>Rollback</button>
+                  <button className="btn btn-light text-xs" disabled={busy || deployment.status !== 'live'} onClick={() => rollback(deployment.id)}>Rollback</button>
                 </div>
               </div>
             ))}
