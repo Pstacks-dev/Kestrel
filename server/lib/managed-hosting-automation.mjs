@@ -267,7 +267,7 @@ export async function processManagedHostingQueue({ query, transaction, fetchImpl
            and (q.locked_at is null or q.locked_at < now() - interval '10 minutes')
            and not exists (
              select 1 from public.managed_hosting_automation_queue running
-             where running.project_id = q.project_id and running.id <> q.id and running.status in ('running','building')
+             where running.id <> q.id and running.status in ('running','building')
            )
          order by q.created_at
          for update skip locked
