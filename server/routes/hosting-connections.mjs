@@ -26,7 +26,7 @@ export function validateProviderCredentials(providerId, credentials) {
     if (typeof credentials[field] !== 'string' || !credentials[field].trim() || credentials[field].length > 20000) return false;
   }
   if (providerId === 'aws-ecs-express') {
-    if (!/^[a-z]{2}(?:-[a-z]+)+-\\d$/.test(credentials.region)) return false;
+    if (!/^[a-z]{2}(?:-[a-z]+)+-\d$/.test(credentials.region)) return false;
     if (credentials.sessionToken !== undefined && (typeof credentials.sessionToken !== 'string' || credentials.sessionToken.length > 20000)) return false;
     const roleArn = /^arn:aws:iam::\d{12}:role\/[A-Za-z0-9+=,.@_\/-]{1,512}$/;
     if (!roleArn.test(credentials.executionRoleArn) || !roleArn.test(credentials.infrastructureRoleArn)) return false;
