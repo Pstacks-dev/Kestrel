@@ -1580,7 +1580,7 @@ registerDeploymentRoutes(app, { userAuth, query, transaction });
 registerComputeRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerSandboxRoutes(app, { userAuth, platformAdmin, query, transaction });
 registerGitImportRoutes(app, { userAuth, query, transaction });
-registerHostingRoutes(app, { userAuth });
+registerHostingRoutes(app, { userAuth, query });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
