@@ -9,7 +9,7 @@ test('verifies Render, Railway, Fly.io, DigitalOcean and Heroku API credentials'
   const cases = [
     ['render', { apiKey: 'render-key' }, 'https://api.render.com/v1/services?limit=1'],
     ['railway', { token: 'railway-token' }, 'https://backboard.railway.com/graphql/v2'],
-    ['flyio', { token: 'fly-token' }, 'https://api.machines.dev/v1/apps'],
+    ['flyio', { token: 'fly-token', orgSlug: 'personal' }, 'https://api.machines.dev/v1/apps?org_slug=personal'],
     ['digitalocean-app-platform', { accessToken: 'do-token' }, 'https://api.digitalocean.com/v2/account'],
     ['heroku', { apiKey: 'heroku-key' }, 'https://api.heroku.com/account'],
   ];
