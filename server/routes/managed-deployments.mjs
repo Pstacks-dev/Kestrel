@@ -116,7 +116,8 @@ export async function triggerManagedDeploymentForPipelineRun({ query, transactio
             p.organization_id, p.name, p.repository_url, p.default_branch, p.source_type
      from public.pipeline_runs r
      join public.projects p on p.id = r.project_id
-     where r.id = $1`,
+     where r.id = $1
+       and not exists (select 1 from public.jobs j where j.run_id = r.id and j.job_type = 'deployment')`,
     [runId],
   );
   if (!runResult.rowCount) return { status: 'skipped', reason: 'pipeline run not found' };
