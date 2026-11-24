@@ -351,3 +351,12 @@ Netlify deployments consume successful Kestrel build artifacts rather than runni
 ### Cloudflare Pages Git deployments
 
 Cloudflare Pages creates or reuses a GitHub-connected Pages project, disables duplicate provider-native push deployments, and triggers deployments against the immutable commit SHA resolved by Kestrel. It tracks deployment stages and URLs, retrieves provider build logs, and supports rollback through the Pages deployment API. The GitHub repository must already be authorized in the connected Cloudflare account. Cloudflare Pages is intended for static output and framework-supported Pages builds.
+
+
+### Automatic managed redeploys after successful CI
+
+For an active GitHub push webhook, Kestrel queues a managed deployment only after every pipeline job succeeds and only when the push targets the project's configured default branch. Pull-request runs and feature-branch pushes remain CI-only. The deployment uses the exact commit SHA from the completed run, the first compatible provider with verified workspace credentials, and the project's encrypted environment variables where that provider adapter supports them.
+
+Queue state is stored in `managed_hosting_deployment_queue` (migration 026). Provider creation failures are recorded and retried with bounded exponential backoff. Configure `CRON_SECRET` and schedule an authenticated POST to `/api/cron/managed-hosting-deployments/process` to recover queued/failed work and stale processor locks. A skipped queue entry means no compatible verified provider was connected at the time the successful run completed; use the Deployments workspace to connect a provider and start a deployment manually.
+
+Netlify auto-deploy is selected only for static builds with completed artifacts and no project environment secrets (the current Netlify adapter does not yet sync those secrets). Container-image providers remain unavailable for automatic selection until the OCI image build and registry publishing pipeline is completed.
