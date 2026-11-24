@@ -24,6 +24,8 @@ test('creates a Git-connected Vercel project and deploys the exact Git commit', 
   assert.equal(calls[0].url.endsWith('?teamId=team-1'), true);
   const project = JSON.parse(calls[1].options.body);
   assert.deepEqual(project.gitRepository, { type: 'github', repo: 'acme/demo' });
+  assert.equal(project.gitProviderOptions.createDeployments, 'disabled');
+  assert.equal(project.gitProviderOptions.disableRepositoryDispatchEvents, true);
   const deployment = JSON.parse(calls[2].options.body);
   assert.equal(deployment.project, 'prj-1');
   assert.equal(deployment.gitSource.sha, 'a'.repeat(40));
@@ -111,4 +113,24 @@ test('syncs encrypted Kestrel project secrets to Vercel before deployment', asyn
   } });
   assert.equal(calls.length, 2);
   assert.equal(result.deploymentId, 'dpl-env');
+});
+
+test('disables native Git auto-deploys on an existing Vercel project before Kestrel-controlled deployment', async () => {
+  const calls = [];
+  await createVercelDeployment({
+    token: 'vercel-token', teamId: 'team-1', repositoryUrl: 'https://github.com/acme/demo',
+    branch: 'main', commitSha: 'c'.repeat(40), projectName: 'demo-app',
+  }, { fetchImpl: async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes('/v9/projects/demo-app')) return response({ id: 'prj-existing', link: { repo: 'acme/demo' } });
+    if (url.includes('/v9/projects/prj-existing')) {
+      assert.equal(options.method, 'PATCH');
+      const body = JSON.parse(options.body);
+      assert.equal(body.gitProviderOptions.createDeployments, 'disabled');
+      assert.equal(body.gitProviderOptions.disableRepositoryDispatchEvents, true);
+      return response({ id: 'prj-existing' });
+    }
+    return response({ id: 'dpl-existing', readyState: 'BUILDING' });
+  } });
+  assert.equal(calls.length, 3);
 });
