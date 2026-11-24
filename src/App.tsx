@@ -1,5 +1,6 @@
 import Admin from './Admin';
 import { ProjectFiles } from './components/ProjectFiles';
+import ManagedHostingPanel from './components/ManagedHostingPanel';
 import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -1882,6 +1883,14 @@ function AppShell({ page }: { page: Page }) {
                 </label>
               </div>
             </div>
+
+            <ManagedHostingPanel
+              apiBase={api}
+              accessToken={accessToken}
+              organizationId={organizationId}
+              projectId={selectedProject}
+              defaultBranch={snapshot?.projects?.find((project: any) => project.id === selectedProject)?.defaultBranch || 'main'}
+            />
 
             <div className="panel deployment-worker-setup">
               <div className="panel-head">
