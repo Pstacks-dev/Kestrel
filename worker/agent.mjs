@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { redactSecrets } from '../server/lib/security.mjs';
 import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
+import { resolveOciBuildContext } from './oci-context.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
@@ -301,7 +302,7 @@ async function runGit(args, cwd, onLine) {
       env: { ...process.env, CI: 'true', GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-
+    let stdout = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), Number(process.env.KESTREL_GIT_TIMEOUT_MS || 300000));
 
     for (const [stream, pipe] of [
@@ -309,7 +310,9 @@ async function runGit(args, cwd, onLine) {
       ['stderr', child.stderr],
     ]) {
       pipe.on('data', (buf) => {
-        for (const line of buf.toString().split(/\r?\n/)) {
+        const chunk = buf.toString();
+        if (stream === 'stdout') stdout += chunk;
+        for (const line of chunk.split(/\r?\n/)) {
           if (line) onLine(stream, line);
         }
       });
@@ -317,12 +320,12 @@ async function runGit(args, cwd, onLine) {
 
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, durationMs: Date.now() - start });
+      resolve({ exitCode: code ?? 1, durationMs: Date.now() - start, stdout });
     });
     child.on('error', (e) => {
       clearTimeout(timer);
       onLine('stderr', e.message);
-      resolve({ exitCode: 1, durationMs: Date.now() - start });
+      resolve({ exitCode: 1, durationMs: Date.now() - start, stdout });
     });
   });
 }
@@ -534,9 +537,14 @@ async function executeManagedImageBuild(build) {
     const checkout = await runGit(['checkout', '--detach', build.commitSha], workspace,
       (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)));
     if (checkout.exitCode !== 0) throw new Error('Could not check out the exact pipeline commit for OCI build');
+    const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {});
+    if (tree.exitCode !== 0) throw new Error('Could not inspect tracked files at the exact pipeline commit');
+    const buildContext = await resolveOciBuildContext(workspace, tree.stdout.split(/\r?\n/).filter(Boolean));
+    console.log('[oci] Using build context ' + buildContext.relativeContext + ' and Dockerfile ' + buildContext.dockerfile);
     if (leaseLost) throw new Error('Managed OCI build lease was lost before the build started');
     const result = await buildAndPublishOciImage({
-      contextDir: workspace,
+      contextDir: buildContext.contextDir,
+      dockerfile: buildContext.dockerfile,
       image: build.image,
       commitSha: build.commitSha,
       registry: build.registry,
