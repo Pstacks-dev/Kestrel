@@ -8,7 +8,7 @@ export function parseGitHubRepository(input) {
     const url = new URL(input.trim());
     if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com' ||
         url.username || url.password || url.search || url.hash) return null;
-    const parts = url.pathname.replace(/\\.git$/i, '').split('/').filter(Boolean);
+    const parts = url.pathname.replace(/\.git$/i, '').split('/').filter(Boolean);
     if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9_.-]{1,100}$/.test(part)) ||
         parts[0] === '.' || parts[1] === '.' || parts[0] === '..' || parts[1] === '..') return null;
     return { owner: parts[0], repo: parts[1] };
