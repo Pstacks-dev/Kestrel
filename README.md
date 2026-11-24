@@ -272,3 +272,16 @@ Kestrel can provision isolated, managed Linux microVM sandboxes without a Kestre
 Set server-side environment variables before enabling sandbox provisioning: `VERCEL_TOKEN`, `VERCEL_TEAM_ID` (or `VERCEL_ORG_ID`), `VERCEL_PROJECT_ID`, and optionally `KESTREL_SANDBOX_REGION` / `KESTREL_SANDBOX_IMAGE`. Do not expose these credentials in `VITE_` variables or sandbox command environments. Vercel's project sandbox quotas and billing limits apply.
 
 Apply migration 018 (`db/migrations/018_sandbox_compute.sql`) before using sandbox endpoints. The workspace API supports create/list, start/stop, command execution and deletion. Command calls are capped at eight seconds on the Vercel serverless API to fit its configured 15-second function timeout; longer-running terminal sessions are not yet supported. The default workspace quota is two concurrent sandboxes, four vCPUs total and up to 45 minutes per session. The platform pool defaults to a hard cap of ten active sandboxes to stay within the provider Hobby concurrency limit; configure `KESTREL_SANDBOX_GLOBAL_MAX` only if the Vercel plan has higher capacity. Each vCPU is provisioned with 2 GiB RAM. The provider retains its own billing, quota and runtime ceilings; Kestrel does not yet meter usage for billing customers.
+
+
+## Managed hosting provider selection
+
+Kestrel uses external hosting providers; it does not require Kestrel-owned hosting servers or a Kestrel-owned customer domain. The provider catalog and compatibility scorer are available through authenticated endpoints:
+
+- `GET /api/hosting/providers` returns the ten supported provider profiles and whether their server-side credentials are configured.
+- `POST /api/hosting/recommend` accepts a detected application profile (`runtime`, `kind`, `isStatic`, `dockerfile`, `needsPersistentProcess`, `needsBackgroundWorker`, `needsDatabase`) and ranks compatible providers.
+- The scorer excludes providers that cannot satisfy hard requirements such as arbitrary containers, persistent processes, workers, or managed databases. It prefers a provider with credentials configured but never treats a missing credential as a successful deployment.
+
+The initial catalog covers Render, Railway, Fly.io, Google Cloud Run, AWS App Runner, DigitalOcean App Platform, Heroku, Vercel, Netlify, and Cloudflare Pages. Vercel's container runtime, Netlify Server, and Cloudflare Pages/Workers have distinct runtime constraints; they are not interchangeable with general-purpose container hosts.
+
+This change establishes compatibility-aware provider selection, not live deployment adapters. A provider is deployable only after its adapter, encrypted credential storage, deploy/status/log/rollback operations, and provider-account smoke tests are implemented. No provider is marked live merely because its catalog entry exists.
