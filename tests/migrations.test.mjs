@@ -90,3 +90,15 @@ test('managed deployment routes keep provider selection inside Kestrel and expos
   assert.ok(routes.includes('/api/managed-deployments/:deploymentId/rollback'));
   assert.match(routes, /decryptSecret\(/);
 });
+
+
+test('GitHub App installation migration scopes installation links to workspaces and service role', async () => {
+  const sql = await readFile(new URL('../db/migrations/028_github_app_installations.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.github_app_installations/i);
+  assert.match(sql, /installation_id bigint not null unique/i);
+  assert.match(sql, /organization_id uuid not null references public\.organizations/i);
+  assert.match(sql, /alter table public\.projects add column if not exists github_installation_id bigint/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on public\.github_app_installations from anon, authenticated/i);
+  assert.match(sql, /grant all on public\.github_app_installations to service_role/i);
+});

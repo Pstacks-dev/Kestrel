@@ -293,13 +293,13 @@ async function ensureJobImage() {
   });
 }
 
-async function runGit(args, cwd, onLine) {
+async function runGit(args, cwd, onLine, extraEnv = {}) {
   return new Promise((resolve) => {
     const start = Date.now();
     const child = spawn('git', args, {
       cwd,
       shell: false,
-      env: { ...process.env, CI: 'true', GIT_TERMINAL_PROMPT: '0' },
+      env: { ...process.env, ...extraEnv, CI: 'true', GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -409,6 +409,12 @@ async function execute(job) {
   const abortController = new AbortController();
 
   const secretValues = Object.values(job.secrets || {}).filter(Boolean);
+  if (job.sourceToken) secretValues.push(job.sourceToken);
+  const gitAuthEnv = job.sourceToken ? {
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'http.extraheader',
+    GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + job.sourceToken).toString('base64'),
+  } : {};
 
   const flushLogs = async () => {
     if (logFlushActive || !logBuffer.length) return;
@@ -455,7 +461,8 @@ async function execute(job) {
       const clone = await runGit(
         ['clone', '--depth', '1', '--branch', String(job.branch || 'main'), '--', repository, '.'],
         workspace,
-        (s, m) => console.log(`[clone:${s}] ${m}`)
+        (s, m) => console.log(`[clone:${s}] ${redactSecrets(m, secretValues)}`),
+        gitAuthEnv
       );
         if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
       }
@@ -463,7 +470,7 @@ async function execute(job) {
 
     if (job.commitSha && EXECUTOR !== 'mock' && job.sourceType !== 'upload') {
       if (!/^[a-f0-9]{7,64}$/i.test(job.commitSha)) throw new Error('Invalid commit SHA format');
-      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${m}`));
+      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv);
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');
     }
 
@@ -514,7 +521,7 @@ async function executeManagedImageBuild(build) {
   const startedAt = Date.now();
   await fs.mkdir(ROOT, { recursive: true });
   const workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
-  const secretValues = [build.registryUsername, build.registryPassword].filter(Boolean);
+  const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
   let leaseLost = false;
   const heartbeat = setInterval(async () => {
     try {
@@ -526,13 +533,18 @@ async function executeManagedImageBuild(build) {
   try {
     const repository = new URL(build.repositoryUrl);
     if (repository.protocol !== 'https:' || repository.hostname !== 'github.com' || repository.username || repository.password) {
-      throw new Error('Managed OCI builds currently require a credential-free public GitHub repository');
+      throw new Error('Managed OCI builds require an HTTPS GitHub repository');
     }
+    const gitAuthEnv = build.sourceToken ? {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.extraheader',
+      GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + build.sourceToken).toString('base64'),
+    } : {};
     const clone = await runGit(['clone', '--no-checkout', '--filter=blob:none', '--', build.repositoryUrl, workspace], workspace,
-      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)));
-    if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build');
+      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+    if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build; verify the connected GitHub App has repository access');
     const fetch = await runGit(['fetch', '--depth=1', 'origin', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)));
+      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv);
     if (fetch.exitCode !== 0) throw new Error('Could not fetch the exact pipeline commit for OCI build');
     const checkout = await runGit(['checkout', '--detach', build.commitSha], workspace,
       (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)));

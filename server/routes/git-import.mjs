@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { fetchGitHubRepositoryWithInstallation } from './github-app.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
@@ -21,7 +22,9 @@ export function registerGitImportRoutes(app, { userAuth, query, transaction, fet
     const name = String(req.body?.name || '').trim();
     const repository = parseGitHubRepository(req.body?.repositoryUrl);
     if (!organizationId) return res.status(400).json({ error: 'Workspace is required' });
-    if (!repository) return res.status(400).json({ error: 'Enter a valid public GitHub repository URL' });
+    if (!repository) return res.status(400).json({ error: 'Enter a valid GitHub repository URL' });
+    const installationId = req.body?.installationId ? String(req.body.installationId) : null;
+    if (installationId && !/^\\d+$/.test(installationId)) return res.status(400).json({ error: 'Invalid GitHub App installation' });
     if (name.length > 120) return res.status(400).json({ error: 'Project name must be 120 characters or fewer' });
 
     try {
@@ -33,26 +36,40 @@ export function registerGitImportRoutes(app, { userAuth, query, transaction, fet
         return res.status(403).json({ error: 'Developer access to this workspace is required' });
       }
 
-      const response = await fetchImpl(
-        `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`,
-        { headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Kestrel-Project-Importer' }, signal: AbortSignal.timeout(8000) },
-      );
-      if (response.status === 404) return res.status(404).json({ error: 'Repository was not found or is private. Public repositories are supported by this import flow.' });
-      if (!response.ok) return res.status(502).json({ error: 'GitHub could not verify this repository. Try again shortly.' });
-      const remote = await response.json();
-      if (remote.private || remote.disabled || remote.archived) {
-        return res.status(409).json({ error: 'This repository is private, disabled, or archived and cannot be imported by the public-repository flow.' });
+      let remote;
+      if (installationId) {
+        const linked = await query(
+          'select installation_id from public.github_app_installations where organization_id = $1 and installation_id = $2 and suspended_at is null',
+          [organizationId, installationId],
+        );
+        if (!linked.rowCount) return res.status(403).json({ error: 'Connect this GitHub App installation to the workspace before importing from it' });
+        try {
+          remote = await fetchGitHubRepositoryWithInstallation(installationId, `${repository.owner}/${repository.repo}`, fetchImpl);
+        } catch (error) {
+          if (error.status === 404) return res.status(404).json({ error: 'Repository is not accessible to the selected GitHub App installation' });
+          return res.status(502).json({ error: 'GitHub could not verify this repository. Try again shortly.' });
+        }
+      } else {
+        const response = await fetchImpl(
+          `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`,
+          { headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Kestrel-Project-Importer' }, signal: AbortSignal.timeout(8000) },
+        );
+        if (response.status === 404) return res.status(404).json({ error: 'Repository was not found. For private repositories, connect a GitHub App installation first.' });
+        if (!response.ok) return res.status(502).json({ error: 'GitHub could not verify this repository. Try again shortly.' });
+        remote = await response.json();
       }
+      if (remote.disabled || remote.archived) return res.status(409).json({ error: 'This repository is disabled or archived and cannot be imported.' });
+      if (remote.private && !installationId) return res.status(403).json({ error: 'Private repositories require a connected GitHub App installation.' });
       const projectName = name || remote.name;
       if (projectName.length < 2 || projectName.length > 120) return res.status(400).json({ error: 'Project name must be between 2 and 120 characters' });
       const repoUrl = `https://github.com/${repository.owner}/${repository.repo}`;
       const project = await transaction(async (client) => {
         const created = await client.query(
-          `insert into public.projects(organization_id, name, repository_url, default_branch, created_by, source_type)
-           values($1, $2, $3, $4, $5, 'git')
+          `insert into public.projects(organization_id, name, repository_url, default_branch, created_by, source_type, github_installation_id)
+           values($1, $2, $3, $4, $5, 'git', $6)
            returning id, organization_id as "organizationId", name, repository_url as "repositoryUrl",
-                     default_branch as "defaultBranch", source_type as "sourceType", created_at as "createdAt"`,
-          [organizationId, projectName, repoUrl, remote.default_branch || 'main', req.user.id],
+                     default_branch as "defaultBranch", source_type as "sourceType", github_installation_id as "githubInstallationId", created_at as "createdAt"`,
+          [organizationId, projectName, repoUrl, remote.default_branch || 'main', req.user.id, installationId],
         );
         const secret = cryptoRandomSecret();
         const webhook = await client.query(
@@ -68,7 +85,7 @@ export function registerGitImportRoutes(app, { userAuth, query, transaction, fet
       });
       return res.status(201).json({
         project,
-        repository: { fullName: remote.full_name, description: remote.description, defaultBranch: remote.default_branch || 'main', private: false },
+        repository: { fullName: remote.full_name, description: remote.description, defaultBranch: remote.default_branch || 'main', private: Boolean(remote.private) },
         webhook: { endpoint: '/api/webhooks/github', setupRequired: true },
       });
     } catch (error) {
