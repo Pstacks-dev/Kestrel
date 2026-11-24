@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
 export function parseGitHubRepository(input) {
@@ -78,10 +80,5 @@ export function registerGitImportRoutes(app, { userAuth, query, transaction, fet
 }
 
 function cryptoRandomSecret() {
-  return Array.from(cryptoBytes()).map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function cryptoBytes() {
-  // Keep the module dependency-free apart from Node's built-in crypto implementation.
-  return globalThis.crypto.getRandomValues(new Uint8Array(32));
+  return crypto.randomBytes(32).toString('hex');
 }
