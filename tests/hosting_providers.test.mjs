@@ -80,3 +80,10 @@ test('detects Python, Go, Rust, PHP, Ruby and .NET manifests', async () => {
     assert.equal(detectProjectProfile({ files: [file] }).runtime, runtime, file);
   }
 });
+
+test('AWS ECS Express Mode is recommended only when a container image is available', () => {
+  const sourceBuild = rankHostingProviders({ runtime: 'node', needsPersistentProcess: true }, {});
+  assert.ok(!sourceBuild.some((provider) => provider.id === 'aws-ecs-express'));
+  const containerBuild = rankHostingProviders({ runtime: 'node', dockerfile: true, needsPersistentProcess: true }, {});
+  assert.ok(containerBuild.some((provider) => provider.id === 'aws-ecs-express'));
+});
