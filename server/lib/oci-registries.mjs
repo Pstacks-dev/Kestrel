@@ -129,6 +129,24 @@ async function ecrRequest(credentials, action, payload, fetchImpl) {
   return result;
 }
 
+export async function refreshProviderImageRegistryCredentials(provider, credentials, { fetchImpl = fetch } = {}) {
+  if (provider !== 'aws-ecs-express') return null;
+  if (!credentials.accessKeyId || !credentials.secretAccessKey || !credentials.region) {
+    throw new Error('Verified AWS ECR credentials are required to refresh registry authorization');
+  }
+  const auth = await ecrRequest(credentials, 'GetAuthorizationToken', {}, fetchImpl);
+  const entry = auth.authorizationData?.[0];
+  if (!entry?.authorizationToken || !entry.proxyEndpoint) throw new Error('AWS ECR did not return registry credentials');
+  const decoded = Buffer.from(entry.authorizationToken, 'base64').toString('utf8');
+  const separator = decoded.indexOf(':');
+  if (separator < 1) throw new Error('AWS ECR returned malformed registry credentials');
+  return {
+    registry: new URL(entry.proxyEndpoint).host,
+    username: decoded.slice(0, separator),
+    password: decoded.slice(separator + 1),
+  };
+}
+
 async function provisionEcr(credentials, projectName, commitSha, fetchImpl) {
   if (!credentials.accessKeyId || !credentials.secretAccessKey || !credentials.region) throw new Error('Verified AWS ECR credentials are required');
   const repositoryName = `kestrel/${slug(projectName, 220)}`;
@@ -142,16 +160,11 @@ async function provisionEcr(credentials, projectName, commitSha, fetchImpl) {
   }
   const described = repository?.repository || (await ecrRequest(credentials, 'DescribeRepositories', { repositoryNames: [repositoryName] }, fetchImpl)).repositories?.[0];
   if (!described?.repositoryUri) throw new Error('AWS ECR did not return a repository URI');
-  const auth = await ecrRequest(credentials, 'GetAuthorizationToken', {}, fetchImpl);
-  const entry = auth.authorizationData?.[0];
-  if (!entry?.authorizationToken || !entry.proxyEndpoint) throw new Error('AWS ECR did not return registry credentials');
-  const decoded = Buffer.from(entry.authorizationToken, 'base64').toString('utf8');
-  const separator = decoded.indexOf(':');
-  if (separator < 1) throw new Error('AWS ECR returned malformed registry credentials');
+  const auth = await refreshProviderImageRegistryCredentials('aws-ecs-express', credentials, { fetchImpl });
   return {
-    provider: 'aws-ecs-express', registry: new URL(entry.proxyEndpoint).host,
+    provider: 'aws-ecs-express', registry: auth.registry,
     image: `${described.repositoryUri}:${imageTag(commitSha)}`,
-    username: decoded.slice(0, separator), password: decoded.slice(separator + 1),
+    username: auth.username, password: auth.password,
     projectName: repositoryName,
   };
 }
