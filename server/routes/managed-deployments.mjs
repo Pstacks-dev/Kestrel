@@ -105,7 +105,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
       const resource = existing.rows[0] || null;
       const providerInput = {
         repositoryUrl: project.repository_url, branch, commitSha, profile,
-        projectName: `kestrel-${project.name}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
+        projectName: `kestrel-${project.name}-${String(project.id).slice(0, 8)}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
       };
       const providerDeployment = resource
         ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl })
