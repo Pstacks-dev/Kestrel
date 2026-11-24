@@ -31,15 +31,15 @@ test('verifies Render, Railway, Fly.io, DigitalOcean and Heroku API credentials'
   }
 });
 
-test('verifies AWS App Runner credentials using a signed STS identity request', async () => {
+test('verifies AWS ECS Express Mode credentials using a signed ECS API request', async () => {
   let authorization = '';
-  const result = await verifyHostingProvider('aws-app-runner', {
+  const result = await verifyHostingProvider('aws-ecs-express', {
     accessKeyId: 'AKIATESTKEY', secretAccessKey: 'test-secret', region: 'us-east-1',
   }, {
     now: Date.parse('2026-11-24T00:00:00.000Z'),
     fetchImpl: async (_url, options) => {
       authorization = options.headers.Authorization;
-      return new Response('<GetCallerIdentityResponse/>', { status: 200 });
+      return new Response('{}', { status: 200 });
     },
   });
   assert.match(authorization, /^AWS4-HMAC-SHA256 Credential=AKIATESTKEY\//);
