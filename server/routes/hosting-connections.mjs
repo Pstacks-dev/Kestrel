@@ -1,7 +1,10 @@
-import { encryptSecret } from '../lib/security.mjs';
+import { encryptSecret, decryptSecret } from '../lib/security.mjs';
+import { verifyHostingProvider } from '../lib/hosting-adapters.mjs';
 import { listHostingProviders } from '../lib/hosting-providers.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
+
+const VERIFIED_PROVIDERS = new Set(['render', 'railway', 'flyio', 'google-cloud-run', 'aws-app-runner', 'digitalocean-app-platform', 'heroku']);
 
 const CREDENTIAL_FIELDS = {
   render: ['apiKey'],
@@ -51,7 +54,7 @@ export function registerHostingConnectionRoutes(app, { userAuth, query, transact
       if (!await workspaceRole(req, res)) return;
       const connections = await query(
         `select provider_id as "providerId", account_label as "accountLabel", status,
-                created_at as "configuredAt", updated_at as "updatedAt"
+                created_at as "configuredAt", updated_at as "updatedAt", last_verified_at as "lastVerifiedAt", last_error as "lastError"
          from public.hosting_provider_connections where organization_id = $1`,
         [req.params.orgId],
       );
@@ -94,7 +97,7 @@ export function registerHostingConnectionRoutes(app, { userAuth, query, transact
              credentials_iv = excluded.credentials_iv,
              credentials_auth_tag = excluded.credentials_auth_tag,
              account_label = excluded.account_label,
-             status = 'configured', connected_by = excluded.connected_by, updated_at = now()
+             status = 'configured', connected_by = excluded.connected_by, last_error = null, updated_at = now()
            returning provider_id as "providerId", account_label as "accountLabel", status,
                      created_at as "configuredAt", updated_at as "updatedAt"`,
           [req.params.orgId, providerId, encrypted.encryptedValue, encrypted.iv, encrypted.authTag, label, req.user.id],
@@ -110,6 +113,48 @@ export function registerHostingConnectionRoutes(app, { userAuth, query, transact
     } catch (error) {
       console.error('Hosting provider credential save failed:', { code: error.code, message: error.message });
       fail(res, 500, 'Could not save provider credentials');
+    }
+  });
+
+  app.post('/api/workspaces/:orgId/hosting/providers/:providerId/verify', userAuth, async (req, res) => {
+    try {
+      if (!await workspaceRole(req, res, true)) return;
+      const { providerId } = req.params;
+      if (!CREDENTIAL_FIELDS[providerId]) return fail(res, 404, 'Unsupported hosting provider');
+      if (!VERIFIED_PROVIDERS.has(providerId)) return fail(res, 501, 'Credential verification is not yet available for this provider');
+      const result = await query(
+        `select credentials_ciphertext, credentials_iv, credentials_auth_tag
+         from public.hosting_provider_connections where organization_id = $1 and provider_id = $2`,
+        [req.params.orgId, providerId],
+      );
+      if (!result.rowCount) return fail(res, 404, 'Provider credentials have not been configured');
+      let credentials;
+      try {
+        const row = result.rows[0];
+        credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
+      } catch {
+        return fail(res, 503, 'Stored credentials could not be decrypted. Check the Kestrel encryption key.');
+      }
+      try {
+        const verification = await verifyHostingProvider(providerId, credentials);
+        await query(
+          `update public.hosting_provider_connections
+           set status = 'verified', last_verified_at = now(), last_error = null, updated_at = now()
+           where organization_id = $1 and provider_id = $2`,
+          [req.params.orgId, providerId],
+        );
+        return res.json({ providerId, verified: true, account: verification.account || null });
+      } catch {
+        await query(
+          `update public.hosting_provider_connections
+           set status = 'error', last_error = 'Provider credential verification failed', updated_at = now()
+           where organization_id = $1 and provider_id = $2`,
+          [req.params.orgId, providerId],
+        );
+        return fail(res, 422, 'Provider rejected the credentials or could not be reached');
+      }
+    } catch {
+      fail(res, 500, 'Could not verify provider credentials');
     }
   });
 
