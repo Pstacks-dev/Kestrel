@@ -115,3 +115,12 @@ test('deployed hosting schema reconciliation preserves encrypted credentials and
   assert.match(sql, /unique index if not exists github_webhook_deliveries_delivery_id_uidx/i);
   assert.match(sql, /revoke all on public\.github_webhook_deliveries from anon, authenticated/i);
 });
+
+
+test('org authorization SECURITY DEFINER helpers are moved out of the exposed public schema', async () => {
+  const sql = await readFile(new URL('../db/migrations/031_move_org_auth_helpers_private.sql', import.meta.url), 'utf8');
+  assert.match(sql, /alter function public\.is_org_member\(uuid\) set schema private/i);
+  assert.match(sql, /alter function public\.is_org_admin\(uuid\) set schema private/i);
+  assert.match(sql, /revoke all on function private\.is_org_member\(uuid\) from public, anon, authenticated/i);
+  assert.match(sql, /grant execute on function private\.is_org_member\(uuid\) to authenticated, service_role/i);
+});
