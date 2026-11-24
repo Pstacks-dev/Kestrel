@@ -351,3 +351,10 @@ Netlify deployments consume successful Kestrel build artifacts rather than runni
 ### Cloudflare Pages Git deployments
 
 Cloudflare Pages creates or reuses a GitHub-connected Pages project, disables duplicate provider-native push deployments, and triggers deployments against the immutable commit SHA resolved by Kestrel. It tracks deployment stages and URLs, retrieves provider build logs, and supports rollback through the Pages deployment API. The GitHub repository must already be authorized in the connected Cloudflare account. Cloudflare Pages is intended for static output and framework-supported Pages builds.
+
+
+### Automatic deployment after successful CI
+
+Successful pipeline runs on a project's configured default branch are written to a durable managed-hosting queue in the same database transaction that marks the run successful. The queue is idempotent per pipeline run, serializes deployments per project, retries transient provider failures with bounded exponential backoff, and records the deployment history and audit event. Failed, canceled, non-default-branch, or non-Git runs are not automatically deployed.
+
+Standalone control-plane deployments poll the queue in the background. Serverless deployments can invoke `GET /api/cron/managed-deployments` with `Authorization: Bearer $CRON_SECRET`; schedule that endpoint using the hosting platform's cron facility. Migrations 025 and 026 must be applied before enabling webhook idempotency and automatic managed deployments. Automatic deployment still requires a verified compatible provider connection and a successful build; OCI-only providers remain gated until image publishing is connected.
