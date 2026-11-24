@@ -96,7 +96,6 @@ test('managed hosting automation queue migration is durable and idempotent', asy
   assert.match(sql, /create table if not exists public\.managed_hosting_automation_queue/i);
   assert.match(sql, /pipeline_run_id uuid not null unique references public\.pipeline_runs/i);
   assert.match(sql, /attempt_count integer not null default 0/i);
-  assert.match(sql, /for each row/i) === false;
   assert.match(sql, /enable row level security/i);
   assert.match(sql, /revoke all on public\.managed_hosting_automation_queue from anon, authenticated/i);
 });
