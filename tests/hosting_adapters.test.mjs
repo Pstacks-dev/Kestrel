@@ -47,6 +47,8 @@ test('verifies AWS ECS Express Mode credentials using a signed ECS API request',
     },
   });
   assert.match(authorization, /^AWS4-HMAC-SHA256 Credential=AKIATESTKEY\//);
+  assert.equal(requestUrl, 'https://ecs.us-east-1.amazonaws.com/');
+  assert.equal(target, 'AmazonEC2ContainerServiceV20141113.ListClusters');
   assert.equal(result.verified, true);
 });
 
