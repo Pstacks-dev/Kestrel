@@ -8,6 +8,7 @@ Configure these server-only environment variables:
 - `GITHUB_APP_SLUG`: URL slug used to construct the installation URL.
 - `GITHUB_APP_PRIVATE_KEY`: PEM private key. Store it in the deployment secret manager; a single-line PEM with escaped `\\n` is accepted.
 - `GITHUB_APP_WEBHOOK_SECRET`: HMAC secret configured in the GitHub App webhook settings.
+- `GITHUB_APP_STATE_SECRET`: a separate random secret of at least 32 characters used to sign the ten-minute installation callback state.
 
 Set the app's user authorization callback to `https://YOUR_KESTREL_HOST/api/git/app/callback` once the callback route is deployed. Never put the private key in a `VITE_` variable, browser storage, worker image, or customer project environment.
 
