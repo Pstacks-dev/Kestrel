@@ -102,4 +102,16 @@ test('API Endpoints and Security Middleware', async (t) => {
     assert.equal(res.status, 401);
     delete process.env.CRON_SECRET;
   });
+
+  await t.test('POST Supabase Cron endpoints accept the method and reject missing credentials', async () => {
+    process.env.KESTREL_CRON_SECRET = 'supabase-cron-test-token';
+    try {
+      for (const path of ['/api/cron/recovery', '/api/cron/managed-deployments']) {
+        const res = await fetch(`${baseUrl}${path}`, { method: 'POST' });
+        assert.equal(res.status, 401, `${path} should reach cron auth, not return 404`);
+      }
+    } finally {
+      delete process.env.KESTREL_CRON_SECRET;
+    }
+  });
 });
