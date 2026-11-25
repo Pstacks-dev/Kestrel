@@ -52,12 +52,17 @@ test('reconciles a live deployment only after its provider URL responds successf
   const result = await reconcileManagedDeploymentReadiness({
     query: async (sql, params) => {
       calls.push({ sql, params });
-      if (/^\s*select d\./i.test(sql)) return { rowCount: 1, rows: [{
+      if (/with candidates as/i.test(sql)) {
+        assert.match(sql, /for update skip locked/i);
+        assert.match(sql, /health_claimed_at = now\(\)/i);
+        return { rowCount: 1, rows: [{
         id: 'deployment-1', provider_id: 'render', provider_deployment_id: 'provider-deploy-1',
         provider_url: 'https://sample.onrender.com/', health_attempt_count: 0,
+        health_claimed_at: new Date('2026-11-25T10:00:00.000Z'),
         credentials_ciphertext: encrypted.encryptedValue, credentials_iv: encrypted.iv, credentials_auth_tag: encrypted.authTag,
         provider_service_id: 'srv-1', provider_project_id: 'project-1',
       }] };
+      }
       updates.push({ sql, params });
       return { rowCount: 1, rows: [] };
     },
