@@ -29,7 +29,7 @@ export function isSafeProviderHealthUrl(providerId, value) {
   try {
     const url = new URL(String(value || ''));
     if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) return false;
-    const hostname = url.hostname.toLowerCase().replace(/\\.$/, '');
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
     if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) return false;
     if (isIP(hostname)) return false;
     const suffixes = PROVIDER_HOST_SUFFIXES[providerId] || [];
@@ -117,7 +117,7 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
         `update public.managed_hosting_deployments
          set status = $2, provider_url = coalesce($3, provider_url),
              health_status = $4, health_checked_at = case when $5 then now() else health_checked_at end,
-             health_attempt_count = $6, error_message = case when $7 then $8 else error_message end,
+             health_attempt_count = $6, error_message = case when $4 in ('healthy','unhealthy') then $8 else error_message end,
              updated_at = now()
          where id = $1`,
         [row.id, status, current.providerUrl || null, healthStatus, checkedAt, attemptCount,
