@@ -1809,8 +1809,8 @@ app.get('/api/admin/audit', userAuth, platformAdmin, async (_req, res) => {
   res.json(r.rows);
 });
 
-// Periodic Lease Recovery (can also be invoked by Vercel Cron via /api/cron/recovery)
-app.get('/api/cron/recovery', async (req, res) => {
+// Both Supabase Cron (POST) and Vercel Cron (GET) invoke these authenticated handlers.
+const recoverCronLeases = async (req, res) => {
   const cronSecret = process.env.KESTREL_CRON_SECRET || process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
   if (!cronSecret) return res.status(503).json({ error: 'Cron authentication is not configured' });
@@ -1823,11 +1823,12 @@ app.get('/api/cron/recovery', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Lease recovery failed' });
   }
-});
+};
+app.route('/api/cron/recovery').get(recoverCronLeases).post(recoverCronLeases);
 
 // Process durable post-CI managed deployment events. Supabase Cron invokes this endpoint
 // every minute on Hobby deployments; standalone mode also runs its own bounded queue poller.
-app.get('/api/cron/managed-deployments', async (req, res) => {
+const processManagedDeploymentCron = async (req, res) => {
   const cronSecret = process.env.KESTREL_CRON_SECRET || process.env.CRON_SECRET;
   if (!cronSecret) return res.status(503).json({ error: 'Cron authentication is not configured' });
   if (req.headers.authorization !== `Bearer ${cronSecret}`) {
@@ -1840,7 +1841,8 @@ app.get('/api/cron/managed-deployments', async (req, res) => {
     console.error('Managed deployment cron failed:', { message: error?.message });
     res.status(500).json({ error: 'Managed deployment queue processing failed' });
   }
-});
+};
+app.route('/api/cron/managed-deployments').get(processManagedDeploymentCron).post(processManagedDeploymentCron);
 
 // Private project file storage endpoints; membership is checked on every request.
 registerProjectFileRoutes(app, { userAuth, workerAuth, query });
