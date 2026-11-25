@@ -114,6 +114,8 @@ function deploymentView(row) {
     id: row.id, projectId: row.project_id, provider: row.provider_id,
     status: row.status, branch: row.branch, commitSha: row.commit_sha,
     providerUrl: row.provider_url, rollbackOf: row.rollback_of,
+    healthStatus: row.health_status || 'pending', healthCheckedAt: row.health_checked_at || null,
+    healthAttemptCount: Number(row.health_attempt_count || 0),
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
