@@ -141,3 +141,13 @@ test('Vercel Hobby configuration does not schedule frequent managed cron jobs', 
   assert.equal(config.crons.some((job) => job.path === '/api/cron/recovery'), false);
   assert.equal(config.crons.some((job) => job.schedule === '* * * * *'), false);
 });
+
+test('Supabase scheduler invokes existing GET cron handlers and replaces prior jobs', async () => {
+  const sql = await readFile(new URL('../db/migrations/032_supabase_cron_use_get.sql', import.meta.url), 'utf8');
+  assert.match(sql, /cron\.unschedule\(jobid\)/i);
+  assert.equal((sql.match(/net\.http_get\(/gi) || []).length, 2);
+  assert.doesNotMatch(sql, /net\.http_post\(/i);
+  assert.match(sql, /\/api\/cron\/managed-deployments/);
+  assert.match(sql, /\/api\/cron\/recovery/);
+  assert.match(sql, /vault\.decrypted_secrets/i);
+});
