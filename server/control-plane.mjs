@@ -30,6 +30,7 @@ import { registerHostingRoutes } from './routes/hosting.mjs';
 import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
 import { startManagedHostingAutomation, processManagedHostingQueue } from './lib/managed-hosting-automation.mjs';
+import { reconcileManagedDeploymentReadiness } from './lib/managed-deployment-readiness.mjs';
 import { refreshProviderImageRegistryCredentials } from './lib/oci-registries.mjs';
 import { createGitHubInstallationToken } from './lib/github-app.mjs';
 
@@ -1835,7 +1836,8 @@ app.get('/api/cron/managed-deployments', async (req, res) => {
   }
   try {
     const result = await processManagedHostingQueue({ query, transaction, logger: console }, 1);
-    res.json({ ok: true, ...result, time: now() });
+    const readiness = await reconcileManagedDeploymentReadiness({ query, logger: console }, 10);
+    res.json({ ok: true, ...result, readiness, time: now() });
   } catch (error) {
     console.error('Managed deployment cron failed:', { message: error?.message });
     res.status(500).json({ error: 'Managed deployment queue processing failed' });
