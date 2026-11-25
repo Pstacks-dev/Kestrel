@@ -68,19 +68,33 @@ export async function probeProviderReadiness(providerId, providerUrl, { fetchImp
 }
 
 export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = fetch, logger = console }, limit = 10) {
+  // Claim rows in one statement. SKIP LOCKED prevents overlapping cron workers from
+  // selecting the same deployment; the timestamp is also used as a fencing token.
   const pending = await query(
-    `select d.*, r.provider_project_id, r.provider_service_id, r.provider_environment_id,
+    `with candidates as (
+       select d.id
+       from public.managed_hosting_deployments d
+       where d.status in ('queued','deploying','unknown','live')
+         and d.health_status in ('pending','checking')
+         and d.health_attempt_count < $1
+         and (d.health_claimed_at is null or d.health_claimed_at < now() - interval '2 minutes')
+         and (d.health_checked_at is null or d.health_checked_at < now() - interval '30 seconds')
+       order by d.created_at asc
+       for update skip locked
+       limit $2
+     ), claimed as (
+       update public.managed_hosting_deployments d
+       set health_status = 'checking', health_claimed_at = now(), updated_at = now()
+       from candidates
+       where d.id = candidates.id
+       returning d.*
+     )
+     select claimed.*, r.provider_project_id, r.provider_service_id, r.provider_environment_id,
             c.credentials_ciphertext, c.credentials_iv, c.credentials_auth_tag
-     from public.managed_hosting_deployments d
-     join public.managed_hosting_resources r on r.id = d.resource_id
+     from claimed
+     join public.managed_hosting_resources r on r.id = claimed.resource_id
      join public.hosting_provider_connections c
-       on c.organization_id = d.organization_id and c.provider_id = d.provider_id and c.status = 'verified'
-     where d.status in ('queued','deploying','unknown','live')
-       and d.health_status in ('pending','checking')
-       and d.health_attempt_count < $1
-       and (d.health_checked_at is null or d.health_checked_at < now() - interval '30 seconds')
-     order by d.created_at asc
-     limit $2`,
+       on c.organization_id = claimed.organization_id and c.provider_id = claimed.provider_id and c.status = 'verified'`,
     [MAX_HEALTH_ATTEMPTS, Math.max(1, Math.min(25, Number(limit) || 10))],
   );
 
@@ -117,11 +131,12 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
         `update public.managed_hosting_deployments
          set status = $2, provider_url = coalesce($3, provider_url),
              health_status = $4, health_checked_at = case when $5 then now() else health_checked_at end,
-             health_attempt_count = $6, error_message = case when $4 in ('healthy','unhealthy') then $8 else error_message end,
+             health_attempt_count = $6, health_claimed_at = null,
+             error_message = case when $4 in ('healthy','unhealthy') then $8 else error_message end,
              updated_at = now()
-         where id = $1`,
+         where id = $1 and health_claimed_at = $9`,
         [row.id, status, current.providerUrl || null, healthStatus, checkedAt, attemptCount,
-          healthStatus === 'unhealthy', healthError],
+          healthStatus === 'unhealthy', healthError, row.health_claimed_at],
       );
       if (healthStatus === 'healthy') healthy += 1;
       else if (healthStatus === 'unhealthy') unhealthy += 1;
@@ -133,9 +148,9 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
         `update public.managed_hosting_deployments
          set health_status = case when health_attempt_count + 1 >= $2 then 'unhealthy' else 'checking' end,
              health_attempt_count = health_attempt_count + 1, health_checked_at = now(),
-             error_message = $3, updated_at = now()
-         where id = $1`,
-        [row.id, MAX_HEALTH_ATTEMPTS, safeError],
+             health_claimed_at = null, error_message = $3, updated_at = now()
+         where id = $1 and health_claimed_at = $4`,
+        [row.id, MAX_HEALTH_ATTEMPTS, safeError, row.health_claimed_at],
       );
       pendingCount += 1;
     }
