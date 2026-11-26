@@ -3,8 +3,9 @@
 Kestrel's production backup workflow creates a daily encrypted PostgreSQL custom
 archive, stores it in a separate Supabase Storage project, downloads it again to
 verify the uploaded bytes, and checks that PostgreSQL can read the archive.
-When a staging restore URL is configured, the workflow also performs a real
-restore and checks critical Kestrel tables.
+Every Sunday, the workflow performs a real restore into a separate staging
+database and checks critical Kestrel tables. The weekly workflow fails if the
+staging restore connection is not configured.
 
 ## Required GitHub configuration
 
@@ -23,7 +24,7 @@ Configure these GitHub Actions secrets:
 | `KESTREL_BACKUP_STORAGE_URL` | URL of the separate backup Supabase project |
 | `KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY` | Service-role key for the backup project only |
 | `KESTREL_BACKUP_ENCRYPTION_KEY` | Random 32-byte AES key, encoded as 64 hex characters or base64 |
-| `KESTREL_RESTORE_DATABASE_URL` | Optional isolated staging database used for restore drills |
+| `KESTREL_RESTORE_DATABASE_URL` | Required isolated staging database used for weekly restore drills |
 
 Generate an encryption key with:
 
@@ -48,8 +49,8 @@ and can also be started manually from GitHub Actions. It:
    uploaded file.
 5. Decrypts the downloaded archive and runs `pg_restore --list` to validate
    archive structure and the GCM authentication tag.
-6. On Sundays, if `KESTREL_RESTORE_DATABASE_URL` is configured, restores the archive into
-   that separate staging database and checks for the `projects`,
+6. On Sundays, restores the archive into the separate staging database and
+   checks for the `projects`,
    `organizations`, `jobs`, and `managed_hosting_deployments` tables.
 
 The restore script refuses to restore to the same host, port and database as
@@ -96,6 +97,6 @@ encrypted offsite dumps complement PITR and are not a replacement for it.
 
 A backup is considered operationally verified only when the daily upload,
 read-after-write checksum, authenticated decryption, and archive-list check
-succeed. A full recovery drill additionally requires the staging restore step
-to succeed. Monitor the GitHub Actions workflow and alert on any failed or
+succeed. A full recovery drill additionally requires the weekly staging restore step
+to succeed; a missing staging connection is treated as a failed recovery gate. Monitor the GitHub Actions workflow and alert on any failed or
 missed daily run.
