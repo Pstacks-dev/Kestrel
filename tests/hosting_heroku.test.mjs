@@ -228,6 +228,6 @@ test('deletes a newly created Heroku app if its build fails', async () => {
       if (url.endsWith('/apps/app-cleanup') && options.method === 'DELETE') return response({}, 200);
       return response({});
     },
-  }), /Heroku API request failed/);
+  }), /Heroku Platform API request failed/);
   assert.ok(calls.some(call => call.url.endsWith('/apps/app-cleanup') && call.options.method === 'DELETE'));
 });
