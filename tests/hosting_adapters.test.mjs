@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { verifyHostingProvider } from '../server/lib/hosting-adapters.mjs';
+import { ACTIVE_MANAGED_PROVIDERS } from '../server/lib/hosting-managed-adapters.mjs';
 
 const ok = (body = {}) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 
@@ -97,4 +98,13 @@ test('rejects unsupported provider verification without making a network request
     verifyHostingProvider('future-provider', { apiToken: 'x', accountId: 'y' }, { fetchImpl: async () => assert.fail('network should not be called') }),
     /not implemented/,
   );
+});
+
+
+test('activates all ten catalogued managed hosting providers, including Heroku', () => {
+  assert.deepEqual(new Set(ACTIVE_MANAGED_PROVIDERS), new Set([
+    'render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express',
+    'digitalocean-app-platform', 'heroku', 'vercel', 'netlify', 'cloudflare-pages',
+  ]));
+  assert.equal(ACTIVE_MANAGED_PROVIDERS.length, 10);
 });
