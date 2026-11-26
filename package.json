@@ -20,7 +20,8 @@
     "preflight": "node scripts/check-env.mjs",
     "test": "node --test",
     "backup:db": "node scripts/backup-database.mjs",
-    "backup:verify": "node scripts/verify-database-backup.mjs"
+    "backup:verify": "node scripts/verify-database-backup.mjs",
+    "production:smoke": "node scripts/smoke-production.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
