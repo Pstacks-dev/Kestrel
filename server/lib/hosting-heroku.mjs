@@ -1,3 +1,4 @@
+import { estimateHerokuDynoCost } from './heroku-pricing.mjs';
 const API = 'https://api.heroku.com';
 const ACCEPT = 'application/vnd.heroku+json; version=3';
 
@@ -51,8 +52,9 @@ async function createBuild({ apiKey, appId, repositoryUrl, commitSha }, { fetchI
   return { provider: 'heroku', deploymentId: build.id, status: status(build.status), releaseId: build.release?.id || null };
 }
 
-export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = 'main', commitSha, projectName: name }, { fetchImpl = fetch } = {}) {
+export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = 'main', commitSha, projectName: name, dynoSize = 'basic', dynoQuantity = 1 }, { fetchImpl = fetch } = {}) {
   if (!apiKey) throw new Error('Heroku API key is required');
+  estimateHerokuDynoCost(dynoSize, dynoQuantity);
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) throw new Error('Invalid deployment branch');
   const repo = repository(repositoryUrl);
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
@@ -62,14 +64,16 @@ export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = '
   });
   if (!app.id || !app.name) throw new Error('Heroku did not return an app identifier');
   const build = await createBuild({ apiKey, appId: app.id, repositoryUrl: `https://github.com/${repo.owner}/${repo.repo}`, commitSha }, { fetchImpl });
-  return { ...build, projectId: app.id, serviceId: app.name, environmentId: null, providerUrl: app.web_url || null };
+  return { ...build, projectId: app.id, serviceId: app.name, environmentId: null, providerUrl: app.web_url || null, dynoSize, dynoQuantity };
 }
 
-export async function deployHerokuApp({ apiKey, appId, repositoryUrl, commitSha }, { fetchImpl = fetch } = {}) {
+export async function deployHerokuApp({ apiKey, appId, repositoryUrl, commitSha, dynoSize = 'basic', dynoQuantity = 1 }, { fetchImpl = fetch } = {}) {
+  estimateHerokuDynoCost(dynoSize, dynoQuantity);
   return createBuild({ apiKey, appId, repositoryUrl, commitSha }, { fetchImpl });
 }
 
-export async function getHerokuDeployment({ apiKey, appId, deploymentId }, { fetchImpl = fetch } = {}) {
+export async function getHerokuDeployment({ apiKey, appId, deploymentId, dynoSize = 'basic', dynoQuantity = 1 }, { fetchImpl = fetch } = {}) {
+  estimateHerokuDynoCost(dynoSize, dynoQuantity);
   let build;
   let release = null;
   try {
@@ -84,12 +88,30 @@ export async function getHerokuDeployment({ apiKey, appId, deploymentId }, { fet
     request(apiKey, `/apps/${encodeURIComponent(appId)}/formation`, { fetchImpl }),
   ]);
   const web = Array.isArray(formation) ? formation.find((process) => process.type === 'web' || process.process_type === 'web') : null;
-  const live = build.status === 'succeeded' && app.status === 'active' && Number(web?.quantity || 0) > 0;
+  const actualSize = String(web?.dyno_size?.name || web?.size || '').toLowerCase();
+  const live = build.status === 'succeeded' && app.status === 'active' &&
+    Number(web?.quantity || 0) === Number(dynoQuantity) && actualSize === String(dynoSize).toLowerCase();
   return {
     provider: 'heroku', deploymentId, providerStatus: release ? 'released' : build.status,
     status: live ? 'live' : build.status === 'succeeded' ? 'deploying' : status(build.status),
     providerUrl: app.web_url || null, canRollback: build.status === 'succeeded' && Boolean(build.release?.id),
   };
+}
+
+export async function configureHerokuFormation({ apiKey, appId, dynoSize = 'basic', dynoQuantity = 1 }, { fetchImpl = fetch } = {}) {
+  estimateHerokuDynoCost(dynoSize, dynoQuantity);
+  const current = await request(apiKey, `/apps/${encodeURIComponent(appId)}/formation`, { fetchImpl });
+  const web = Array.isArray(current) ? current.find((process) => process.type === 'web' || process.process_type === 'web') : null;
+  if (!web) return { configured: false, reason: 'Heroku has not created a web process formation yet' };
+  const currentSize = String(web.dyno_size?.name || web.size || '').toLowerCase();
+  if (currentSize === String(dynoSize).toLowerCase() && Number(web.quantity) === Number(dynoQuantity)) {
+    return { configured: true, changed: false };
+  }
+  const updated = await request(apiKey, `/apps/${encodeURIComponent(appId)}/formation/web`, {
+    method: 'PATCH', fetchImpl,
+    body: { dyno_size: { name: dynoSize }, quantity: dynoQuantity },
+  });
+  return { configured: true, changed: true, formation: updated };
 }
 
 export async function getHerokuDeploymentLogs({ apiKey, appId, deploymentId }, { fetchImpl = fetch } = {}) {
