@@ -10,6 +10,7 @@ type Deployment = {
   providerUrl?: string | null; createdAt?: string; providerStatus?: string;
 };
 type Field = { key: string; label: string; placeholder?: string; multiline?: boolean; optional?: boolean };
+type HerokuPricing = { catalogVersion: string; plans: Record<string, { label: string; monthlyUsd: number }> };
 
 const PROVIDERS: Record<string, Field[]> = {
   render: [{ key: 'apiKey', label: 'Render API key' }, { key: 'ownerId', label: 'Workspace owner ID' }],
@@ -37,6 +38,11 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
   const [editing, setEditing] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [artifactIds, setArtifactIds] = useState('');
+  const [selectedProviderId, setSelectedProviderId] = useState('auto');
+  const [herokuPricing, setHerokuPricing] = useState<HerokuPricing | null>(null);
+  const [herokuDynoSize, setHerokuDynoSize] = useState('basic');
+  const [herokuDynoQuantity, setHerokuDynoQuantity] = useState(1);
+  const [herokuCostApproved, setHerokuCostApproved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
@@ -60,6 +66,7 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
     try {
       const result = await request(`/workspaces/${organizationId}/hosting/providers`);
       setProviders(result.providers || []);
+      try { setHerokuPricing(await request('/heroku/dyno-pricing')); } catch { setHerokuPricing(null); }
     } catch (e: any) { setError(e.message || 'Could not load hosting providers'); }
     finally { setLoading(false); }
   }
@@ -145,8 +152,23 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
     setDeploying(true); setError(''); setMessage('');
     try {
       const ids = artifactIds.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
+      const body: Record<string, any> = {
+        ...(ids.length ? { artifactIds: ids } : {}),
+        ...(selectedProviderId !== 'auto' ? { providerId: selectedProviderId } : {}),
+      };
+      if (selectedProviderId === 'heroku') {
+        if (!herokuCostApproved) throw new Error('A workspace owner/admin must explicitly approve the Heroku monthly cost estimate.');
+        if (!herokuPricing) throw new Error('Heroku pricing could not be loaded. Refresh before approving a deployment.');
+        const plan = herokuPricing.plans[herokuDynoSize];
+        if (!plan) throw new Error('Select a valid Heroku dyno plan.');
+        body.herokuCostApproval = {
+          approved: true, dynoSize: herokuDynoSize, dynoQuantity: herokuDynoQuantity,
+          monthlyCostUsd: Number((plan.monthlyUsd * herokuDynoQuantity).toFixed(2)),
+          pricingCatalogVersion: herokuPricing.catalogVersion,
+        };
+      }
       const result = await request(`/projects/${projectId}/managed-deployments`, {
-        method: 'POST', body: JSON.stringify({ ...(ids.length ? { artifactIds: ids } : {}) }),
+        method: 'POST', body: JSON.stringify(body),
       });
       setMessage(`Deployment started with ${result.selectedProvider || result.deployment?.provider || 'the selected provider'}.`);
       await refreshDeployments();
@@ -180,10 +202,34 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
     </div>
     <div className="panel managed-deploy-panel">
       <div className="panel-head"><div><h3>Deploy this project</h3><p>Kestrel ranks connected providers by project compatibility. It does not require a Kestrel-owned hosting server.</p></div></div>
+      <label className="managed-artifact-field">Hosting provider
+        <select value={selectedProviderId} onChange={(e) => { setSelectedProviderId(e.target.value); setHerokuCostApproved(false); }}>
+          <option value="auto">Automatic — best compatible verified provider</option>
+          {providers.filter((provider) => provider.connection?.status === 'verified').map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+        </select>
+      </label>
+      {selectedProviderId === 'heroku' && (
+        <div className="managed-artifact-field heroku-cost-approval">
+          <label>Heroku web dyno plan
+            <select value={herokuDynoSize} onChange={(e) => { setHerokuDynoSize(e.target.value); setHerokuCostApproved(false); }}>
+              {Object.entries(herokuPricing?.plans || {}).map(([size, plan]) => <option key={size} value={size}>{plan.label} — ${plan.monthlyUsd.toFixed(2)}/month per dyno</option>)}
+            </select>
+          </label>
+          <label>Web dyno quantity
+            <input type="number" min={1} max={10} step={1} value={herokuDynoQuantity} onChange={(e) => { setHerokuDynoQuantity(Math.max(1, Math.min(10, Number(e.target.value) || 1))); setHerokuCostApproved(false); }} />
+          </label>
+          <p>Estimated maximum recurring cost: <b>${((herokuPricing?.plans[herokuDynoSize]?.monthlyUsd || 0) * herokuDynoQuantity).toFixed(2)} USD/month</b>. This assumes 24/7 use and excludes add-ons and taxes; usage is prorated by Heroku.</p>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={herokuCostApproved} onChange={(e) => setHerokuCostApproved(e.target.checked)} />
+            <span>I approve this Heroku dyno plan, quantity and estimated monthly cost on behalf of this workspace. I understand only workspace owners/admins can submit this approval.</span>
+          </label>
+          <small>Pricing catalog: {herokuPricing?.catalogVersion || 'Loading…'}. The server recalculates and verifies the estimate before provisioning.</small>
+        </div>
+      )}
       <label className="managed-artifact-field">Netlify build artifact IDs <span>(optional; required when Netlify is selected)</span>
         <textarea rows={2} value={artifactIds} onChange={(e) => setArtifactIds(e.target.value)} placeholder="Paste artifact IDs separated by commas or new lines" />
       </label>
-      <button className="btn btn-dark" onClick={deploy} disabled={deploying || !projectId}>{deploying ? 'Starting deployment…' : 'Deploy with best compatible provider'} <Cloud size={15}/></button>
+      <button className="btn btn-dark" onClick={deploy} disabled={deploying || !projectId || (selectedProviderId === 'heroku' && (!herokuCostApproved || !herokuPricing))}>{deploying ? 'Starting deployment…' : selectedProviderId === 'auto' ? 'Deploy with best compatible provider' : `Deploy with ${providers.find((p) => p.id === selectedProviderId)?.name || selectedProviderId}`} <Cloud size={15}/></button>
     </div>
     <div className="panel managed-deployment-history">
       <div className="panel-head"><div><h3>Managed deployment history</h3><p>Provider status and public URL for each deployment.</p></div></div>
