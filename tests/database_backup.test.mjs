@@ -42,13 +42,18 @@ test('rejects tampered ciphertext and incorrect backup encryption keys', async (
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kestrel-backup-tamper-'));
   const source = path.join(directory, 'source.dump');
   const encrypted = path.join(directory, 'backup.kstr');
+  const tampered = path.join(directory, 'tampered.kstr');
   const restored = path.join(directory, 'restored.dump');
+  const restoredTampered = path.join(directory, 'restored-tampered.dump');
   const key = crypto.randomBytes(32);
   try {
     await writeFile(source, 'important database contents');
     await encryptBackupStream(createReadStream(source), encrypted, key);
     await assert.rejects(decryptBackupFile(encrypted, restored, crypto.randomBytes(32)), /authentication or decryption failed/);
-    await assert.rejects(decryptBackupFile(encrypted, restored, key), /already exists/);
+    const bytes = await readFile(encrypted);
+    bytes[bytes.length - 17] ^= 0x01;
+    await writeFile(tampered, bytes);
+    await assert.rejects(decryptBackupFile(tampered, restoredTampered, key), /authentication or decryption failed/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
