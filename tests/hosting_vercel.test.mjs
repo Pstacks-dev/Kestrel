@@ -162,6 +162,20 @@ test('clears a previous Vercel monorepo root directory when deploying from repos
 });
 
 
+test('validates desired Vercel secrets before deleting stale managed variables', async () => {
+  await assert.rejects(deployVercelProject({
+    token: 'vercel-token',
+    projectId: 'prj-secrets',
+    projectName: 'api',
+    repositoryUrl: 'https://github.com/acme/api',
+    branch: 'main',
+    commitSha: 'b'.repeat(40),
+    profile: {},
+    env: { 'INVALID-KEY': 'value' },
+    managedEnvKeys: ['OLD_SECRET'],
+  }, { fetchImpl: async () => assert.fail('Vercel API must not be called for invalid environment variables') }), /Invalid Vercel environment variable/);
+});
+
 test('deletes only stale Kestrel-managed Vercel variables across all pages', async () => {
   const calls = [];
   await deployVercelProject({
