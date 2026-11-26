@@ -45,7 +45,7 @@ test('rejects invalid repository URLs, branch names and commit SHAs before netwo
   const noNetwork = async () => assert.fail('Railway API must not be called');
   await assert.rejects(createRailwayDeployment({
     token: 'x', repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'a'.repeat(40), projectName: 'Demo',
-  }, { fetchImpl: noNetwork }), /public GitHub repository/);
+  }, { fetchImpl: noNetwork }), /valid GitHub repository/);
   await assert.rejects(createRailwayDeployment({
     token: 'x', repositoryUrl: 'https://github.com/acme/demo', branch: '../main', commitSha: 'a'.repeat(40), projectName: 'Demo',
   }, { fetchImpl: noNetwork }), /Invalid deployment branch/);
@@ -113,4 +113,62 @@ test('deploys new commits to an existing Railway service without creating duplic
   assert.equal(requests[1].variables.serviceId, 'service-1');
   assert.equal(requests[1].variables.environmentId, 'env-1');
   assert.equal(result.deploymentId, 'deployment-2');
+});
+
+
+test('configures a Railway service root directory before deploying a nested monorepo commit', async () => {
+  const calls = [];
+  const responses = [
+    { projectCreate: { id: 'project-2', name: 'Monorepo' } },
+    { project: { id: 'project-2', environments: { edges: [{ node: { id: 'env-2', name: 'production' } }] } } },
+    { serviceCreate: { id: 'service-2', name: 'API' } },
+    { serviceInstanceUpdate: true },
+    { serviceInstanceDeployV2: 'deployment-2' },
+  ];
+  const result = await createRailwayDeployment({
+    token: 'railway-token',
+    repositoryUrl: 'https://github.com/acme/monorepo',
+    branch: 'main',
+    commitSha: 'c'.repeat(40),
+    projectName: 'Monorepo',
+    serviceName: 'API',
+    profile: { rootDir: 'apps/api', needsContainer: true, dockerfilePath: './Dockerfile' },
+    env: {},
+  }, {
+    fetchImpl: async (_url, options) => {
+      const request = JSON.parse(options.body);
+      calls.push(request);
+      return response(responses[calls.length - 1]);
+    },
+  });
+  assert.equal(calls.length, 5);
+  assert.equal(calls[3].query.includes('serviceInstanceUpdate'), true);
+  assert.deepEqual(calls[3].variables.input, { rootDirectory: '/apps/api' });
+  assert.equal(calls[4].query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(result.deploymentId, 'deployment-2');
+});
+
+test('updates an existing Railway service root directory before deploying', async () => {
+  const calls = [];
+  const result = await deployRailwayService({
+    token: 'railway-token',
+    projectId: 'project-1',
+    serviceId: 'service-1',
+    environmentId: 'env-1',
+    commitSha: 'd'.repeat(40),
+    profile: { rootDir: '.' },
+    env: {},
+  }, {
+    fetchImpl: async (_url, options) => {
+      const request = JSON.parse(options.body);
+      calls.push(request);
+      return response(request.query.includes('serviceInstanceUpdate')
+        ? { serviceInstanceUpdate: true }
+        : { serviceInstanceDeployV2: 'deployment-3' });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].variables.input, { rootDirectory: null });
+  assert.equal(calls[1].query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(result.deploymentId, 'deployment-3');
 });
