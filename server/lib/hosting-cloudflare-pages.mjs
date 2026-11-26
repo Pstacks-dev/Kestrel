@@ -61,6 +61,42 @@ function buildConfig({ buildCommand, destinationDir, rootDir }) {
   return { build_command: command, destination_dir: destination, root_dir: root, build_caching: true };
 }
 
+function reconcileEnvironment(existing = {}, desired = {}) {
+  const result = { ...desired };
+  for (const key of Object.keys(existing || {})) {
+    if (!Object.prototype.hasOwnProperty.call(desired, key)) result[key] = null;
+  }
+  return result;
+}
+
+async function syncProjectSettings({ apiToken, accountId, projectName: name, buildCommand, destinationDir, rootDir, env, project: suppliedProject }, fetchImpl) {
+  const project = suppliedProject || await request(apiToken, projectPath(accountId, name), { fetchImpl });
+  const currentBuild = project.build_config || {};
+  const build = {
+    ...currentBuild,
+    ...buildConfig({ buildCommand, destinationDir, rootDir }),
+  };
+  const configs = project.deployment_configs || {};
+  const fallbackEnv = project.env_vars || {};
+  const desired = envVars(env);
+  const production = {
+    ...(configs.production || {}),
+    env_vars: reconcileEnvironment(configs.production?.env_vars || fallbackEnv, desired),
+  };
+  const preview = {
+    ...(configs.preview || {}),
+    env_vars: reconcileEnvironment(configs.preview?.env_vars || fallbackEnv, desired),
+  };
+  return request(apiToken, projectPath(accountId, name), {
+    method: 'PATCH',
+    fetchImpl,
+    body: {
+      build_config: build,
+      deployment_configs: { ...configs, production, preview },
+    },
+  });
+}
+
 async function ensureProject({ apiToken, accountId, projectName: name, repositoryUrl, branch, buildCommand, destinationDir, rootDir, env }, fetchImpl) {
   const path = projectPath(accountId, name);
   try {
@@ -71,6 +107,9 @@ async function ensureProject({ apiToken, accountId, projectName: name, repositor
         source.repo_name?.toLowerCase() !== parseRepository(repositoryUrl).repo.toLowerCase()) {
       throw new Error('Cloudflare Pages project name is already linked to another repository');
     }
+    await syncProjectSettings({
+      apiToken, accountId, projectName: name, buildCommand, destinationDir, rootDir, env, project: existing,
+    }, fetchImpl);
     return existing;
   } catch (error) {
     if (error.status !== 404) throw error;
@@ -136,20 +175,14 @@ export async function createCloudflarePagesDeployment({ apiToken, accountId, pro
   };
 }
 
-export async function deployCloudflarePagesProject({ apiToken, accountId, projectName: name, branch = 'main', commitSha, commitMessage, env }, { fetchImpl = fetch } = {}) {
+export async function deployCloudflarePagesProject({
+  apiToken, accountId, projectName: name, branch = 'main', commitSha, commitMessage,
+  env, buildCommand, destinationDir, rootDir = '/',
+}, { fetchImpl = fetch } = {}) {
   if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required for Cloudflare Pages deployment');
-  if (env && Object.keys(env).length) {
-    const variables = envVars(env);
-    await request(apiToken, projectPath(accountId, name), {
-      method: 'PATCH', fetchImpl,
-      body: {
-        deployment_configs: {
-          production: { env_vars: variables },
-          preview: { env_vars: variables },
-        },
-      },
-    });
-  }
+  await syncProjectSettings({
+    apiToken, accountId, projectName: name, env, buildCommand, destinationDir, rootDir,
+  }, fetchImpl);
   return createDeployment({ apiToken, accountId, projectName: name, branch, commitSha, commitMessage }, fetchImpl);
 }
 
