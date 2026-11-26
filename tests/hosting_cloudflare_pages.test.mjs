@@ -14,7 +14,7 @@ test('creates a Git-connected Pages project and deploys an exact commit', async 
   const calls = [];
   const result = await createCloudflarePagesDeployment({
     apiToken: 'cf-token', accountId: 'a'.repeat(32),
-    projectName: 'Kestrel Demo', repositoryUrl: 'https://github.com/acme/demo.git',
+    projectName: 'Kestrel Demo', repositoryUrl: 'https://github.com/acme/private-demo.git',
     branch: 'main', commitSha: 'b'.repeat(40),
     buildCommand: 'npm run build', destinationDir: 'dist',
   }, { fetchImpl: async (url, options = {}) => {
@@ -100,7 +100,7 @@ test('rejects invalid repositories, commit SHAs and build paths', async () => {
   await assert.rejects(createCloudflarePagesDeployment({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'demo',
     repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'b'.repeat(40),
-  }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /public GitHub repository/);
+  }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /GitHub repository/);
   await assert.rejects(deployCloudflarePagesProject({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'demo', commitSha: 'bad',
   }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /verified Git commit SHA/);
