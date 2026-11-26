@@ -214,3 +214,10 @@ test('pipeline job working directories are stored, validated and executed within
   assert.match(resolver, /escapes the repository workspace/);
 });
 
+
+test('Fly machine rollback history permits repeated records for the same machine identifier', async () => {
+  const sql = await readFile(new URL('../db/migrations/039_fly_rollback_history.sql', import.meta.url), 'utf8');
+  assert.match(sql, /drop constraint if exists managed_hosting_deployments_provider_id_provider_deployment_id_key/i);
+  assert.match(sql, /create unique index if not exists idx_managed_hosting_deployments_provider_deployment_unique/i);
+  assert.match(sql, /where provider_id <> 'flyio'/i);
+});
