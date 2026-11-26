@@ -109,12 +109,12 @@ export async function deployDigitalOceanApp({ accessToken, appId, commitSha, env
   const currentApp = currentResult.app || currentResult;
   if (!currentApp.spec) throw new Error('DigitalOcean app did not return its current spec');
   const spec = structuredClone(currentApp.spec);
-  if (Object.keys(env || {}).length) {
-    const updateComponent = (component, scope) => ({ ...component, envs: digitalOceanEnv(env, scope) });
-    spec.services = (spec.services || []).map((component) => updateComponent(component, 'RUN_AND_BUILD_TIME'));
-    spec.static_sites = (spec.static_sites || []).map((component) => updateComponent(component, 'BUILD_TIME'));
-    spec.workers = (spec.workers || []).map((component) => updateComponent(component, 'RUN_TIME'));
-  }
+  // Kestrel owns the environment set for managed App Platform components.
+  // Always send an explicit array so deleting the final Kestrel secret clears it.
+  const updateComponent = (component, scope) => ({ ...component, envs: digitalOceanEnv(env, scope) });
+  spec.services = (spec.services || []).map((component) => updateComponent(component, 'RUN_AND_BUILD_TIME'));
+  spec.static_sites = (spec.static_sites || []).map((component) => updateComponent(component, 'BUILD_TIME'));
+  spec.workers = (spec.workers || []).map((component) => updateComponent(component, 'RUN_TIME'));
   const updatedResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}`, { method: 'PUT', fetchImpl, body: { spec } });
   let updatedApp = updatedResult.app || updatedResult;
   let deployment = updatedApp.in_progress_deployment || updatedApp.pending_deployment || null;

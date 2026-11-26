@@ -152,6 +152,32 @@ test('creates a DigitalOcean App Platform app and starts its first deployment', 
   assert.equal(result.status, 'queued');
 });
 
+test('clears deleted DigitalOcean App Platform secrets when the Kestrel environment is empty', async () => {
+  let submittedSpec;
+  const result = await deployDigitalOceanApp({
+    accessToken: 'do-token', appId: 'app-1', commitSha: 'f'.repeat(40), env: {},
+  }, {
+    fetchImpl: async (_url, options) => {
+      if (options.method === 'GET') return response({ app: {
+        id: 'app-1',
+        spec: {
+          services: [{ name: 'api', envs: [{ key: 'OLD_SERVICE_SECRET', value: 'old', type: 'SECRET' }] }],
+          static_sites: [{ name: 'web', envs: [{ key: 'OLD_BUILD_SECRET', value: 'old', type: 'SECRET' }] }],
+          workers: [{ name: 'worker', envs: [{ key: 'OLD_WORKER_SECRET', value: 'old', type: 'SECRET' }] }],
+        },
+      } });
+      submittedSpec = JSON.parse(options.body).spec;
+      return response({ app: { id: 'app-1', in_progress_deployment: {
+        id: 'do-empty-env', phase: 'PENDING', services: [{ source_commit_hash: 'f'.repeat(40) }],
+      } } });
+    },
+  });
+  assert.deepEqual(submittedSpec.services[0].envs, []);
+  assert.deepEqual(submittedSpec.static_sites[0].envs, []);
+  assert.deepEqual(submittedSpec.workers[0].envs, []);
+  assert.equal(result.deploymentId, 'do-empty-env');
+});
+
 test('deploys, polls and rolls back a DigitalOcean app', async () => {
   const deployed = await deployDigitalOceanApp({ accessToken: 'x', appId: 'app-1', commitSha: 'd'.repeat(40), env: { API_KEY: 'secret' } }, {
     fetchImpl: async (url, options) => {
