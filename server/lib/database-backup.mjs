@@ -43,8 +43,10 @@ export function parsePostgresConnection(value, label = 'database') {
 export function assertDistinctRestoreDatabase(sourceUrl, restoreUrl) {
   const source = parsePostgresConnection(sourceUrl, 'source database');
   const restore = parsePostgresConnection(restoreUrl, 'restore database');
-  if (source.host === restore.host && source.port === restore.port && source.database === restore.database) {
-    throw new Error('Restore target must be a different database from the production source');
+  const sourceProjectRef = source.username.startsWith('postgres.') ? source.username.slice('postgres.'.length) : source.host.match(/^db\.([^.]+)\.supabase\.co$/)?.[1] || null;
+  const restoreProjectRef = restore.username.startsWith('postgres.') ? restore.username.slice('postgres.'.length) : restore.host.match(/^db\.([^.]+)\.supabase\.co$/)?.[1] || null;
+  if (source.host === restore.host || (sourceProjectRef && sourceProjectRef === restoreProjectRef)) {
+    throw new Error('Restore target must use a separate staging host/project from the production source');
   }
   return restore;
 }
@@ -320,7 +322,7 @@ export async function verifyEncryptedDatabaseBackup({
 }
 
 async function runPgRestoreList(pgRestoreBin, dumpPath) {
-  return runUtility(pgRestoreBin, ['--list', dumpPath], {});
+  return runUtility(pgRestoreBin, ['--list', dumpPath], process.env);
 }
 
 async function runPgRestore(pgRestoreBin, dumpPath, connection) {
