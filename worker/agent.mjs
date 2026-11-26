@@ -125,7 +125,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortControll
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
-      activeJobs.set(job.id, { abortController, child });
+      activeJobs.set(job.id, { ...activeJobs.get(job.id), abortController, child });
 
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -162,7 +162,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortControll
       child.on('close', (code) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
-        activeJobs.delete(job.id);
+        activeJobs.set(job.id, { abortController });
         resolve({
           exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
           durationMs: Date.now() - start,
@@ -172,7 +172,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortControll
       child.on('error', (e) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
-        activeJobs.delete(job.id);
+        activeJobs.set(job.id, { abortController });
         onLine('stderr', redactSecrets(e.message, secretValues));
         resolve({ exitCode: 1, durationMs: Date.now() - start });
       });
@@ -182,7 +182,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortControll
   // Default Docker container executor
   return new Promise((resolve) => {
     const containerName = `kestrel-job-${String(job.id).replace(/[^a-zA-Z0-9_.-]/g, '')}`;
-    activeJobs.set(job.id, { containerName, abortController });
+    activeJobs.set(job.id, { ...activeJobs.get(job.id), containerName, abortController });
 
     const args = [
       'run',
@@ -302,9 +302,13 @@ async function ensureJobImage() {
   });
 }
 
-async function runGit(args, cwd, onLine, extraEnv = {}) {
+async function runGit(args, cwd, onLine, extraEnv = {}, abortSignal) {
   return new Promise((resolve) => {
     const start = Date.now();
+    if (abortSignal?.aborted) {
+      resolve({ exitCode: 130, durationMs: Date.now() - start, stdout: '' });
+      return;
+    }
     const child = spawn('git', args, {
       cwd,
       shell: false,
@@ -313,6 +317,12 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
     });
     let stdout = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), Number(process.env.KESTREL_GIT_TIMEOUT_MS || 300000));
+    const abortHandler = () => child.kill('SIGTERM');
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', abortHandler);
+    };
+    abortSignal?.addEventListener('abort', abortHandler, { once: true });
 
     for (const [stream, pipe] of [
       ['stdout', child.stdout],
@@ -328,11 +338,11 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
     }
 
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, durationMs: Date.now() - start, stdout });
+      cleanup();
+      resolve({ exitCode: abortSignal?.aborted ? 130 : code ?? 1, durationMs: Date.now() - start, stdout });
     });
     child.on('error', (e) => {
-      clearTimeout(timer);
+      cleanup();
       onLine('stderr', e.message);
       resolve({ exitCode: 1, durationMs: Date.now() - start, stdout });
     });
@@ -408,6 +418,8 @@ async function makeWorkspaceWritable(directory) {
 }
 
 async function execute(job) {
+  const abortController = new AbortController();
+  activeJobs.set(job.id, { abortController });
   const workspace = path.join(ROOT, String(job.runId), String(job.id));
   await fs.mkdir(workspace, { recursive: true });
 
@@ -415,7 +427,6 @@ async function execute(job) {
   let logFlushActive = false;
   let logBytes = 0;
   let logTruncated = false;
-  const abortController = new AbortController();
 
   const secretValues = Object.values(job.secrets || {}).filter(Boolean);
   if (job.sourceToken) secretValues.push(job.sourceToken);
@@ -471,7 +482,8 @@ async function execute(job) {
         ['clone', '--depth', '1', '--branch', String(job.branch || 'main'), '--', repository, '.'],
         workspace,
         (s, m) => console.log(`[clone:${s}] ${redactSecrets(m, secretValues)}`),
-        gitAuthEnv
+        gitAuthEnv,
+        abortController.signal
       );
         if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
       }
@@ -479,7 +491,7 @@ async function execute(job) {
 
     if (job.commitSha && EXECUTOR !== 'mock' && job.sourceType !== 'upload') {
       if (!/^[a-f0-9]{7,64}$/i.test(job.commitSha)) throw new Error('Invalid commit SHA format');
-      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv);
+      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv, abortController.signal);
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');
     }
 
@@ -524,6 +536,7 @@ async function execute(job) {
     clearInterval(logTimer);
     clearInterval(leaseHeartbeat);
     await fs.rm(workspace, { recursive: true, force: true }).catch((e) => console.error('workspace cleanup:', e.message));
+    activeJobs.delete(job.id);
   }
 }
 
@@ -560,15 +573,15 @@ async function executeManagedImageBuild(build) {
       GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + build.sourceToken).toString('base64'),
     } : {};
     const clone = await runGit(['clone', '--no-checkout', '--filter=blob:none', '--', build.repositoryUrl, workspace], workspace,
-      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv, managedImageBuildAbortController.signal);
     if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build; verify the connected GitHub App has repository access');
     const fetch = await runGit(['fetch', '--depth=1', 'origin', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv, managedImageBuildAbortController.signal);
     if (fetch.exitCode !== 0) throw new Error('Could not fetch the exact pipeline commit for OCI build');
     const checkout = await runGit(['checkout', '--detach', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)));
+      (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)), {}, managedImageBuildAbortController.signal);
     if (checkout.exitCode !== 0) throw new Error('Could not check out the exact pipeline commit for OCI build');
-    const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {});
+    const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {}, {}, managedImageBuildAbortController.signal);
     if (tree.exitCode !== 0) throw new Error('Could not inspect tracked files at the exact pipeline commit');
     const buildContext = await resolveOciBuildContext(workspace, tree.stdout.split(/\r?\n/).filter(Boolean), build.buildContext);
     console.log('[oci] Using build context ' + buildContext.relativeContext + ' and Dockerfile ' + buildContext.dockerfile);
