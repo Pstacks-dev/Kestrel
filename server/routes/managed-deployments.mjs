@@ -254,9 +254,10 @@ export function registerManagedDeploymentRoutes(app, {
         buildCommand: req.body?.buildCommand || profile.buildCommand || 'npm run build',
         destinationDir: req.body?.destinationDir || profile.outputDirectory || 'dist',
         rootDir: profile.rootDir && profile.rootDir !== '.' ? profile.rootDir : '/',
+        managedEnvKeys: Array.isArray(resource?.metadata?.managedEnvKeys) ? resource.metadata.managedEnvKeys : [],
       };
       const providerDeployment = resource
-        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir })
+        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir, managedEnvKeys: providerInput.managedEnvKeys })
         : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
       const saved = await transaction(async (client) => {
@@ -276,6 +277,13 @@ export function registerManagedDeploymentRoutes(app, {
           );
           resourceId = insertedResource.rows[0].id;
         }
+        await client.query(
+          `update public.managed_hosting_resources
+           set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('managedEnvKeys', $2::jsonb),
+               updated_at = now()
+           where id = $1`,
+          [resourceId, JSON.stringify(Object.keys(projectEnv))],
+        );
         const inserted = await client.query(
           `insert into public.managed_hosting_deployments
              (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
