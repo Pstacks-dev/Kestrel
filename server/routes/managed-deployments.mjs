@@ -7,6 +7,7 @@ import {
   getManagedProviderDeployment, getManagedProviderDeploymentLogs, rollbackManagedProviderDeployment,
 } from '../lib/hosting-managed-adapters.mjs';
 import { createGitHubInstallationToken } from '../lib/github-app.mjs';
+import { resolveHerokuSourceArchiveUrl } from '../lib/hosting-heroku.mjs';
 import { HEROKU_DYNO_PLANS, HEROKU_PRICING_CATALOG_VERSION, validateHerokuCostApproval } from '../lib/heroku-pricing.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
@@ -247,6 +248,9 @@ export function registerManagedDeploymentRoutes(app, {
       }
 
       const providerId = selected.id;
+      const sourceArchiveUrl = providerId === 'heroku'
+        ? await resolveHerokuSourceArchiveUrl({ repositoryUrl: project.repository_url, commitSha, installationToken: sourceToken, fetchImpl })
+        : null;
       const staticFiles = providerId === 'netlify' ? await loadStaticArtifactFiles(query, project.id, req.body?.artifactIds, storageFetch, req.body?.artifactPrefix, commitSha) : null;
       let containerImage = String(req.body?.containerImage || '').trim();
       if (['flyio', 'google-cloud-run', 'aws-ecs-express'].includes(providerId)) {
@@ -285,9 +289,10 @@ export function registerManagedDeploymentRoutes(app, {
         managedEnvKeys: Array.isArray(resource?.metadata?.managedEnvKeys) ? resource.metadata.managedEnvKeys : [],
         dynoSize: herokuCostApproval?.dynoSize,
         dynoQuantity: herokuCostApproval?.dynoQuantity,
+        sourceArchiveUrl,
       };
       const providerDeployment = resource
-        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir, managedEnvKeys: providerInput.managedEnvKeys, dynoSize: providerInput.dynoSize, dynoQuantity: providerInput.dynoQuantity })
+        ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir, managedEnvKeys: providerInput.managedEnvKeys, dynoSize: providerInput.dynoSize, dynoQuantity: providerInput.dynoQuantity, sourceArchiveUrl: providerInput.sourceArchiveUrl })
         : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
       const saved = await transaction(async (client) => {
