@@ -70,10 +70,10 @@ test('manual deployment source inspection uses a short-lived installation token 
       calls.push({ url, authorization: options.headers.Authorization });
       assert.equal(options.headers.Authorization, `Bearer ${token}`);
       if (url.endsWith('/commits/main')) return new Response(JSON.stringify({ sha: 'a'.repeat(40) }), { status: 200 });
-      if (url.includes('/contents/?ref=main')) {
+      if (url.includes('/contents/?ref=')) {
         return new Response(JSON.stringify([{ name: 'package.json', type: 'file' }]), { status: 200 });
       }
-      if (url.includes('/contents/package.json?ref=main')) {
+      if (url.includes('/contents/package.json?ref=')) {
         return new Response(JSON.stringify({
           content: Buffer.from(JSON.stringify({ dependencies: { vite: '^6.0.0' }, scripts: { build: 'vite build' } })).toString('base64'),
         }), { status: 200 });
@@ -106,7 +106,7 @@ test('public repository deployments do not require a GitHub App installation tok
       calls.push({ url, authorization: options.headers.Authorization });
       assert.equal(options.headers.Authorization, undefined);
       if (url.endsWith('/commits/main')) return new Response(JSON.stringify({ sha: 'b'.repeat(40) }), { status: 200 });
-      if (url.includes('/contents/?ref=main')) {
+      if (url.includes('/contents/?ref=')) {
         return new Response(JSON.stringify([{ name: 'index.html', type: 'file' }]), { status: 200 });
       }
       throw new Error('Unexpected GitHub URL: ' + url);
@@ -198,10 +198,10 @@ test('manual deployment refuses Netlify when project secrets cannot be synchroni
     fetchImpl: async (url, options) => {
       calls.push(url);
       if (url.endsWith('/commits/main')) return new Response(JSON.stringify({ sha: 'c'.repeat(40) }), { status: 200 });
-      if (url.includes('/contents/?ref=main')) {
+      if (url.includes('/contents/?ref=')) {
         return new Response(JSON.stringify([{ name: 'package.json', type: 'file' }]), { status: 200 });
       }
-      if (url.includes('/contents/package.json?ref=main')) {
+      if (url.includes('/contents/package.json?ref=')) {
         return new Response(JSON.stringify({
           content: Buffer.from(JSON.stringify({ dependencies: { astro: '^5.0.0' }, scripts: { build: 'astro build' } })).toString('base64'),
         }), { status: 200 });
