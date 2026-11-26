@@ -31,8 +31,8 @@ if (isProduction) {
   if (process.env.KESTREL_WORKER_TOKEN && process.env.KESTREL_WORKER_TOKEN.length < 16) {
     errors.push('KESTREL_WORKER_TOKEN must be at least 16 characters in production');
   }
-  if (!process.env.KESTREL_ENCRYPTION_KEY) {
-    warnings.push('KESTREL_ENCRYPTION_KEY is unset; using default derived encryption key');
+  if (typeof process.env.KESTREL_ENCRYPTION_KEY !== 'string' || process.env.KESTREL_ENCRYPTION_KEY.length < 32) {
+    errors.push('KESTREL_ENCRYPTION_KEY must be configured with at least 32 characters in production');
   }
   if (process.env.DB_SSL === 'disable') {
     warnings.push('DB_SSL is disabled');
