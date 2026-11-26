@@ -71,7 +71,18 @@ async function ensureProject({ apiToken, accountId, projectName: name, repositor
         source.repo_name?.toLowerCase() !== parseRepository(repositoryUrl).repo.toLowerCase()) {
       throw new Error('Cloudflare Pages project name is already linked to another repository');
     }
-    return existing;
+    const vars = envVars(env);
+    const currentConfigs = existing.deployment_configs || {};
+    const update = {
+      build_config: buildConfig({ buildCommand, destinationDir, rootDir }),
+      ...(Object.keys(vars).length ? {
+        deployment_configs: {
+          production: { env_vars: { ...(currentConfigs.production?.env_vars || {}), ...vars } },
+          preview: { env_vars: { ...(currentConfigs.preview?.env_vars || {}), ...vars } },
+        },
+      } : {}),
+    };
+    return request(apiToken, path, { method: 'PATCH', fetchImpl, body: update });
   } catch (error) {
     if (error.status !== 404) throw error;
   }
