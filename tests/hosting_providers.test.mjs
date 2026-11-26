@@ -136,3 +136,55 @@ test('keeps Next.js and Nuxt server projects out of static-only classification',
   assert.equal(nuxt.isStatic, false);
   assert.equal(nuxt.needsPersistentProcess, true);
 });
+
+
+test('detects a broad set of languages, frameworks and build systems in mixed repositories', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const profile = detectProjectProfile({
+    files: [
+      'apps/web/package.json', 'apps/web/tsconfig.json', 'apps/web/pnpm-lock.yaml',
+      'services/api/pyproject.toml', 'services/worker/go.mod', 'crates/core/Cargo.toml',
+      'services/payments/composer.json', 'services/legacy/Gemfile',
+      'services/auth/pom.xml', 'services/desktop/App.csproj',
+      'mobile/pubspec.yaml', 'mobile/lib/main.dart', 'native/Package.swift',
+      'contracts/foundry.toml', 'native/CMakeLists.txt', 'native/src/main.cpp',
+      'scripts/deploy.sh', 'Dockerfile',
+    ],
+    packageJson: {
+      packageManager: 'pnpm@10.0.0',
+      dependencies: { next: '^15.0.0', react: '^19.0.0' },
+      scripts: { build: 'next build', start: 'next start' },
+    },
+  });
+  for (const language of ['javascript','typescript','python','go','rust','php','ruby','java','dotnet','dart','swift','solidity','cpp','shell','docker']) {
+    assert.ok(profile.languages.includes(language), 'expected ' + language + ' to be detected');
+  }
+  assert.equal(profile.framework, 'nextjs');
+  assert.equal(profile.packageManager, 'pnpm');
+  assert.ok(profile.buildSystems.includes('cargo'));
+  assert.equal(profile.needsContainer, true);
+  assert.equal(profile.detectionStatus, 'detected');
+});
+
+test('detects individual language source files even without root manifests', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const cases = [
+    ['src/main.py', 'python'], ['cmd/api/main.go', 'go'], ['src/lib.rs', 'rust'],
+    ['src/index.php', 'php'], ['lib/app.rb', 'ruby'], ['src/Main.java', 'java'],
+    ['src/Program.cs', 'dotnet'], ['Sources/App.swift', 'swift'], ['lib/main.dart', 'dart'],
+    ['src/main.zig', 'zig'], ['src/main.hs', 'haskell'], ['src/main.ex', 'elixir'],
+    ['src/main.lua', 'lua'], ['src/main.sol', 'solidity'],
+  ];
+  for (const [file, language] of cases) {
+    const profile = detectProjectProfile({ files: [file] });
+    assert.ok(profile.languages.includes(language), file + ' should detect ' + language);
+  }
+});
+
+test('reports unknown projects explicitly instead of guessing a language', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const profile = detectProjectProfile({ files: ['README.md', 'LICENSE'] });
+  assert.equal(profile.runtime, 'unknown');
+  assert.deepEqual(profile.languages, []);
+  assert.equal(profile.detectionStatus, 'unknown');
+});
