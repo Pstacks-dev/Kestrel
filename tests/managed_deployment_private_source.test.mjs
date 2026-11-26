@@ -215,3 +215,49 @@ test('manual deployment refuses Netlify when project secrets cannot be synchroni
   assert.equal(artifactLookup, false);
   assert.equal(calls.length, 3);
 });
+
+
+test('manual deployment inspects the configured monorepo context at the resolved commit', async () => {
+  const commitSha = 'f'.repeat(40);
+  const calls = [];
+  const configuredProject = {
+    ...project(null),
+    repository_url: 'https://github.com/acme/monorepo',
+    oci_build_context: 'apps/web',
+  };
+  const run = registerRoute({
+    project: configuredProject,
+    query: async (sql) => {
+      if (/from public\.projects p/i.test(sql)) return { rowCount: 1, rows: [configuredProject] };
+      if (/from public\.project_secrets/i.test(sql)) return { rowCount: 0, rows: [] };
+      if (/from public\.hosting_provider_connections/i.test(sql)) return { rowCount: 0, rows: [] };
+      throw new Error('Unexpected query: ' + sql);
+    },
+    createInstallationToken: async () => { assert.fail('Public repository must not mint an installation token'); },
+    fetchImpl: async (url, options) => {
+      calls.push(url);
+      if (url.endsWith('/commits/main')) return new Response(JSON.stringify({ sha: commitSha }), { status: 200 });
+      if (url.includes('/contents/apps/web?ref=')) {
+        return new Response(JSON.stringify([
+          { name: 'Dockerfile', type: 'file' },
+          { name: 'package.json', type: 'file' },
+        ]), { status: 200 });
+      }
+      if (url.includes('/contents/apps/web/package.json?ref=')) {
+        return new Response(JSON.stringify({
+          content: Buffer.from(JSON.stringify({
+            dependencies: { next: '^15.0.0' },
+            scripts: { build: 'next build', start: 'next start' },
+          })).toString('base64'),
+        }), { status: 200 });
+      }
+      throw new Error('Unexpected GitHub URL: ' + url);
+    },
+  });
+  const response = await run();
+  assert.equal(response.statusCode, 409);
+  assert.match(response.body.error, /No verified compatible managed provider/);
+  assert.equal(calls.length, 3);
+  assert.ok(calls[1].includes(`/contents/apps/web?ref=${commitSha}`));
+  assert.ok(calls[2].includes(`/contents/apps/web/package.json?ref=${commitSha}`));
+});
