@@ -35,14 +35,30 @@ export function parseGitHubRepository(value) {
   } catch { return null; }
 }
 
-export async function inspectGitHubSource(repository, commitSha, fetchImpl = fetch, token = null) {
+function normalizeGitHubBuildContext(value) {
+  const context = String(value || '.');
+  if (context === '.') return '';
+  if (context.startsWith('/') || context.includes('\\') || context.includes('\\0')) {
+    throw new Error('Project build context must be a repository-relative path');
+  }
+  const segments = context.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw new Error('Project build context contains an unsafe path segment');
+  }
+  return segments.map(encodeURIComponent).join('/');
+}
+
+export async function inspectGitHubSource(repository, commitSha, fetchImpl = fetch, token = null, buildContext = '.') {
   const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`;
-  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(commitSha)}`, fetchImpl, token);
-  if (!Array.isArray(root)) throw new Error('GitHub repository root could not be inspected');
+  const contextPath = normalizeGitHubBuildContext(buildContext);
+  const contentsPath = contextPath ? `contents/${contextPath}` : 'contents/';
+  const root = await githubJson(`${base}/${contentsPath}?ref=${encodeURIComponent(commitSha)}`, fetchImpl, token);
+  if (!Array.isArray(root)) throw new Error('GitHub project build context could not be inspected');
   const files = root.filter((item) => item.type === 'file').map((item) => item.name);
   let packageJson = null;
   if (files.some((name) => name.toLowerCase() === 'package.json')) {
-    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(commitSha)}`, fetchImpl, token);
+    const packagePath = contextPath ? `contents/${contextPath}/package.json` : 'contents/package.json';
+    const file = await githubJson(`${base}/${packagePath}?ref=${encodeURIComponent(commitSha)}`, fetchImpl, token);
     try { packageJson = JSON.parse(Buffer.from(file.content || '', 'base64').toString('utf8')); }
     catch { throw new Error('Repository package.json is invalid'); }
   }
@@ -130,7 +146,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       sourceToken = issued.token;
     }
 
-    const profile = await inspectGitHubSource(repository, run.commit_sha, fetchImpl, sourceToken);
+    const profile = await inspectGitHubSource(repository, run.commit_sha, fetchImpl, sourceToken, run.oci_build_context || '.');
     const compatible = rankHostingProviders(profile, {});
     const connections = await query(
       `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag
