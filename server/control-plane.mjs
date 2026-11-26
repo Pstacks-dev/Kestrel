@@ -698,7 +698,7 @@ app.patch('/api/projects/:projectId/build-settings', userAuth, async (req, res) 
       return res.status(403).json({ error: 'Developer access required to change build settings' });
     }
     await query(
-      'update public.projects set oci_build_context = $2, updated_at = now() where id = $1',
+      'update public.projects set oci_build_context = $2 where id = $1',
       [req.params.projectId, buildContext],
     );
     await query(
