@@ -112,3 +112,51 @@ test('syncs encrypted Kestrel project secrets to Vercel before deployment', asyn
   assert.equal(calls.length, 2);
   assert.equal(result.deploymentId, 'dpl-env');
 });
+
+
+test('configures a Vercel project root directory for a nested monorepo service', async () => {
+  const calls = [];
+  const result = await deployVercelProject({
+    token: 'vercel-token',
+    projectId: 'prj-monorepo',
+    projectName: 'api',
+    repositoryUrl: 'https://github.com/acme/monorepo',
+    branch: 'main',
+    commitSha: 'd'.repeat(40),
+    profile: { framework: 'nextjs', rootDir: 'apps/api' },
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (options.method === 'PATCH') return response({ id: 'prj-monorepo', rootDirectory: 'apps/api' });
+      return response({ id: 'dpl-monorepo', readyState: 'BUILDING' });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url.includes('/v9/projects/prj-monorepo'), true);
+  assert.equal(calls[0].options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { rootDirectory: 'apps/api' });
+  assert.equal(JSON.parse(calls[1].options.body).gitSource.sha, 'd'.repeat(40));
+  assert.equal(result.deploymentId, 'dpl-monorepo');
+});
+
+test('clears a previous Vercel monorepo root directory when deploying from repository root', async () => {
+  const calls = [];
+  await deployVercelProject({
+    token: 'vercel-token',
+    projectId: 'prj-monorepo',
+    projectName: 'api',
+    repositoryUrl: 'https://github.com/acme/monorepo',
+    branch: 'main',
+    commitSha: 'e'.repeat(40),
+    profile: { rootDir: '.' },
+  }, {
+    fetchImpl: async (_url, options) => {
+      calls.push(options);
+      return response(options.method === 'PATCH'
+        ? { id: 'prj-monorepo', rootDirectory: null }
+        : { id: 'dpl-root', readyState: 'BUILDING' });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(JSON.parse(calls[0].body), { rootDirectory: null });
+});
