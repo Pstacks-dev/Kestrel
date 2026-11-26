@@ -249,7 +249,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       files,
       buildCommand: 'npm run build',
       destinationDir: profile.outputDirectory || 'dist',
-      rootDir: profile.rootDir && profile.rootDir !== '.' ? `/${profile.rootDir.replace(/^\/+/, '')}` : '/',
+      rootDir: profile.rootDir && profile.rootDir !== '.' ? '/' + profile.rootDir.replace(/^\/+/, '') : '/',
       managedEnvKeys: Array.isArray(resource?.metadata?.managedEnvKeys) ? resource.metadata.managedEnvKeys : [],
     };
     const providerDeployment = resource
