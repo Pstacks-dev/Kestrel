@@ -122,7 +122,8 @@ test('detects nested Dockerfiles and Java build manifests', async () => {
   assert.equal(docker.needsContainer, true);
   const java = detectProjectProfile({ files: ['pom.xml'] });
   assert.equal(java.runtime, 'java');
-  assert.equal(java.needsPersistentProcess, true);
+  assert.equal(java.kind, 'unknown');
+  assert.equal(java.needsPersistentProcess, false);
 });
 
 test('keeps Next.js and Nuxt server projects out of static-only classification', async () => {
@@ -161,4 +162,97 @@ test('does not invent a JavaScript build script when package.json has none', asy
   });
   assert.equal(profile.packageManager, 'pnpm');
   assert.equal(profile.buildCommand, undefined);
+});
+
+
+test('detects a broad set of languages, frameworks and build systems in mixed repositories', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const profile = detectProjectProfile({
+    files: [
+      'apps/web/package.json', 'apps/web/tsconfig.json', 'apps/web/pnpm-lock.yaml',
+      'services/api/pyproject.toml', 'services/worker/go.mod', 'crates/core/Cargo.toml',
+      'services/payments/composer.json', 'services/legacy/Gemfile',
+      'services/auth/pom.xml', 'services/desktop/App.csproj',
+      'mobile/pubspec.yaml', 'mobile/lib/main.dart', 'native/Package.swift',
+      'contracts/foundry.toml', 'native/CMakeLists.txt', 'native/src/main.cpp',
+      'scripts/deploy.sh', 'Dockerfile',
+    ],
+    packageJson: {
+      packageManager: 'pnpm@10.0.0',
+      dependencies: { next: '^15.0.0', react: '^19.0.0' },
+      scripts: { build: 'next build', start: 'next start' },
+    },
+  });
+  for (const language of ['javascript','typescript','python','go','rust','php','ruby','java','dotnet','dart','swift','solidity','cpp','shell','docker']) {
+    assert.ok(profile.languages.includes(language), 'expected ' + language + ' to be detected');
+  }
+  assert.equal(profile.framework, 'nextjs');
+  assert.equal(profile.packageManager, 'pnpm');
+  assert.ok(profile.buildSystems.includes('cargo'));
+  assert.equal(profile.needsContainer, true);
+  assert.equal(profile.detectionStatus, 'detected');
+});
+
+test('detects individual language source files even without root manifests', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const cases = [
+    ['src/main.py', 'python'], ['cmd/api/main.go', 'go'], ['src/lib.rs', 'rust'],
+    ['src/index.php', 'php'], ['lib/app.rb', 'ruby'], ['src/Main.java', 'java'],
+    ['src/Program.cs', 'dotnet'], ['Sources/App.swift', 'swift'], ['lib/main.dart', 'dart'],
+    ['src/main.zig', 'zig'], ['src/main.hs', 'haskell'], ['src/main.ex', 'elixir'],
+    ['src/main.lua', 'lua'], ['src/main.sol', 'solidity'],
+  ];
+  for (const [file, language] of cases) {
+    const profile = detectProjectProfile({ files: [file] });
+    assert.ok(profile.languages.includes(language), file + ' should detect ' + language);
+  }
+});
+
+test('does not classify language-only source repositories as deployable web services', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  for (const file of ['src/main.py', 'cmd/main.go', 'src/lib.rs', 'src/Main.java', 'src/Program.cs']) {
+    const profile = detectProjectProfile({ files: [file] });
+    assert.equal(profile.kind, 'unknown', file);
+    assert.equal(profile.needsPersistentProcess, false, file);
+    assert.deepEqual(rankHostingProviders(profile, {}), [], file);
+  }
+  const django = detectProjectProfile({ files: ['requirements.txt', 'manage.py'] });
+  assert.equal(django.kind, 'web');
+  assert.equal(django.needsPersistentProcess, true);
+  const docker = detectProjectProfile({ files: ['Dockerfile', 'src/main.py'] });
+  assert.equal(docker.kind, 'web');
+  assert.equal(docker.needsContainer, true);
+});
+
+test('reports unknown projects explicitly instead of guessing a language', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const profile = detectProjectProfile({ files: ['README.md', 'LICENSE'] });
+  assert.equal(profile.runtime, 'unknown');
+  assert.deepEqual(profile.languages, []);
+  assert.equal(profile.detectionStatus, 'unknown');
+});
+
+
+test('does not recommend source-build providers for unsupported detected languages', () => {
+  for (const runtime of ['swift', 'dart', 'elixir', 'erlang', 'haskell', 'ocaml', 'perl', 'r', 'julia', 'lua', 'solidity', 'cpp', 'c', 'zig']) {
+    assert.deepEqual(rankHostingProviders({ runtime, needsPersistentProcess: true }, {}), [], runtime);
+  }
+  const java = rankHostingProviders({ runtime: 'java', needsPersistentProcess: true }, {}).map((provider) => provider.id);
+  assert.ok(java.includes('railway'));
+  assert.ok(java.includes('digitalocean-app-platform'));
+  assert.ok(!java.includes('render'));
+  assert.ok(!java.includes('vercel'));
+});
+
+test('allows unknown runtimes only when the repository supplies a container build contract', () => {
+  assert.deepEqual(rankHostingProviders({ runtime: 'unknown', needsPersistentProcess: true }, {}), []);
+  const container = rankHostingProviders({ runtime: 'unknown', needsContainer: true, needsPersistentProcess: true }, {}).map((provider) => provider.id);
+  assert.ok(container.includes('render'));
+  assert.ok(container.includes('railway'));
+  assert.ok(container.includes('flyio'));
+});
+
+test('keeps Node-built static projects eligible for Cloudflare Pages', () => {
+  const ids = rankHostingProviders({ runtime: 'node', isStatic: true }, {}).map((provider) => provider.id);
+  assert.ok(ids.includes('cloudflare-pages'));
 });
