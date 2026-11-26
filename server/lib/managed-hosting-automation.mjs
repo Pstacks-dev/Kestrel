@@ -249,7 +249,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       files,
       buildCommand: 'npm run build',
       destinationDir: profile.outputDirectory || 'dist',
-      rootDir: profile.rootDir && profile.rootDir !== '.' ? `/${profile.rootDir.replace(/^\\/+/, '')}` : '/',
+      rootDir: profile.rootDir && profile.rootDir !== '.' ? `/${profile.rootDir.replace(/^\/+/, '')}` : '/',
     };
     const providerDeployment = resource
       ? await deployManagedProviderService(selected.id, credentials, resource, run.commit_sha, { fetchImpl }, providerInput)
