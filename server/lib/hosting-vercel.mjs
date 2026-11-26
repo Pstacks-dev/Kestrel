@@ -154,7 +154,7 @@ export async function createVercelDeployment({ token, teamId = null, repositoryU
   const repo = repository(repositoryUrl);
   const nameSafe = projectName(name);
   const project = await createProject({ token, teamId, name: nameSafe, repositoryUrl, profile }, options);
-  const result = await deploy({ token, teamId, projectId: project.id, name: project.name, repo, branch, commitSha, profile, env }, options);
+  const result = await deploy({ token, teamId, projectId: project.id, name: project.name, repo, branch, commitSha, profile, env, managedEnvKeys }, options);
   return { ...result, projectId: project.id, serviceId: project.name, environmentId: null };
 }
 
