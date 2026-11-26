@@ -125,6 +125,7 @@ test('updates Cloudflare Pages monorepo settings and removes deleted secrets', a
     commitSha: 'f'.repeat(40),
     env: { DATABASE_URL: 'postgres://new-secret' },
     rootDir: 'apps/web',
+    managedEnvKeys: ['OLD_SECRET'],
     buildCommand: 'npm run build',
     destinationDir: 'dist',
   }, { fetchImpl: async (url, options) => {
@@ -142,13 +143,13 @@ test('updates Cloudflare Pages monorepo settings and removes deleted secrets', a
   } });
   assert.equal(calls.length, 3);
   const patch = JSON.parse(calls[1].options.body);
-  assert.equal(patch.build_config.root_dir, 'apps/web');
+  assert.equal(patch.build_config.root_dir, '/apps/web');
   assert.equal(patch.build_config.destination_dir, 'dist');
   assert.equal(patch.build_config.build_command, 'npm run build');
   assert.equal(patch.build_config.build_caching, true);
   assert.equal(patch.deployment_configs.production.env_vars.OLD_SECRET, null);
   assert.equal(patch.deployment_configs.preview.env_vars.OLD_SECRET, null);
-  assert.equal(patch.deployment_configs.production.env_vars.SHARED_SECRET, null);
+  assert.equal(patch.deployment_configs.production.env_vars.SHARED_SECRET.type, 'secret_text');
   assert.equal(patch.deployment_configs.production.env_vars.DATABASE_URL.type, 'secret_text');
 });
 
@@ -162,6 +163,7 @@ test('clears Cloudflare Pages secrets when the Kestrel project secret set become
     commitSha: '1'.repeat(40),
     env: {},
     rootDir: '/',
+    managedEnvKeys: ['DATABASE_URL'],
   }, { fetchImpl: async (_url, options) => {
     if (options.method === 'GET') return response({
       name: 'kestrel-demo',
