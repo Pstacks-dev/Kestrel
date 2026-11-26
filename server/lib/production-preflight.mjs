@@ -9,7 +9,7 @@ export function validateKestrelEnvironment(env = process.env, nodeVersion = proc
   }
 
   const databaseUrl = env.SUPABASE_DB_URL || env.DATABASE_URL;
-  if (!databaseUrl || /\\[PASSWORD\\]/i.test(databaseUrl)) {
+  if (!databaseUrl || /\[PASSWORD\]/i.test(databaseUrl)) {
     errors.push('SUPABASE_DB_URL or DATABASE_URL is missing or contains placeholder values');
   } else {
     try {
