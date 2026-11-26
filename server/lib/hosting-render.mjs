@@ -58,8 +58,8 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
   const serviceType = isStatic ? 'static_site' : 'web_service';
   const renderBuildCommand = String(buildCommand || 'npm install && npm run build').trim();
   if (!renderBuildCommand || renderBuildCommand.length > 2000) throw new Error('Invalid Render build command');
-  const publishPath = String(destinationDir || profile.outputDirectory || 'dist').replace(/^\\/+|\\/+$/g, '');
-  if (!publishPath || publishPath.length > 500 || publishPath.split('/').some((part) => !part || part === '.' || part === '..')) {
+  const publishPath = String(destinationDir || profile.outputDirectory || 'dist');
+  if (!publishPath || publishPath.length > 500 || publishPath.startsWith('/') || publishPath.includes('\\') || publishPath.includes('\0') || publishPath.split('/').some((part) => !part || part === '.' || part === '..')) {
     throw new Error('Invalid Render static publish directory');
   }
   const details = isStatic
