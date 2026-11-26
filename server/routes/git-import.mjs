@@ -16,6 +16,10 @@ export function parseGitHubRepository(input) {
   } catch { return null; }
 }
 
+export function isValidGitHubInstallationId(value) {
+  return typeof value === 'string' && /^\d+$/.test(value);
+}
+
 export function registerGitImportRoutes(app, { userAuth, query, transaction, fetchImpl = fetch }) {
   app.post('/api/git/import', userAuth, async (req, res) => {
     const organizationId = String(req.body?.organizationId || '');
@@ -24,7 +28,7 @@ export function registerGitImportRoutes(app, { userAuth, query, transaction, fet
     if (!organizationId) return res.status(400).json({ error: 'Workspace is required' });
     if (!repository) return res.status(400).json({ error: 'Enter a valid GitHub repository URL' });
     const installationId = req.body?.installationId ? String(req.body.installationId) : null;
-    if (installationId && !/^\\d+$/.test(installationId)) return res.status(400).json({ error: 'Invalid GitHub App installation' });
+    if (installationId && !isValidGitHubInstallationId(installationId)) return res.status(400).json({ error: 'Invalid GitHub App installation' });
     if (name.length > 120) return res.status(400).json({ error: 'Project name must be 120 characters or fewer' });
 
     try {
