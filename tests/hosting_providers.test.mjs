@@ -122,7 +122,8 @@ test('detects nested Dockerfiles and Java build manifests', async () => {
   assert.equal(docker.needsContainer, true);
   const java = detectProjectProfile({ files: ['pom.xml'] });
   assert.equal(java.runtime, 'java');
-  assert.equal(java.needsPersistentProcess, true);
+  assert.equal(java.kind, 'unknown');
+  assert.equal(java.needsPersistentProcess, false);
 });
 
 test('keeps Next.js and Nuxt server projects out of static-only classification', async () => {
@@ -205,6 +206,22 @@ test('detects individual language source files even without root manifests', asy
     const profile = detectProjectProfile({ files: [file] });
     assert.ok(profile.languages.includes(language), file + ' should detect ' + language);
   }
+});
+
+test('does not classify language-only source repositories as deployable web services', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  for (const file of ['src/main.py', 'cmd/main.go', 'src/lib.rs', 'src/Main.java', 'src/Program.cs']) {
+    const profile = detectProjectProfile({ files: [file] });
+    assert.equal(profile.kind, 'unknown', file);
+    assert.equal(profile.needsPersistentProcess, false, file);
+    assert.deepEqual(rankHostingProviders(profile, {}), [], file);
+  }
+  const django = detectProjectProfile({ files: ['requirements.txt', 'manage.py'] });
+  assert.equal(django.kind, 'web');
+  assert.equal(django.needsPersistentProcess, true);
+  const docker = detectProjectProfile({ files: ['Dockerfile', 'src/main.py'] });
+  assert.equal(docker.kind, 'web');
+  assert.equal(docker.needsContainer, true);
 });
 
 test('reports unknown projects explicitly instead of guessing a language', async () => {
