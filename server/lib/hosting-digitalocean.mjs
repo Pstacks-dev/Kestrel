@@ -51,12 +51,18 @@ function safeName(value) {
   return result || 'kestrel-app';
 }
 
-export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {} }, { fetchImpl = fetch } = {}) {
+export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir }, { fetchImpl = fetch } = {}) {
   if (!accessToken) throw new Error('DigitalOcean access token is required');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) throw new Error('Invalid deployment branch');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
   const repo = repositoryPath(repositoryUrl);
   const isStatic = profile.isStatic === true;
+  const resolvedBuildCommand = String(buildCommand || 'npm install && npm run build').trim();
+  if (!resolvedBuildCommand || resolvedBuildCommand.length > 2000) throw new Error('Invalid DigitalOcean build command');
+  const outputDirectory = String(destinationDir || profile.outputDirectory || 'dist');
+  if (!outputDirectory || outputDirectory.length > 500 || outputDirectory.startsWith('/') || outputDirectory.includes('\\') || outputDirectory.includes('\0') || outputDirectory.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid DigitalOcean static output directory');
+  }
   const component = {
     name: safeName(projectName),
     envs: digitalOceanEnv(env, isStatic ? 'BUILD_TIME' : 'RUN_AND_BUILD_TIME'),
@@ -64,10 +70,10 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
     source_dir: '/',
   };
   if (isStatic) {
-    component.build_command = 'npm install && npm run build';
-    component.output_dir = profile.framework === 'create-react-app' ? 'build' : 'dist';
+    component.build_command = resolvedBuildCommand;
+    component.output_dir = outputDirectory;
   } else {
-    component.build_command = 'npm install && npm run build';
+    component.build_command = resolvedBuildCommand;
     component.run_command = 'npm start';
     component.environment_slug = ({ node: 'node-js', python: 'python', ruby: 'ruby', go: 'go' })[profile.runtime] || 'node-js';
     component.routes = [{ path: '/' }];
