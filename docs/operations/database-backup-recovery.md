@@ -46,7 +46,7 @@ and can also be started manually from GitHub Actions. It:
    uploaded file.
 5. Decrypts the downloaded archive and runs `pg_restore --list` to validate
    archive structure and the GCM authentication tag.
-6. If `KESTREL_RESTORE_DATABASE_URL` is configured, restores the archive into
+6. On Sundays, if `KESTREL_RESTORE_DATABASE_URL` is configured, restores the archive into
    that separate staging database and checks for the `projects`,
    `organizations`, `jobs`, and `managed_hosting_deployments` tables.
 
