@@ -50,15 +50,21 @@ async function syncRenderEnvironment(apiKey, serviceId, env = {}, fetchImpl = fe
   });
 }
 
-export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {} }, { fetchImpl = fetch } = {}) {
+export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir }, { fetchImpl = fetch } = {}) {
   if (!apiKey || !ownerId) throw new Error('Render API key and workspace owner ID are required');
   validate({ branch, commitSha });
   const repo = repoPath(repositoryUrl);
   const isStatic = profile.isStatic === true;
   const serviceType = isStatic ? 'static_site' : 'web_service';
+  const renderBuildCommand = String(buildCommand || 'npm install && npm run build').trim();
+  if (!renderBuildCommand || renderBuildCommand.length > 2000) throw new Error('Invalid Render build command');
+  const publishPath = String(destinationDir || profile.outputDirectory || 'dist').replace(/^\\/+|\\/+$/g, '');
+  if (!publishPath || publishPath.length > 500 || publishPath.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid Render static publish directory');
+  }
   const details = isStatic
-    ? { buildCommand: 'npm install && npm run build', publishPath: 'dist' }
-    : { env: profile.runtime === 'python' ? 'python' : profile.runtime === 'ruby' ? 'ruby' : profile.runtime === 'go' ? 'go' : 'node', plan: 'starter', buildCommand: 'npm install && npm run build', startCommand: 'npm start' };
+    ? { buildCommand: renderBuildCommand, publishPath }
+    : { env: profile.runtime === 'python' ? 'python' : profile.runtime === 'ruby' ? 'ruby' : profile.runtime === 'go' ? 'go' : 'node', plan: 'starter', buildCommand: renderBuildCommand, startCommand: 'npm start' };
   const created = await request(apiKey, '/services', {
     method: 'POST', fetchImpl,
     body: { type: serviceType, name: String(projectName || 'kestrel-app').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60), ownerId, repo, branch, autoDeployTrigger: 'off', serviceDetails: details },
