@@ -43,6 +43,7 @@ export function rankHostingProviders(profileInput, env = process.env) {
     const runtime = ['javascript', 'typescript'].includes(profile.runtime) ? 'node' : profile.runtime;
     const supportsRuntime = provider.runtimes.includes(runtime) ||
       (provider.id === 'cloudflare-pages' && profile.isStatic && runtime === 'node');
+    if (profile.kind === 'unknown' && !profile.needsContainer) return null;
     // Do not recommend a source-build provider for a language it cannot build.
     // A Dockerfile is an explicit user-supplied runtime contract, so compatible
     // container providers may build languages absent from their native runtimes.
