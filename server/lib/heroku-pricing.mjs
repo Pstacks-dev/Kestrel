@@ -22,6 +22,9 @@ export function estimateHerokuDynoCost(dynoSize, quantity) {
   if (!Number.isInteger(count) || count < 1 || count > 10) {
     throw Object.assign(new Error('Heroku web dyno quantity must be between 1 and 10'), { status: 422 });
   }
+  if (String(dynoSize).toLowerCase() === 'basic' && count !== 1) {
+    throw Object.assign(new Error('Heroku Basic supports only one web dyno; choose Standard or higher to scale horizontally'), { status: 422 });
+  }
   return {
     dynoSize: String(dynoSize).toLowerCase(),
     dynoQuantity: count,
