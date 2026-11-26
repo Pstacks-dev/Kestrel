@@ -145,3 +145,53 @@ test('marks deployments failed when readiness reconciliation exhausts attempts a
   assert.match(updates[0].sql, /health_status = case when health_attempt_count \+ 1 >= \$2 then 'unhealthy' else 'checking' end/i);
   assert.equal(updates[0].params[1], 5);
 });
+
+
+test('applies an approved Heroku dyno formation only after a successful build, then verifies live health', async () => {
+  const updates = [];
+  const calls = [];
+  const encrypted = encryptSecret(JSON.stringify({ apiKey: 'heroku-test-key' }));
+  let formation = [{ type: 'web', quantity: 1, dyno_size: { name: 'basic' } }];
+  const result = await reconcileManagedDeploymentReadiness({
+    query: async (sql, params) => {
+      if (/with candidates as/i.test(sql)) {
+        assert.match(sql, /for update skip locked/i);
+        return { rowCount: 1, rows: [{
+          id: 'deployment-heroku', provider_id: 'heroku', provider_deployment_id: 'build-1',
+          provider_url: 'https://demo.herokuapp.com/', health_attempt_count: 0,
+          health_claimed_at: new Date('2026-11-25T10:00:00.000Z'),
+          credentials_ciphertext: encrypted.encryptedValue, credentials_iv: encrypted.iv, credentials_auth_tag: encrypted.authTag,
+          provider_service_id: 'demo-app', provider_project_id: 'app-1',
+          metadata: { herokuDynoSize: 'standard-1x', herokuDynoQuantity: 2 },
+        }] };
+      }
+      updates.push({ sql, params });
+      return { rowCount: 1, rows: [] };
+    },
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET' });
+      if (url.endsWith('/apps/app-1/builds/build-1')) {
+        return new Response(JSON.stringify({ id: 'build-1', status: 'succeeded', release: { id: 'release-1' } }), { status: 200 });
+      }
+      if (url.endsWith('/apps/app-1/formation')) {
+        return new Response(JSON.stringify(formation), { status: 200 });
+      }
+      if (url.endsWith('/apps/app-1/formation/web') && options.method === 'PATCH') {
+        const body = JSON.parse(options.body);
+        formation = [{ type: 'web', quantity: body.quantity, dyno_size: { name: body.dyno_size.name } }];
+        return new Response(JSON.stringify(formation), { status: 200 });
+      }
+      if (url.endsWith('/apps/app-1')) {
+        return new Response(JSON.stringify({ id: 'app-1', status: 'active', web_url: 'https://demo.herokuapp.com/' }), { status: 200 });
+      }
+      if (url === 'https://demo.herokuapp.com/') return new Response(null, { status: 200 });
+      throw new Error('Unexpected Heroku readiness URL: ' + url);
+    },
+    logger: { warn() {} },
+  }, 5);
+  assert.deepEqual(result, { checked: 1, healthy: 1, unhealthy: 0, pending: 0 });
+  assert.ok(calls.some((call) => call.url.endsWith('/apps/app-1/formation/web') && call.method === 'PATCH'));
+  assert.ok(calls.some((call) => call.url === 'https://demo.herokuapp.com/' && call.method === 'HEAD'));
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].params[3], 'healthy');
+});

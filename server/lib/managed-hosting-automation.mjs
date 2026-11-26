@@ -2,7 +2,7 @@ import { encryptSecret, decryptSecret, redactSecrets } from './security.mjs';
 import { provisionProviderImageRegistry } from './oci-registries.mjs';
 import { detectProjectProfile, rankHostingProviders } from './hosting-providers.mjs';
 import {
-  ACTIVE_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
+  AUTOMATIC_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
 } from './hosting-managed-adapters.mjs';
 import { loadStaticArtifactFiles } from '../routes/managed-deployments.mjs';
 import { createGitHubInstallationToken } from './github-app.mjs';
@@ -167,7 +167,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       : { rows: [] };
     const env = await loadProjectEnvironment(query, run.project_id);
     const selected = compatible.find((provider) =>
-      ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
+      AUTOMATIC_MANAGED_PROVIDERS.includes(provider.id) &&
       verified.has(provider.id) &&
       (provider.id !== 'netlify' || (artifacts.rows.length > 0 && Object.keys(env).length === 0)));
     if (!selected) {

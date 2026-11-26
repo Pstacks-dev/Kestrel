@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { decryptSecret, redactSecrets } from './security.mjs';
 import { getManagedProviderDeployment } from './hosting-managed-adapters.mjs';
+import { configureHerokuFormation } from './hosting-heroku.mjs';
 
 const MAX_HEALTH_ATTEMPTS = 5;
 const PROVIDER_HOST_SUFFIXES = {
@@ -89,7 +90,7 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
        where d.id = candidates.id
        returning d.*
      )
-     select claimed.*, r.provider_project_id, r.provider_service_id, r.provider_environment_id,
+     select claimed.*, r.provider_project_id, r.provider_service_id, r.provider_environment_id, r.metadata,
             c.credentials_ciphertext, c.credentials_iv, c.credentials_auth_tag
      from claimed
      join public.managed_hosting_resources r on r.id = claimed.resource_id
@@ -106,9 +107,23 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
     try {
       const credentials = JSON.parse(decryptSecret(row.credentials_ciphertext, row.credentials_iv, row.credentials_auth_tag));
       secrets.push(...Object.values(credentials).filter((value) => typeof value === 'string' && value.length > 3));
-      const current = await getManagedProviderDeployment(
+      let current = await getManagedProviderDeployment(
         row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl },
       );
+      // Heroku creates the build before its web process formation is available.
+      // Apply the workspace-admin-approved size and quantity only after the
+      // provider reports a successful build, then re-read provider state.
+      if (row.provider_id === 'heroku' && current.providerStatus === 'succeeded') {
+        await configureHerokuFormation({
+          apiKey: credentials.apiKey,
+          appId: row.provider_project_id,
+          dynoSize: row.metadata?.herokuDynoSize || 'basic',
+          dynoQuantity: Number(row.metadata?.herokuDynoQuantity || 1),
+        }, { fetchImpl });
+        current = await getManagedProviderDeployment(
+          row.provider_id, credentials, row, row.provider_deployment_id, { fetchImpl },
+        );
+      }
       const status = normalizeProviderDeploymentStatus(current.status);
       let healthStatus = 'pending';
       let healthError = null;

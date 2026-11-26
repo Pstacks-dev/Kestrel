@@ -29,7 +29,8 @@ import {
   createRailwayDeployment, deployRailwayService, getRailwayDeployment, getRailwayDeploymentLogs, rollbackRailwayDeployment,
 } from './hosting-railway.mjs';
 
-export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'netlify', 'cloudflare-pages', 'flyio', 'google-cloud-run', 'aws-ecs-express'];
+export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'heroku', 'netlify', 'cloudflare-pages', 'flyio', 'google-cloud-run', 'aws-ecs-express'];
+export const AUTOMATIC_MANAGED_PROVIDERS = Object.freeze(ACTIVE_MANAGED_PROVIDERS.filter((provider) => provider !== 'heroku'));
 
 export async function createManagedProviderDeployment(provider, credentials, input, options) {
   if (provider === 'render') return createRenderDeployment({ ...input, ...credentials }, options);
@@ -50,7 +51,7 @@ export async function deployManagedProviderService(provider, credentials, resour
   if (provider === 'railway') return deployRailwayService({ ...credentials, projectId: resource.provider_project_id, serviceId: resource.provider_service_id, environmentId: resource.provider_environment_id, commitSha, env: context.env || {}, profile: context.profile || {} }, options);
   if (provider === 'digitalocean-app-platform') return deployDigitalOceanApp({ ...credentials, ...context, appId: resource.provider_project_id, commitSha, env: context.env || {} }, options);
   if (provider === 'vercel') return deployVercelProject({ ...credentials, projectId: resource.provider_project_id, projectName: resource.provider_service_id, commitSha, ...context }, options);
-  if (provider === 'heroku') return deployHerokuApp({ ...credentials, appId: resource.provider_project_id, commitSha, ...context }, options);
+  if (provider === 'heroku') return deployHerokuApp({ ...credentials, appId: resource.provider_project_id, commitSha, dynoSize: resource.metadata?.herokuDynoSize || 'basic', dynoQuantity: Number(resource.metadata?.herokuDynoQuantity || 1), ...context }, options);
   if (provider === 'flyio') return deployFlyApp({ ...credentials, appName: resource.provider_project_id, commitSha, ...context }, options);
   if (provider === 'google-cloud-run') return deployCloudRunService({ ...credentials, projectId: resource.provider_project_id, serviceName: resource.provider_service_id, region: resource.provider_environment_id, commitSha, ...context }, options);
   if (provider === 'aws-ecs-express') return updateEcsExpressDeployment({ ...credentials, serviceArn: resource.provider_project_id, ...context }, options);
@@ -64,7 +65,7 @@ export async function getManagedProviderDeployment(provider, credentials, resour
   if (provider === 'railway') return getRailwayDeployment({ ...credentials, deploymentId }, options);
   if (provider === 'digitalocean-app-platform') return getDigitalOceanDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'vercel') return getVercelDeployment({ ...credentials, deploymentId }, options);
-  if (provider === 'heroku') return getHerokuDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
+  if (provider === 'heroku') return getHerokuDeployment({ ...credentials, appId: resource.provider_project_id, deploymentId, dynoSize: resource.metadata?.herokuDynoSize || 'basic', dynoQuantity: Number(resource.metadata?.herokuDynoQuantity || 1) }, options);
   if (provider === 'flyio') return getFlyDeployment({ ...credentials, appName: resource.provider_project_id, deploymentId }, options);
   if (provider === 'google-cloud-run') return getCloudRunDeployment({ ...credentials, projectId: resource.provider_project_id, serviceName: resource.provider_service_id, region: resource.provider_environment_id, deploymentId }, options);
   if (provider === 'aws-ecs-express') return getEcsExpressDeployment({ ...credentials, serviceArn: resource.provider_project_id, deploymentId }, options);
