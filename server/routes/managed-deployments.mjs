@@ -458,10 +458,15 @@ export function registerManagedDeploymentRoutes(app, {
         const inserted = await client.query(
           `insert into public.managed_hosting_deployments
              (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
-              branch, commit_sha, status, rollback_of, created_by)
-           values($1,$2,$3,$10,$4,$5,$6,$7,$8,$9) returning *`,
+              branch, commit_sha, status, rollback_of, created_by,
+              heroku_dyno_size, heroku_dyno_quantity, estimated_monthly_cost_usd,
+              cost_approved_by, cost_approved_at, pricing_catalog_version)
+           values($1,$2,$3,$10,$4,$5,$6,$7,$8,$9,$11,$12,$13,$14,$15,$16) returning *`,
           [row.resource_id, row.organization_id, row.project_id, rollback.deploymentId,
-            row.branch, row.commit_sha, rollback.status, row.id, req.user.id, row.provider_id],
+            row.branch, row.commit_sha, rollback.status, row.id, req.user.id, row.provider_id,
+            row.heroku_dyno_size || null, row.heroku_dyno_quantity || null,
+            row.estimated_monthly_cost_usd || null, row.cost_approved_by || null,
+            row.cost_approved_at || null, row.pricing_catalog_version || null],
         );
         await client.query(
           `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
