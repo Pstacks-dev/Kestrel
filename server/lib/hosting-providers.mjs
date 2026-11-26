@@ -64,87 +64,105 @@ export function rankHostingProviders(profileInput, env = process.env) {
 }
 
 export function detectProjectProfile({ files = [], packageJson = null } = {}) {
-  // GitHub contents can be supplied as root names or nested paths. Detection
-  // uses basenames so Dockerfiles and manifests in common app subdirectories
-  // are not silently missed.
-  const names = new Set(files.map((file) => {
-    const value = String(typeof file === 'string' ? file : file.name || file.path || '');
-    return value.split('/').pop().toLowerCase();
-  }).filter(Boolean));
+  // Keep paths and basenames so nested apps and monorepos are detected.
+  const paths = files.map((file) => String(typeof file === 'string' ? file : file.name || file.path || ''))
+    .filter(Boolean).map((value) => value.replace(/\\/g, '/').toLowerCase());
+  const names = new Set(paths.map((value) => value.split('/').pop()));
+  const has = (...values) => values.some((value) => names.has(value.toLowerCase()));
+  const hasExtension = (...extensions) => paths.some((path) => extensions.some((extension) => path.endsWith(extension)));
   const pkg = packageJson && typeof packageJson === 'object' ? packageJson : {};
   const dependencies = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
   const scripts = pkg.scripts || {};
-  const has = (...values) => values.some((value) => names.has(value));
   const hasDependency = (...values) => values.some((value) => dependencies[value]);
+  const languages = new Set();
+  const detectedFrom = [];
+  const add = (language, source) => { languages.add(language); if (source && !detectedFrom.includes(source)) detectedFrom.push(source); };
+
+  if (has('package.json') || Object.keys(dependencies).length || hasExtension('.js', '.jsx', '.mjs', '.cjs')) {
+    add('javascript', 'package.json or JavaScript source');
+    if (hasExtension('.ts', '.tsx', '.mts', '.cts') || has('tsconfig.json')) add('typescript', 'TypeScript source or tsconfig.json');
+  }
+  if (has('requirements.txt', 'pyproject.toml', 'setup.py', 'setup.cfg', 'pipfile', 'poetry.lock', 'pdm.lock') || hasExtension('.py', '.pyi')) add('python', 'Python manifest or source');
+  if (has('go.mod', 'go.work') || hasExtension('.go')) add('go', 'Go module or source');
+  if (has('cargo.toml', 'rust-toolchain', 'rust-toolchain.toml') || hasExtension('.rs')) add('rust', 'Cargo manifest or Rust source');
+  if (has('composer.json', 'artisan') || hasExtension('.php')) add('php', 'Composer manifest or PHP source');
+  if (has('gemfile', 'gemfile.lock', 'rakefile') || hasExtension('.rb')) add('ruby', 'Ruby manifest or source');
+  if (has('pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'gradlew', 'mvnw') || hasExtension('.java')) add('java', 'Java build manifest or source');
+  if ([...names].some((name) => name.endsWith('.csproj') || name.endsWith('.sln') || name.endsWith('.fsproj') || name.endsWith('.vbproj')) || has('global.json') || hasExtension('.cs', '.fs', '.vb')) add('dotnet', '.NET project or source');
+  if (has('package.swift', 'swift.package') || hasExtension('.swift')) add('swift', 'Swift package or source');
+  if (has('pubspec.yaml') || hasExtension('.dart')) add('dart', 'Dart package or source');
+  if (has('mix.exs', 'mix.lock') || hasExtension('.ex', '.exs')) add('elixir', 'Elixir Mix project or source');
+  if (has('rebar.config', 'rebar.lock') || hasExtension('.erl', '.hrl')) add('erlang', 'Erlang project or source');
+  if (has('stack.yaml', 'cabal.project') || hasExtension('.hs', '.lhs')) add('haskell', 'Haskell project or source');
+  if (has('dune-project', 'opam') || hasExtension('.ml', '.mli')) add('ocaml', 'OCaml project or source');
+  if (has('cpanfile') || hasExtension('.pl', '.pm')) add('perl', 'Perl manifest or source');
+  if (has('renv.lock') || hasExtension('.r', '.rmd')) add('r', 'R project or source');
+  if (hasExtension('.jl')) add('julia', 'Julia source');
+  if (has('rockspec') || hasExtension('.lua')) add('lua', 'Lua source');
+  if (has('foundry.toml', 'hardhat.config.js', 'hardhat.config.ts') || hasExtension('.sol')) add('solidity', 'Solidity project or source');
+  if (has('cmakelists.txt', 'meson.build') || has('makefile') || hasExtension('.c', '.h')) add('c', 'C build manifest or source');
+  if (has('cmakelists.txt', 'meson.build') || hasExtension('.cc', '.cpp', '.cxx', '.hpp', '.hh', '.hxx')) add('cpp', 'C++ build manifest or source');
+  if (has('build.zig', 'zig.mod') || hasExtension('.zig')) add('zig', 'Zig project or source');
+  if (hasExtension('.sh', '.bash')) add('shell', 'Shell script');
+  if (has('dockerfile', 'containerfile')) add('docker', 'Dockerfile');
+
+  const framework = hasDependency('next') ? 'nextjs'
+    : hasDependency('nuxt') ? 'nuxt'
+      : hasDependency('@remix-run/react', '@remix-run/node', 'remix') ? 'remix'
+        : hasDependency('@sveltejs/kit') ? 'sveltekit'
+          : hasDependency('astro') ? 'astro'
+            : hasDependency('@angular/core') ? 'angular'
+              : hasDependency('gatsby') ? 'gatsby'
+                : hasDependency('react-scripts') ? 'create-react-app'
+                  : hasDependency('vue') ? 'vue'
+                    : hasDependency('svelte') ? 'svelte'
+                      : hasDependency('vite') ? 'vite' : null;
+  const staticOutputs = { astro: 'dist', angular: 'dist', gatsby: 'public', 'create-react-app': 'build', vue: 'dist', svelte: 'dist', vite: 'dist' };
+  const serverFrameworks = new Set(['nextjs', 'nuxt', 'remix', 'sveltekit']);
+  const primaryOrder = ['node', 'python', 'go', 'rust', 'php', 'ruby', 'java', 'dotnet', 'swift', 'dart', 'elixir', 'erlang', 'haskell', 'ocaml', 'perl', 'r', 'julia', 'lua', 'solidity', 'cpp', 'c', 'zig'];
+  const runtimeFor = (language) => language === 'javascript' || language === 'typescript' ? 'node' : language;
+  const detectedRuntimes = [...languages].filter((language) => language !== 'docker' && language !== 'shell').map(runtimeFor);
+  const runtime = primaryOrder.find((candidate) => detectedRuntimes.includes(candidate)) || 'unknown';
+  const hasDocker = languages.has('docker');
+  const isStatic = Boolean(framework && staticOutputs[framework] && !hasDocker);
+  const kind = isStatic ? 'static' : 'web';
+  const needsBackgroundWorker = Boolean(scripts.worker || scripts['start:worker']);
+  const needsPersistentProcess = hasDocker || (!isStatic && (
+    Boolean(scripts.start) || serverFrameworks.has(framework) ||
+    ['python', 'go', 'rust', 'php', 'ruby', 'java', 'dotnet', 'swift', 'dart'].some((language) => languages.has(language))
+  ));
+  const packageManagerName = String(pkg.packageManager || '').split('@')[0].toLowerCase();
+  const packageManager = ['npm', 'pnpm', 'yarn', 'bun'].includes(packageManagerName)
+    ? packageManagerName
+    : has('pnpm-lock.yaml') ? 'pnpm'
+      : has('yarn.lock') ? 'yarn'
+        : has('bun.lock', 'bun.lockb') ? 'bun' : has('package-lock.json') ? 'npm' : null;
+  const buildSystems = [];
+  if (has('package.json')) buildSystems.push('npm-compatible');
+  if (has('pyproject.toml', 'setup.py', 'requirements.txt')) buildSystems.push('python');
+  if (has('go.mod', 'go.work')) buildSystems.push('go');
+  if (has('cargo.toml')) buildSystems.push('cargo');
+  if (has('composer.json')) buildSystems.push('composer');
+  if (has('gemfile')) buildSystems.push('bundler');
+  if (has('pom.xml')) buildSystems.push('maven');
+  if (has('build.gradle', 'build.gradle.kts')) buildSystems.push('gradle');
+  if (has('cmakelists.txt')) buildSystems.push('cmake');
+  if (has('makefile')) buildSystems.push('make');
+  if (has('pubspec.yaml')) buildSystems.push('pub');
+  if (has('mix.exs')) buildSystems.push('mix');
+  if (has('package.swift')) buildSystems.push('swiftpm');
+  if (has('foundry.toml')) buildSystems.push('foundry');
+  if (has('hardhat.config.js', 'hardhat.config.ts')) buildSystems.push('hardhat');
+
   const profile = {
-    runtime: 'unknown', kind: 'web', isStatic: false, needsContainer: false,
-    needsPersistentProcess: false, needsBackgroundWorker: false, needsDatabase: false,
-    framework: null, outputDirectory: null, detectedFrom: [],
+    runtime, detectedRuntimes: [...new Set(detectedRuntimes)],
+    languages: [...languages].sort(), framework, frameworks: framework ? [framework] : [],
+    buildSystems, packageManager, kind, isStatic, needsContainer: hasDocker,
+    needsPersistentProcess, needsBackgroundWorker, needsDatabase: false,
+    outputDirectory: isStatic ? staticOutputs[framework] : null, detectedFrom,
+    unsupportedLanguages: [...languages].filter((language) => !['javascript', 'typescript', 'python', 'go', 'rust', 'php', 'ruby', 'java', 'dotnet', 'docker', 'shell'].includes(language)).sort(),
+    detectionStatus: languages.size ? 'detected' : 'unknown',
   };
-
-  if (has('dockerfile', 'containerfile')) {
-    profile.needsContainer = true;
-    profile.needsPersistentProcess = true;
-    profile.detectedFrom.push('Dockerfile');
-  }
-
-  if (Object.keys(dependencies).length || has('package.json')) {
-    profile.runtime = 'node';
-    profile.detectedFrom.push('package.json');
-
-    if (hasDependency('next')) profile.framework = 'nextjs';
-    else if (hasDependency('nuxt')) profile.framework = 'nuxt';
-    else if (hasDependency('@remix-run/react', '@remix-run/node', 'remix')) profile.framework = 'remix';
-    else if (hasDependency('@sveltejs/kit')) profile.framework = 'sveltekit';
-    else if (hasDependency('astro')) profile.framework = 'astro';
-    else if (hasDependency('@angular/core')) profile.framework = 'angular';
-    else if (hasDependency('gatsby')) profile.framework = 'gatsby';
-    else if (hasDependency('react-scripts')) profile.framework = 'create-react-app';
-    else if (hasDependency('vue')) profile.framework = 'vue';
-    else if (hasDependency('svelte')) profile.framework = 'svelte';
-    else if (hasDependency('vite')) profile.framework = 'vite';
-
-    const staticOutputs = {
-      astro: 'dist',
-      angular: 'dist',
-      gatsby: 'public',
-      'create-react-app': 'build',
-      vue: 'dist',
-      svelte: 'dist',
-      vite: 'dist',
-    };
-    const serverFrameworks = new Set(['nextjs', 'nuxt', 'remix', 'sveltekit']);
-    if (profile.framework && staticOutputs[profile.framework] && !profile.needsContainer) {
-      profile.isStatic = true;
-      profile.kind = 'static';
-      profile.outputDirectory = staticOutputs[profile.framework];
-    }
-    if (serverFrameworks.has(profile.framework)) {
-      profile.needsPersistentProcess = Boolean(scripts.start) || profile.needsContainer;
-    }
-    if (scripts.worker || scripts['start:worker']) profile.needsBackgroundWorker = true;
-    if (scripts.start && !profile.isStatic) profile.needsPersistentProcess = true;
-    if (scripts['start:worker'] || scripts.worker) profile.needsBackgroundWorker = true;
-    if (scripts.build && /next\s+build|nuxt\s+build|remix\s+build/.test(scripts.build)) {
-      profile.needsPersistentProcess = true;
-    }
-  } else if (has('requirements.txt', 'pyproject.toml', 'manage.py')) {
-    profile.runtime = 'python';
-    profile.needsPersistentProcess = true;
-    profile.framework = has('manage.py') ? 'django' : 'python-web';
-    profile.detectedFrom.push('Python project manifest');
-  } else if (has('go.mod')) {
-    profile.runtime = 'go'; profile.needsPersistentProcess = true; profile.detectedFrom.push('go.mod');
-  } else if (has('cargo.toml')) {
-    profile.runtime = 'rust'; profile.needsPersistentProcess = true; profile.detectedFrom.push('Cargo.toml');
-  } else if (has('composer.json')) {
-    profile.runtime = 'php'; profile.needsPersistentProcess = true; profile.detectedFrom.push('composer.json');
-  } else if (has('gemfile')) {
-    profile.runtime = 'ruby'; profile.needsPersistentProcess = true; profile.detectedFrom.push('Gemfile');
-  } else if (has('pom.xml', 'build.gradle', 'build.gradle.kts')) {
-    profile.runtime = 'java'; profile.needsPersistentProcess = true; profile.detectedFrom.push('Java build manifest');
-  } else if ([...names].some((name) => name.endsWith('.csproj') || name.endsWith('.sln'))) {
-    profile.runtime = 'dotnet'; profile.needsPersistentProcess = true; profile.detectedFrom.push('.NET project file');
-  }
+  if (scripts.build && packageManager) profile.buildCommand = packageManager === 'yarn' ? 'yarn build' : packageManager + ' run build';
   return profile;
 }
