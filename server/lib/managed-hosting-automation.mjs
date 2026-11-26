@@ -38,7 +38,7 @@ export function parseGitHubRepository(value) {
 function normalizeGitHubBuildContext(value) {
   const context = String(value || '.');
   if (context === '.') return '';
-  if (context.startsWith('/') || context.includes('\\') || context.includes('\0')) {
+  if (context.startsWith('/') || /^[A-Za-z]:/.test(context) || context.includes('\\') || context.includes('\0')) {
     throw new Error('Project build context must be a repository-relative path');
   }
   const segments = context.split('/');
