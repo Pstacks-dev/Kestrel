@@ -18,6 +18,8 @@
     "check": "npm run lint && npm run build",
     "migrate": "node scripts/migrate.mjs",
     "preflight": "node scripts/check-env.mjs",
+    "backup:db": "node scripts/backup-database.mjs",
+    "backup:verify": "node scripts/verify-database-backup.mjs",
     "test": "node --test"
   },
   "dependencies": {
