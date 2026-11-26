@@ -83,8 +83,9 @@ the staging environment.
 ## Retention and disaster recovery
 
 Keep the backup bucket private and in a separate project/account from the
-production database. Configure a bucket retention/lifecycle policy that keeps
-at least 30 daily backups and several month-end copies. Keep Supabase's own
+production database. Kestrel prunes only its own encrypted archive objects older
+than 90 days by default. Set the `KESTREL_BACKUP_RETENTION_DAYS` repository
+variable to an integer from 7 to 3650 to change that window. Keep Supabase's own
 point-in-time recovery (PITR) enabled where the production plan supports it;
 encrypted offsite dumps complement PITR and are not a replacement for it.
 
