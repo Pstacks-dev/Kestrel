@@ -228,6 +228,7 @@ test('Heroku cost approval migration enforces an explicit supported plan and own
   assert.match(sql, /heroku_dyno_size/);
   assert.match(sql, /heroku_dyno_quantity between 1 and 10/i);
   assert.match(sql, /cost_approved_by is not null/i);
+  assert.doesNotMatch(sql, /cost_approved_by uuid references auth\\.users/i);
   assert.match(sql, /cost_approved_at is not null/i);
   assert.match(sql, /pricing_catalog_version is not null/i);
   assert.match(sql, /provider_id <> 'heroku'/i);
