@@ -33,7 +33,11 @@ function mockGoogle() {
       return response({ name: 'projects/project-1/locations/us-central1/operations/op-1' }, 200);
     }
     if (url.includes('/services/demo?updateMask=traffic')) return response({ name: 'projects/project-1/locations/us-central1/operations/rollback-1' });
-    if (url.includes('/services/demo?updateMask=')) return response({ name: 'projects/project-1/locations/us-central1/operations/op-2' });
+    if (url.includes('/services/demo?updateMask=')) {
+      const body = JSON.parse(options.body);
+      assert.deepEqual(body.template.containers[0].env, []);
+      return response({ name: 'projects/project-1/locations/us-central1/operations/op-2' });
+    }
     if (url.includes('/operations/op-1')) return response({ name: 'projects/project-1/locations/us-central1/operations/op-1', done: true });
     if (url.includes('/services/demo')) return response({
       uri: 'https://demo-123.a.run.app',
@@ -70,7 +74,7 @@ test('updates an existing Cloud Run service for a later image', async () => {
   const { fetchImpl } = mockGoogle();
   const result = await deployCloudRunService({
     serviceAccountJson: serviceAccount(), projectId: 'project-1', serviceName: 'demo',
-    containerImage: 'us-docker.pkg.dev/project-1/apps/demo:next',
+    containerImage: 'us-docker.pkg.dev/project-1/apps/demo:next', env: {},
   }, { fetchImpl });
   assert.match(result.deploymentId, /operations\/op-2$/);
 });

@@ -67,7 +67,7 @@ function serviceTemplate({ image, port, env, maxInstances, cpu, memory }) {
   return {
     containers: [{
       image, ports: [{ containerPort }],
-      ...(envEntries.length ? { env: envEntries } : {}),
+      env: envEntries,
       resources: { limits: { cpu: String(cpu || '1'), memory: memory || '512Mi' } },
     }],
     scaling: { maxInstanceCount: max },
