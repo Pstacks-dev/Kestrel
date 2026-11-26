@@ -4,14 +4,16 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import {
   assertDistinctRestoreDatabase,
+  createEncryptedDatabaseBackup,
   decryptBackupFile,
   encryptBackupStream,
   parseBackupEncryptionKey,
   parsePostgresConnection,
   pruneExpiredDatabaseBackups,
+  verifyEncryptedDatabaseBackup,
 } from '../server/lib/database-backup.mjs';
 
 test('parses 32-byte backup encryption keys from hex and base64', () => {
@@ -71,7 +73,12 @@ test('parses Supabase PostgreSQL connection URLs without exposing credentials', 
 
 test('refuses to restore a production backup over the source database', () => {
   const source = 'postgresql://postgres:secret@db.example.test:5432/postgres?sslmode=require';
-  assert.throws(() => assertDistinctRestoreDatabase(source, source), /different database/);
+  assert.throws(() => assertDistinctRestoreDatabase(source, source), /separate staging host/);
+  assert.throws(() => assertDistinctRestoreDatabase(source, 'postgresql://postgres:secret@db.example.test:5432/staging?sslmode=require'), /separate staging host/);
+  assert.throws(() => assertDistinctRestoreDatabase(
+    'postgresql://postgres:secret@db.projectref.supabase.co:5432/postgres',
+    'postgresql://postgres.projectref:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
+  ), /separate staging host/);
   assert.doesNotThrow(() => assertDistinctRestoreDatabase(
     source, 'postgresql://postgres:secret@staging.example.test:5432/kestrel_restore?sslmode=require',
   ));
@@ -110,4 +117,64 @@ test('rejects unsafe backup retention windows', async () => {
     storageUrl: 'https://backup-project.supabase.co', serviceKey: 'service-role',
     bucket: 'kestrel-backups', retentionDays: 1,
   }), /between 7 and 3650/);
+});
+
+
+test('creates, uploads, downloads and verifies an encrypted PostgreSQL backup end to end', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'kestrel-backup-e2e-'));
+  const pgDumpBin = path.join(directory, 'pg_dump');
+  const pgRestoreBin = path.join(directory, 'pg_restore');
+  const key = crypto.randomBytes(32);
+  let uploaded = null;
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url);
+    calls.push({ pathname: parsed.pathname, method: options.method || 'GET' });
+    if (parsed.pathname.includes('/storage/v1/object/list/')) {
+      return new Response('[]', { status: 200 });
+    }
+    if (options.method === 'POST') {
+      const chunks = [];
+      for await (const chunk of options.body) chunks.push(Buffer.from(chunk));
+      uploaded = Buffer.concat(chunks);
+      return new Response('{}', { status: 200 });
+    }
+    if (options.method === 'GET' && uploaded) return new Response(uploaded, { status: 200 });
+    return new Response('not found', { status: 404 });
+  };
+  try {
+    await writeFile(pgDumpBin, '#!/usr/bin/env node\nprocess.stdout.write("fake PostgreSQL custom archive");\n');
+    await writeFile(pgRestoreBin, '#!/usr/bin/env node\nprocess.stdout.write("1; 0 0 TABLE public projects postgres");\n');
+    await chmod(pgDumpBin, 0o755);
+    await chmod(pgRestoreBin, 0o755);
+    const backup = await createEncryptedDatabaseBackup({
+      databaseUrl: 'postgresql://backup:secret@db.example.test:5432/kestrel?sslmode=require',
+      storageUrl: 'https://backup-project.supabase.co',
+      serviceKey: 'backup-service-role',
+      bucket: 'kestrel-backups',
+      encryptionKey: key.toString('hex'),
+      pgDumpBin,
+      fetchImpl,
+      now: new Date('2026-11-26T12:00:00.000Z'),
+    });
+    assert.ok(uploaded?.length > 36);
+    const verified = await verifyEncryptedDatabaseBackup({
+      objectKey: backup.objectKey,
+      expectedSha256: backup.sha256,
+      storageUrl: 'https://backup-project.supabase.co',
+      serviceKey: 'backup-service-role',
+      bucket: 'kestrel-backups',
+      encryptionKey: key.toString('hex'),
+      pgRestoreBin,
+      fetchImpl,
+    });
+    assert.equal(verified.objectKey, backup.objectKey);
+    assert.equal(verified.sha256, backup.sha256);
+    assert.ok(verified.archiveEntries > 0);
+    assert.deepEqual(verified.retention, { removed: 0, retentionDays: 90 });
+    assert.ok(calls.some((call) => call.method === 'POST' && call.pathname.includes('/storage/v1/object/kestrel-backups/')));
+    assert.ok(calls.some((call) => call.method === 'GET' && call.pathname.includes('/storage/v1/object/kestrel-backups/')));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
