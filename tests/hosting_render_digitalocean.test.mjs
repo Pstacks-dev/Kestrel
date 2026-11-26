@@ -6,6 +6,7 @@ import {
 import {
   createDigitalOceanDeployment, deployDigitalOceanApp, getDigitalOceanDeployment, rollbackDigitalOceanDeployment,
 } from '../server/lib/hosting-digitalocean.mjs';
+import { deployManagedProviderService } from '../server/lib/hosting-managed-adapters.mjs';
 
 function response(payload, status = 200) {
   return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } });
@@ -436,5 +437,55 @@ test('rejects unsafe existing Render and DigitalOcean monorepo roots before prov
     accessToken: 'do-token', appId: 'app-unsafe', commitSha: 'b'.repeat(40),
     rootDir: '../outside', profile: {}, env: {},
   }, { fetchImpl: noNetwork }), /Invalid DigitalOcean source directory/);
+});
+
+
+
+test('managed deployment adapter forwards monorepo settings to existing Render services', async () => {
+  let patchBody;
+  await deployManagedProviderService('render', { apiKey: 'render-token' }, {
+    provider_service_id: 'srv-adapter',
+  }, 'a'.repeat(40), {
+    fetchImpl: async (url, options) => {
+      if (url.endsWith('/services/srv-adapter')) {
+        patchBody = JSON.parse(options.body);
+        return response({ id: 'srv-adapter' });
+      }
+      if (url.endsWith('/env-vars')) return response([]);
+      return response({ id: 'dep-adapter', status: 'created' }, 201);
+    },
+  }, {
+    profile: { runtime: 'node', isStatic: false, rootDir: 'apps/api', startCommand: 'node server.js' },
+    rootDir: 'apps/api',
+    buildCommand: 'npm run build:api',
+    env: {},
+  });
+  assert.equal(patchBody.rootDir, 'apps/api');
+  assert.deepEqual(patchBody.serviceDetails.envSpecificDetails, {
+    buildCommand: 'npm run build:api',
+    startCommand: 'node server.js',
+  });
+});
+
+test('managed deployment adapter forwards monorepo settings to existing DigitalOcean apps', async () => {
+  const commitSha = 'b'.repeat(40);
+  let updatedSpec;
+  await deployManagedProviderService('digitalocean-app-platform', { accessToken: 'do-token' }, {
+    provider_project_id: 'app-adapter',
+  }, commitSha, {
+    fetchImpl: async (_url, options) => {
+      if (options.method === 'PUT') {
+        updatedSpec = JSON.parse(options.body).spec;
+        return response({ app: { in_progress_deployment: { id: 'dep-adapter', phase: 'PENDING', services: [{ source_commit_hash: commitSha }] } } });
+      }
+      return response({ app: { spec: { name: 'demo', region: 'nyc', services: [{ name: 'api', source_dir: '/', envs: [] }] } } });
+    },
+  }, {
+    profile: { needsContainer: true, rootDir: 'apps/api', dockerfilePath: 'Dockerfile' },
+    rootDir: 'apps/api',
+    env: {},
+  });
+  assert.equal(updatedSpec.services[0].source_dir, 'apps/api');
+  assert.equal(updatedSpec.services[0].dockerfile_path, 'apps/api/Dockerfile');
 });
 
