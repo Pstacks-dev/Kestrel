@@ -62,6 +62,42 @@ test('reuses a matching Cloudflare Pages project for subsequent commits', async 
   assert.equal(result.deploymentId, 'deploy-2');
 });
 
+test('updates build settings on an existing Pages project and preserves previously configured variables', async () => {
+  const calls = [];
+  const result = await createCloudflarePagesDeployment({
+    apiToken: 'cf-token', accountId: 'a'.repeat(32),
+    projectName: 'kestrel-demo', repositoryUrl: 'https://github.com/acme/demo',
+    branch: 'main', commitSha: 'd'.repeat(40),
+    buildCommand: 'npm run build:docs', destinationDir: 'public', rootDir: '/docs',
+    env: { NEW_SECRET: 'new-value' },
+  }, { fetchImpl: async (url, options = {}) => {
+    calls.push({ url, options });
+    if (options.method === 'GET') return response({
+      name: 'kestrel-demo', subdomain: 'kestrel-demo',
+      source: { type: 'github', config: { owner: 'acme', repo_name: 'demo' } },
+      deployment_configs: {
+        production: { env_vars: { EXISTING_SECRET: { type: 'secret_text', value: 'keep-me' } } },
+        preview: { env_vars: { PREVIEW_ONLY: { type: 'secret_text', value: 'also-keep' } } },
+      },
+    });
+    if (options.method === 'PATCH') {
+      const body = JSON.parse(options.body);
+      assert.deepEqual(body.build_config, {
+        build_command: 'npm run build:docs', destination_dir: 'public',
+        root_dir: '/docs', build_caching: true,
+      });
+      assert.equal(body.deployment_configs.production.env_vars.EXISTING_SECRET.value, 'keep-me');
+      assert.equal(body.deployment_configs.production.env_vars.NEW_SECRET.value, 'new-value');
+      assert.equal(body.deployment_configs.preview.env_vars.PREVIEW_ONLY.value, 'also-keep');
+      return response({ name: 'kestrel-demo', subdomain: 'kestrel-demo' });
+    }
+    return response({ id: 'deploy-existing', latest_stage: { name: 'queued', status: 'active' } });
+  } });
+  assert.equal(calls[0].options.method || 'GET', 'GET');
+  assert.equal(calls[1].options.method, 'PATCH');
+  assert.equal(result.deploymentId, 'deploy-existing');
+});
+
 test('polls Pages deployment stage and provider URL', async () => {
   const result = await getCloudflarePagesDeployment({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'kestrel-demo', deploymentId: 'deploy-1',
