@@ -5,6 +5,7 @@ import {
   ACTIVE_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
 } from './hosting-managed-adapters.mjs';
 import { loadStaticArtifactFiles } from '../routes/managed-deployments.mjs';
+import { createGitHubInstallationToken } from './github-app.mjs';
 
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
@@ -12,13 +13,19 @@ const GITHUB_HEADERS = {
   'User-Agent': 'Kestrel-Managed-Hosting-Automation',
 };
 
-async function githubJson(url, fetchImpl) {
-  const response = await fetchImpl(url, { headers: GITHUB_HEADERS, signal: AbortSignal.timeout(12000) });
-  if (!response.ok) throw new Error(`GitHub source inspection failed (${response.status})`);
+async function githubJson(url, fetchImpl, token) {
+  const headers = token ? { ...GITHUB_HEADERS, Authorization: `Bearer ${token}` } : GITHUB_HEADERS;
+  const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(12000) });
+  if (!response.ok) {
+    const detail = response.status === 404
+      ? '; verify the repository URL and connect its GitHub App installation if the repository is private'
+      : '';
+    throw new Error(`GitHub source inspection failed (${response.status})${detail}`);
+  }
   return response.json();
 }
 
-function parsePublicGitHubRepository(value) {
+export function parseGitHubRepository(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) return null;
@@ -28,14 +35,14 @@ function parsePublicGitHubRepository(value) {
   } catch { return null; }
 }
 
-async function inspectSource(repository, commitSha, fetchImpl) {
+export async function inspectGitHubSource(repository, commitSha, fetchImpl = fetch, token = null) {
   const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`;
-  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(commitSha)}`, fetchImpl);
+  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(commitSha)}`, fetchImpl, token);
   if (!Array.isArray(root)) throw new Error('GitHub repository root could not be inspected');
   const files = root.filter((item) => item.type === 'file').map((item) => item.name);
   let packageJson = null;
   if (files.some((name) => name.toLowerCase() === 'package.json')) {
-    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(commitSha)}`, fetchImpl);
+    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(commitSha)}`, fetchImpl, token);
     try { packageJson = JSON.parse(Buffer.from(file.content || '', 'base64').toString('utf8')); }
     catch { throw new Error('Repository package.json is invalid'); }
   }
@@ -72,11 +79,12 @@ async function markQueue(query, queueId, status, error = null, attemptCount = 0)
   );
 }
 
-async function processQueueItem(item, { query, transaction, fetchImpl }) {
+async function processQueueItem(item, { query, transaction, fetchImpl, createInstallationToken, githubAppConfig }) {
   try {
     const result = await query(
       `select r.id as run_id, r.project_id, r.branch, r.commit_sha, r.status as run_status,
-              p.organization_id, p.name as project_name, p.repository_url, p.default_branch, p.source_type
+              p.organization_id, p.name as project_name, p.repository_url, p.default_branch, p.source_type,
+              p.github_installation_id
        from public.pipeline_runs r join public.projects p on p.id = r.project_id
        where r.id = $1`,
       [item.pipeline_run_id],
@@ -94,13 +102,35 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
       await markQueue(query, item.id, 'skipped', 'Pipeline run has no immutable Git commit SHA', item.attempt_count);
       return { status: 'skipped' };
     }
-    const repository = parsePublicGitHubRepository(run.repository_url);
+    const repository = parseGitHubRepository(run.repository_url);
     if (!repository) {
-      await markQueue(query, item.id, 'skipped', 'Automatic managed deployments currently require a public GitHub repository', item.attempt_count);
+      await markQueue(query, item.id, 'skipped', 'Automatic managed deployments require a valid HTTPS GitHub repository URL', item.attempt_count);
       return { status: 'skipped' };
     }
 
-    const profile = await inspectSource(repository, run.commit_sha, fetchImpl);
+    // Installation tokens are minted per queue attempt, scoped to this repository,
+    // and held only in memory while inspecting source. Public repositories continue
+    // to work without a connected GitHub App installation.
+    let sourceToken = null;
+    if (run.github_installation_id) {
+      const installation = await query(
+        `select installation_id from public.github_app_installations
+         where installation_id = $1 and organization_id = $2 and suspended_at is null`,
+        [run.github_installation_id, run.organization_id],
+      );
+      if (!installation.rowCount) {
+        throw new Error('The project GitHub App installation is missing, suspended, or not linked to this workspace');
+      }
+      const issued = await createInstallationToken(installation.rows[0].installation_id, {
+        repository: `${repository.owner}/${repository.repo}`,
+        permissions: { contents: 'read' },
+        fetchImpl,
+        ...(githubAppConfig ? { config: githubAppConfig } : {}),
+      });
+      sourceToken = issued.token;
+    }
+
+    const profile = await inspectGitHubSource(repository, run.commit_sha, fetchImpl, sourceToken);
     const compatible = rankHostingProviders(profile, {});
     const connections = await query(
       `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag
@@ -240,7 +270,8 @@ async function processQueueItem(item, { query, transaction, fetchImpl }) {
   }
 }
 
-export async function processManagedHostingQueue({ query, transaction, fetchImpl = fetch, logger = console }, limit = 5) {
+export async function processManagedHostingQueue({ query, transaction, fetchImpl = fetch, logger = console,
+  createInstallationToken = createGitHubInstallationToken, githubAppConfig }, limit = 5) {
   let processed = 0;
   for (let count = 0; count < Math.max(1, Math.min(20, Number(limit) || 5)); count += 1) {
     const claimed = await query(
@@ -265,7 +296,7 @@ export async function processManagedHostingQueue({ query, transaction, fetchImpl
        returning q.*`,
     );
     if (!claimed.rowCount) break;
-    const outcome = await processQueueItem(claimed.rows[0], { query, transaction, fetchImpl });
+    const outcome = await processQueueItem(claimed.rows[0], { query, transaction, fetchImpl, createInstallationToken, githubAppConfig });
     if (outcome.status === 'failed') logger.error?.('Managed deployment automation attempt failed', { queueId: claimed.rows[0].id, error: outcome.error });
     processed += 1;
   }
