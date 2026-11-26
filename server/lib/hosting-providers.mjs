@@ -64,38 +64,74 @@ export function rankHostingProviders(profileInput, env = process.env) {
 }
 
 export function detectProjectProfile({ files = [], packageJson = null } = {}) {
-  const names = new Set(files.map((file) => String(typeof file === 'string' ? file : file.name || '').toLowerCase()));
+  // GitHub contents can be supplied as root names or nested paths. Detection
+  // uses basenames so Dockerfiles and manifests in common app subdirectories
+  // are not silently missed.
+  const names = new Set(files.map((file) => {
+    const value = String(typeof file === 'string' ? file : file.name || file.path || '');
+    return value.split('/').pop().toLowerCase();
+  }).filter(Boolean));
   const pkg = packageJson && typeof packageJson === 'object' ? packageJson : {};
   const dependencies = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
   const scripts = pkg.scripts || {};
   const has = (...values) => values.some((value) => names.has(value));
+  const hasDependency = (...values) => values.some((value) => dependencies[value]);
   const profile = {
     runtime: 'unknown', kind: 'web', isStatic: false, needsContainer: false,
     needsPersistentProcess: false, needsBackgroundWorker: false, needsDatabase: false,
-    framework: null, detectedFrom: [],
+    framework: null, outputDirectory: null, detectedFrom: [],
   };
+
   if (has('dockerfile', 'containerfile')) {
     profile.needsContainer = true;
     profile.needsPersistentProcess = true;
     profile.detectedFrom.push('Dockerfile');
   }
+
   if (Object.keys(dependencies).length || has('package.json')) {
     profile.runtime = 'node';
     profile.detectedFrom.push('package.json');
-    if (dependencies.next || dependencies.nuxt || dependencies['@sveltejs/kit'] || dependencies.remix) {
-      profile.framework = dependencies.next ? 'nextjs' : dependencies.nuxt ? 'nuxt' : dependencies.remix ? 'remix' : 'sveltekit';
-      profile.needsPersistentProcess = profile.needsPersistentProcess || Boolean(scripts.start);
-    } else if (dependencies.vite || dependencies['react-scripts'] || dependencies.gatsby) {
-      profile.framework = dependencies.vite ? 'vite' : dependencies.gatsby ? 'gatsby' : 'create-react-app';
-      profile.isStatic = !profile.needsContainer;
-      profile.kind = profile.isStatic ? 'static' : 'web';
+
+    if (hasDependency('next')) profile.framework = 'nextjs';
+    else if (hasDependency('nuxt')) profile.framework = 'nuxt';
+    else if (hasDependency('@remix-run/react', '@remix-run/node', 'remix')) profile.framework = 'remix';
+    else if (hasDependency('@sveltejs/kit')) profile.framework = 'sveltekit';
+    else if (hasDependency('astro')) profile.framework = 'astro';
+    else if (hasDependency('@angular/core')) profile.framework = 'angular';
+    else if (hasDependency('gatsby')) profile.framework = 'gatsby';
+    else if (hasDependency('react-scripts')) profile.framework = 'create-react-app';
+    else if (hasDependency('vue')) profile.framework = 'vue';
+    else if (hasDependency('svelte')) profile.framework = 'svelte';
+    else if (hasDependency('vite')) profile.framework = 'vite';
+
+    const staticOutputs = {
+      astro: 'dist',
+      angular: 'dist',
+      gatsby: 'public',
+      'create-react-app': 'build',
+      vue: 'dist',
+      svelte: 'dist',
+      vite: 'dist',
+    };
+    const serverFrameworks = new Set(['nextjs', 'nuxt', 'remix', 'sveltekit']);
+    if (profile.framework && staticOutputs[profile.framework] && !profile.needsContainer) {
+      profile.isStatic = true;
+      profile.kind = 'static';
+      profile.outputDirectory = staticOutputs[profile.framework];
+    }
+    if (serverFrameworks.has(profile.framework)) {
+      profile.needsPersistentProcess = Boolean(scripts.start) || profile.needsContainer;
     }
     if (scripts.worker || scripts['start:worker']) profile.needsBackgroundWorker = true;
     if (scripts.start && !profile.isStatic) profile.needsPersistentProcess = true;
+    if (scripts['start:worker'] || scripts.worker) profile.needsBackgroundWorker = true;
+    if (scripts.build && /next\s+build|nuxt\s+build|remix\s+build/.test(scripts.build)) {
+      profile.needsPersistentProcess = true;
+    }
   } else if (has('requirements.txt', 'pyproject.toml', 'manage.py')) {
     profile.runtime = 'python';
     profile.needsPersistentProcess = true;
-    profile.framework = has('manage.py') ? 'django' : has('requirements.txt') ? 'python-web' : 'python';
+    profile.framework = has('manage.py') ? 'django' : 'python-web';
     profile.detectedFrom.push('Python project manifest');
   } else if (has('go.mod')) {
     profile.runtime = 'go'; profile.needsPersistentProcess = true; profile.detectedFrom.push('go.mod');
@@ -105,6 +141,8 @@ export function detectProjectProfile({ files = [], packageJson = null } = {}) {
     profile.runtime = 'php'; profile.needsPersistentProcess = true; profile.detectedFrom.push('composer.json');
   } else if (has('gemfile')) {
     profile.runtime = 'ruby'; profile.needsPersistentProcess = true; profile.detectedFrom.push('Gemfile');
+  } else if (has('pom.xml', 'build.gradle', 'build.gradle.kts')) {
+    profile.runtime = 'java'; profile.needsPersistentProcess = true; profile.detectedFrom.push('Java build manifest');
   } else if ([...names].some((name) => name.endsWith('.csproj') || name.endsWith('.sln'))) {
     profile.runtime = 'dotnet'; profile.needsPersistentProcess = true; profile.detectedFrom.push('.NET project file');
   }
