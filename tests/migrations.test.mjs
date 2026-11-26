@@ -184,3 +184,15 @@ test('project OCI build context is configurable and passed to managed image work
   assert.match(worker, /resolveOciBuildContext\([\s\S]*build\.buildContext\)/);
   assert.match(routes, /api\/projects\/:projectId\/build-settings/);
 });
+
+
+test('managed hosting queue migration supports image waits and expired lease recovery', async () => {
+  const sql = await readFile(new URL('../db/migrations/037_managed_hosting_queue_recovery.sql', import.meta.url), 'utf8');
+  const automation = await readFile(new URL('../server/lib/managed-hosting-automation.mjs', import.meta.url), 'utf8');
+  assert.match(sql, /'waiting_for_image'/i);
+  assert.match(sql, /idx_managed_hosting_automation_claimable/i);
+  assert.match(automation, /q\.status in \('queued','failed','waiting_for_image'\)/i);
+  assert.match(automation, /q\.status = 'running' and \(q\.locked_at is null or q\.locked_at < now\(\) - interval '10 minutes'\)/i);
+  assert.match(automation, /running\.id <> q\.id/i);
+  assert.match(automation, /locked_at = \$6::timestamptz/i);
+});
