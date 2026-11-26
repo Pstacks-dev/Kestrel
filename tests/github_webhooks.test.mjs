@@ -37,10 +37,10 @@ test('validates branch names and full commit SHAs', () => {
   assert.equal(isValidGitCommitSha('not-a-sha'), false);
 });
 
-test('validates numeric GitHub App installation event IDs', () => {
+test('validates positive bounded GitHub App installation IDs', () => {
   assert.equal(isValidGitHubInstallationId('123456789'), true);
-  assert.equal(isValidGitHubInstallationId('0'), true);
-  for (const value of ['', '12x', '-12', '12.4', ' 12', '12 ', null, 12]) {
+  assert.equal(isValidGitHubInstallationId('9223372036854775807'), true);
+  for (const value of ['', '0', '00', '12x', '-12', '12.4', ' 12', '12 ', '9223372036854775808', null, 12]) {
     assert.equal(isValidGitHubInstallationId(value), false, String(value));
   }
 });
