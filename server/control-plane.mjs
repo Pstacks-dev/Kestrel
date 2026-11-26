@@ -669,24 +669,18 @@ app.post('/api/webhooks/github', async (req, res) => {
     }
     const installationId = String(body?.installation?.id || '');
     if (!isValidGitHubInstallationId(installationId)) return res.status(400).json({ error: 'Invalid GitHub installation event' });
+    const deliveryId = String(req.headers['x-github-delivery'] || '').trim();
+    if (!isValidGitHubDeliveryId(deliveryId)) return res.status(400).json({ error: 'A valid GitHub delivery ID is required' });
     const action = String(body?.action || '');
     if (!['deleted', 'suspend', 'unsuspend', 'created', 'new_permissions_accepted'].includes(action)) {
       return res.status(200).json({ message: `Ignored installation action: ${action || 'unknown'}` });
     }
     try {
-      const suspendedAt = ['deleted', 'suspend'].includes(action) ? new Date().toISOString() : null;
-      const updated = await query(
-        'update public.github_app_installations set suspended_at = $2, updated_at = now() where installation_id = $1 returning organization_id',
-        [installationId, suspendedAt],
-      );
-      if (updated.rowCount) {
-        await query(
-          `insert into public.audit_events(organization_id, action, target_type, target_id, metadata)
-           values($1,$2,'github_app_installation',$3,$4::jsonb)`,
-          [updated.rows[0].organization_id, `github_app.installation_${action}`, installationId, JSON.stringify({ action })],
-        );
-      }
-      return res.json({ ok: true, linked: Boolean(updated.rowCount) });
+      const result = await transaction(async (client) => {
+        const { processGitHubInstallationDelivery } = await import('./lib/github-installation-webhooks.mjs');
+        return processGitHubInstallationDelivery(client, { deliveryId, action, installationId });
+      });
+      return res.json({ ok: true, ...result, deliveryId });
     } catch {
       return res.status(500).json({ error: 'Could not update GitHub App installation state' });
     }
