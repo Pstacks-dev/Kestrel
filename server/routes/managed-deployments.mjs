@@ -190,7 +190,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         env: projectEnv,
         files: staticFiles,
         buildCommand: req.body?.buildCommand || 'npm run build',
-        destinationDir: req.body?.destinationDir || 'dist',
+        destinationDir: req.body?.destinationDir || profile.outputDirectory || 'dist',
         rootDir: req.body?.rootDir || '/',
       };
       const providerDeployment = resource
