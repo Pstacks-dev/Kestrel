@@ -497,7 +497,8 @@ app.post('/api/projects', sensitiveLimiter, userAuth, orgAccess, async (req, res
       !repoUrl ||
       repoUrl.protocol !== 'https:' ||
       repoUrl.username ||
-      repoUrl.password ||      !allowedHosts.includes(repoUrl.hostname.toLowerCase())
+      repoUrl.password ||
+      !allowedHosts.includes(repoUrl.hostname.toLowerCase())
     ))
   ) {
     return res.status(400).json({
@@ -996,7 +997,8 @@ app.post('/api/runs/:runId/cancel', sensitiveLimiter, userAuth, async (req, res)
       await c.query(
         "update public.jobs set status = 'canceled', finished_at = now(), canceled_at = now() where run_id = $1 and status in ('queued', 'running')",
         [runId]
-      );      await c.query(
+      );
+      await c.query(
         `update public.deployment_releases
          set status = 'failed', health_checked_at = now(), error_message = 'Deployment run was canceled'
          where pipeline_run_id = $1 and status in ('queued', 'deploying')`,
@@ -1495,7 +1497,8 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
     res.json({ build });
   } catch (error) {
     console.error('Managed OCI build claim failed:', { code: error.code, message: redactSecrets(error.message) });
-    res.status(503).json({ error: 'Could not claim managed OCI build; the lease will be recovered automatically' });  }
+    res.status(503).json({ error: 'Could not claim managed OCI build; the lease will be recovered automatically' });
+  }
 });
 
 app.post('/api/workers/managed-image-builds/:buildId/release', workerAuth, async (req, res) => {
@@ -1995,6 +1998,7 @@ registerGitHubAppRoutes(app, { userAuth, query, transaction });
 registerHostingRoutes(app, { userAuth, query });
 registerHostingConnectionRoutes(app, { userAuth, query, transaction });
 registerManagedDeploymentRoutes(app, { userAuth, query, transaction });
+
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
   console.error(err);
