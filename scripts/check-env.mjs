@@ -34,6 +34,9 @@ if (isProduction) {
   if (typeof process.env.KESTREL_ENCRYPTION_KEY !== 'string' || process.env.KESTREL_ENCRYPTION_KEY.length < 32) {
     errors.push('KESTREL_ENCRYPTION_KEY must be configured with at least 32 characters in production');
   }
+  if (typeof process.env.JWT_SECRET !== 'string' || process.env.JWT_SECRET.length < 32) {
+    errors.push('JWT_SECRET must be configured with at least 32 characters in production');
+  }
   if (process.env.DB_SSL === 'disable') {
     warnings.push('DB_SSL is disabled');
   }
