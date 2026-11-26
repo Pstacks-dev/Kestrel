@@ -49,7 +49,7 @@ export async function createRailwayDeployment({
   workspaceId = null, env = {},
 }, { fetchImpl = fetch } = {}) {
   const repository = parseRepository(repositoryUrl);
-  if (!repository) throw new Error('A public GitHub repository URL is required for Railway deployment');
+  if (!repository) throw new Error('A GitHub repository URL is required for Railway deployment');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) {
     throw new Error('Invalid deployment branch');
   }
