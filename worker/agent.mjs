@@ -532,9 +532,9 @@ async function execute(job) {
       await collectArtifacts(job, workspace, workingDirectory, abortController.signal);
     }
 
-    while (logBuffer.length || logFlushActive) {
+    while ((logBuffer.length || logFlushActive) && !abortController.signal.aborted) {
       await flushLogs();
-      if (logBuffer.length || logFlushActive) await new Promise((r) => setTimeout(r, 50));
+      if ((logBuffer.length || logFlushActive) && !abortController.signal.aborted) await new Promise((r) => setTimeout(r, 50));
     }
 
     if (abortController.signal.aborted) {
