@@ -323,6 +323,66 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+// Readiness is stricter than liveness: the database schema, artifact storage
+// configuration and minimum healthy worker capacity must all be available.
+app.get('/api/ready', async (_req, res) => {
+  const configuredMinimum = Number(process.env.KESTREL_MIN_READY_WORKERS || 1);
+  const minimumWorkers = Number.isFinite(configuredMinimum)
+    ? Math.max(1, Math.min(100, Math.floor(configuredMinimum)))
+    : 1;
+  const artifactStorageConfigured = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  try {
+    const schema = await query(`select
+      to_regclass('public.workers') is not null as workers,
+      to_regclass('public.jobs') is not null as jobs,
+      to_regclass('public.managed_hosting_deployments') is not null as deployments,
+      to_regclass('public.managed_hosting_image_builds') is not null as image_builds,
+      to_regclass('public.managed_hosting_automation_queue') is not null as automation_queue`);
+    const schemaReady = Object.values(schema.rows[0] || {}).every(Boolean);
+    if (!schemaReady) {
+      return res.status(503).json({
+        ok: false,
+        service: 'kestrel-control-plane',
+        database: 'connected',
+        schema: 'incomplete',
+        artifactStorage: artifactStorageConfigured ? 'configured' : 'missing_configuration',
+        workers: { status: 'unknown', minimum: minimumWorkers },
+      });
+    }
+    const workers = await query(`select count(*)::int as online
+      from public.workers
+      where desired_state = 'online'
+        and state in ('online','busy')
+        and last_seen_at >= now() - interval '45 seconds'`);
+    const onlineWorkers = Number(workers.rows[0]?.online || 0);
+    const workerReady = onlineWorkers >= minimumWorkers;
+    const ready = workerReady && artifactStorageConfigured;
+    res.status(ready ? 200 : 503).json({
+      ok: ready,
+      service: 'kestrel-control-plane',
+      database: 'connected',
+      schema: 'ready',
+      artifactStorage: artifactStorageConfigured ? 'configured' : 'missing_configuration',
+      workers: {
+        status: workerReady ? 'ready' : 'degraded',
+        online: onlineWorkers,
+        minimum: minimumWorkers,
+        heartbeatWindowSeconds: 45,
+      },
+    });
+  } catch (error) {
+    console.error('Readiness check failed:', { code: error.code, message: error.message });
+    res.status(503).json({
+      ok: false,
+      service: 'kestrel-control-plane',
+      database: 'unavailable',
+      schema: 'unknown',
+      artifactStorage: artifactStorageConfigured ? 'configured' : 'missing_configuration',
+      workers: { status: 'unknown', minimum: minimumWorkers },
+    });
+  }
+});
+
 // ==========================================
 // Workspaces (Organizations)
 // ==========================================
