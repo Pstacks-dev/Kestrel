@@ -33,6 +33,7 @@ import { startManagedHostingAutomation, processManagedHostingQueue } from './lib
 import { reconcileManagedDeploymentReadiness } from './lib/managed-deployment-readiness.mjs';
 import { refreshProviderImageRegistryCredentials } from './lib/oci-registries.mjs';
 import { createGitHubInstallationToken } from './lib/github-app.mjs';
+import { summarizeManagedHostingHealth } from './lib/operations-health.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1917,7 +1918,7 @@ app.get('/api/admin/overview', userAuth, platformAdmin, async (_req, res) => {
 
 app.get('/api/admin/health', userAuth, platformAdmin, async (_req, res) => {
   try {
-    const [workers, queue, database] = await Promise.all([
+    const [workers, queue, database, automationQueue, deployments, imageBuilds] = await Promise.all([
       query(`select
         count(*) filter (where state in ('online','busy') and last_seen_at >= now() - interval '45 seconds')::int as online,
         count(*) filter (where last_seen_at < now() - interval '45 seconds' or last_seen_at is null)::int as stale,
@@ -1930,14 +1931,26 @@ app.get('/api/admin/health', userAuth, platformAdmin, async (_req, res) => {
         count(*) filter (where status = 'failed')::int as failed
         from public.jobs`),
       query('select now() as checked_at'),
+      query(`select status, count(*)::int as count
+        from public.managed_hosting_automation_queue group by status order by status`),
+      query(`select provider_id, status, count(*)::int as count
+        from public.managed_hosting_deployments group by provider_id, status order by provider_id, status`),
+      query(`select status, count(*)::int as count
+        from public.managed_hosting_image_builds group by status order by status`),
     ]);
     const w = workers.rows[0], q = queue.rows[0];
+    const managedHosting = summarizeManagedHostingHealth({
+      automationQueueRows: automationQueue.rows,
+      deploymentRows: deployments.rows,
+      imageBuildRows: imageBuilds.rows,
+    });
     res.json({
       checkedAt: database.rows[0].checked_at,
       database: 'connected',
       artifactStorage: process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'missing_configuration',
       workers: w,
       queue: q,
+      managedHosting,
       scheduler: Number(w.online) > 0 ? 'worker_capacity_available' : Number(q.queued) > 0 ? 'queued_without_online_workers' : 'no_online_workers',
     });
   } catch (error) {
