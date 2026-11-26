@@ -230,7 +230,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       containerImage = imageBuild.image_digest_ref;
     }
     const files = selected.id === 'netlify'
-      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, '', run.commit_sha)
+      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, profile.outputDirectory || '', run.commit_sha)
       : undefined;
     const existingResult = await query(
       `select * from public.managed_hosting_resources
@@ -249,7 +249,8 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       files,
       buildCommand: 'npm run build',
       destinationDir: profile.outputDirectory || 'dist',
-      rootDir: profile.rootDir && profile.rootDir !== '.' ? profile.rootDir : '/',
+      rootDir: profile.rootDir && profile.rootDir !== '.' ? `/${profile.rootDir.replace(/^\\/+/, '')}` : '/',
+      managedEnvKeys: Array.isArray(resource?.metadata?.managedEnvKeys) ? resource.metadata.managedEnvKeys : [],
     };
     const providerDeployment = resource
       ? await deployManagedProviderService(selected.id, credentials, resource, run.commit_sha, { fetchImpl }, providerInput)
@@ -269,6 +270,13 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
         );
         resourceId = insertedResource.rows[0].id;
       }
+      await client.query(
+        `update public.managed_hosting_resources
+         set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('managedEnvKeys', $2::jsonb),
+             updated_at = now()
+         where id = $1`,
+        [resourceId, JSON.stringify(Object.keys(env))],
+      );
       const inserted = await client.query(
         `insert into public.managed_hosting_deployments
            (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
