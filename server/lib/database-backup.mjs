@@ -302,6 +302,7 @@ export async function verifyEncryptedDatabaseBackup({
     const downloaded = await downloadEncryptedBackup({ storageUrl, serviceKey, bucket, objectKey, filePath: encryptedPath, fetchImpl });
     const decrypted = await decryptBackupFile(encryptedPath, dumpPath, key);
     const list = await runPgRestoreList(pgRestoreBin, dumpPath);
+    if (!list.entries) throw new Error('pg_restore returned no entries for the downloaded backup archive');
     let restoreVerification = null;
     if (restoreDatabaseUrl) {
       if (restoreConfirmation !== 'RESTORE_TO_STAGING_DATABASE') {
