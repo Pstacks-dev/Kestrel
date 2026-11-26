@@ -28,8 +28,8 @@ if (!hasSupabase) {
 
 // Security checks for worker tokens and encryption keys
 if (isProduction) {
-  if (process.env.KESTREL_WORKER_TOKEN && process.env.KESTREL_WORKER_TOKEN.length < 16) {
-    errors.push('KESTREL_WORKER_TOKEN must be at least 16 characters in production');
+  if (process.env.KESTREL_WORKER_TOKEN && process.env.KESTREL_WORKER_TOKEN.trim().length < 32) {
+    errors.push('KESTREL_WORKER_TOKEN must be at least 32 characters when configured in production');
   }
   if (typeof process.env.KESTREL_ENCRYPTION_KEY !== 'string' || process.env.KESTREL_ENCRYPTION_KEY.length < 32) {
     errors.push('KESTREL_ENCRYPTION_KEY must be configured with at least 32 characters in production');
