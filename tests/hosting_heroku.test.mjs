@@ -179,3 +179,55 @@ test('passes a signed private-repository archive URL to the Heroku build API', a
     },
   });
 });
+
+
+test('syncs Heroku environment variables and removes only previously managed keys', async () => {
+  const { syncHerokuEnvironment } = await import('../server/lib/hosting-heroku.mjs');
+  let body;
+  const result = await syncHerokuEnvironment({
+    apiKey: 'heroku-token', appId: 'app-1',
+    env: { DATABASE_URL: 'postgres://example', NODE_ENV: 'production' },
+    managedEnvKeys: ['DATABASE_URL', 'OLD_SECRET', 'UNMANAGED_KEY'],
+  }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(url, 'https://api.heroku.com/apps/app-1/config-vars');
+      assert.equal(options.method, 'PATCH');
+      body = JSON.parse(options.body);
+      return response({ DATABASE_URL: 'postgres://example', NODE_ENV: 'production' });
+    },
+  });
+  assert.deepEqual(body, {
+    DATABASE_URL: 'postgres://example',
+    NODE_ENV: 'production',
+    OLD_SECRET: null,
+    UNMANAGED_KEY: null,
+  });
+  assert.deepEqual(result, { updated: true, keys: ['DATABASE_URL', 'NODE_ENV'] });
+});
+
+test('does not call Heroku when no environment values or previously managed keys exist', async () => {
+  const { syncHerokuEnvironment } = await import('../server/lib/hosting-heroku.mjs');
+  const result = await syncHerokuEnvironment({ apiKey: 'x', appId: 'app-1' }, {
+    fetchImpl: async () => assert.fail('No config-vars update is needed'),
+  });
+  assert.deepEqual(result, { updated: false, keys: [] });
+});
+
+test('deletes a newly created Heroku app if its build fails', async () => {
+  const calls = [];
+  await assert.rejects(createHerokuDeployment({
+    apiKey: 'heroku-token', repositoryUrl: 'https://github.com/acme/demo',
+    commitSha: 'e'.repeat(40), projectName: 'kestrel-cleanup-12345678',
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/apps') && options.method === 'POST') {
+        return response({ id: 'app-cleanup', name: 'kestrel-cleanup-12345678' }, 201);
+      }
+      if (url.endsWith('/builds')) return response({ error: 'build rejected' }, 500);
+      if (url.endsWith('/apps/app-cleanup') && options.method === 'DELETE') return response({}, 200);
+      return response({});
+    },
+  }), /Heroku API request failed/);
+  assert.ok(calls.some(call => call.url.endsWith('/apps/app-cleanup') && call.options.method === 'DELETE'));
+});
