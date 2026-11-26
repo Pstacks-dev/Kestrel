@@ -6,11 +6,14 @@ export function createDrainController({
   clearTimeoutImpl = clearTimeout,
   stopContainer = () => {},
   killChild = (child) => child?.kill?.('SIGTERM'),
+  abortManagedImageBuild = () => {},
   forceExit = () => {},
+  forceExitDelayMs = 5000,
   logger = console,
 }) {
   let started = false;
   let timer = null;
+  let forceTimer = null;
 
   return {
     begin(signal) {
@@ -28,7 +31,9 @@ export function createDrainController({
             if (child) killChild(child);
           }
         }
-        forceExit(signal);
+        abortManagedImageBuild();
+        forceTimer = setTimeoutImpl(() => forceExit(signal), Math.max(1000, Number(forceExitDelayMs) || 5000));
+        forceTimer?.unref?.();
       }, Math.max(1000, Number(timeoutMs) || 60_000));
       timer?.unref?.();
       return true;
@@ -36,7 +41,9 @@ export function createDrainController({
 
     complete() {
       if (timer) clearTimeoutImpl(timer);
+      if (forceTimer) clearTimeoutImpl(forceTimer);
       timer = null;
+      forceTimer = null;
     },
   };
 }
