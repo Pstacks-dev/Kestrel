@@ -220,12 +220,12 @@ export async function pruneExpiredDatabaseBackups({
     const objects = await response.json();
     if (!Array.isArray(objects)) throw new Error('Backup retention listing returned an invalid response');
     expired.push(...objects
-      .filter((item) => /^kestrel-[0-9TZ-]+\.kstr$/.test(String(item.name || '')))
+      .filter((item) => /^kestrel-[0-9TZ-]+\.kstr$/.test(String(item.name || '').split('/').pop()))
       .filter((item) => {
         const created = Date.parse(item.created_at || item.updated_at || '');
         return Number.isFinite(created) && created < cutoff;
       })
-      .map((item) => `backups/${item.name}`));
+      .map((item) => String(item.name).startsWith('backups/') ? String(item.name) : `backups/${item.name}`));
     if (objects.length < 100) break;
     offset += objects.length;
   }
