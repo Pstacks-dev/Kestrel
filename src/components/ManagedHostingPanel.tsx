@@ -7,6 +7,7 @@ type HerokuPricing = { catalogVersion: string; plans: Record<string, { label: st
 type Deployment = {
   id: string; provider: string; status: string; branch: string; commitSha: string;
   providerUrl?: string | null; createdAt?: string;
+  herokuDynoSize?: string | null; herokuDynoQuantity?: number | null; estimatedMonthlyCostUsd?: number | null;
 };
 
 const fields: Record<string, ProviderField[]> = {
@@ -337,6 +338,7 @@ export default function ManagedHostingPanel({
                     <span className="pill pill-muted">{deployment.status}</span>
                   </div>
                   <p className="mt-1 text-xs text-neutral-500">{deployment.branch} · {deployment.commitSha?.slice(0, 10)}</p>
+                  {deployment.provider === 'heroku' && deployment.estimatedMonthlyCostUsd != null && <p className="mt-1 text-xs text-neutral-600">Approved: {deployment.herokuDynoQuantity} × {deployment.herokuDynoSize} · up to ${deployment.estimatedMonthlyCostUsd.toFixed(2)}/month</p>}
                   {deployment.providerUrl && <a className="text-xs text-blue-700 underline" href={deployment.providerUrl} target="_blank" rel="noreferrer">{deployment.providerUrl}</a>}
                 </div>
                 <div className="flex gap-2">
