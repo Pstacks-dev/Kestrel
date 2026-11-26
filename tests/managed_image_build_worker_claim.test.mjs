@@ -31,7 +31,8 @@ test('managed image build release requeues an unstarted lease without consuming 
   const release = source.slice(start, end);
   assert.match(release, /status = 'queued'/i);
   assert.match(release, /attempt_count = greatest\(attempt_count - 1, 0\)/i);
-  assert.match(release, /worker_id = null, lease_token = null, lease_expires_at = null/i);
+  assert.match(release, /worker_id = null, lease_token = null,/i);
+  assert.match(release, /lease_expires_at = null,/i);
   assert.match(release, /started_at = null, finished_at = null, last_error = null/i);
   assert.match(release, /status = 'running' and lease_expires_at > now\(\)/i);
 });
