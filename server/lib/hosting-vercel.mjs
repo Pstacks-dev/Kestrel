@@ -67,10 +67,25 @@ async function createProject({ token, teamId, name, repositoryUrl, profile }, { 
   }
   const created = await request(token, '/v11/projects', {
     method: 'POST', teamId, fetchImpl,
-    body: { name, gitRepository: { type: 'github', repo: `${repo.org}/${repo.repo}` }, ...(framework(profile) ? { framework: framework(profile) } : {}) },
+    body: {
+      name,
+      gitRepository: { type: 'github', repo: `${repo.org}/${repo.repo}` },
+      ...(framework(profile) ? { framework: framework(profile) } : {}),
+      ...(Object.prototype.hasOwnProperty.call(profile, 'rootDir')
+        ? { rootDirectory: profile.rootDir && profile.rootDir !== '.' ? String(profile.rootDir) : null }
+        : {}),
+    },
   });
   if (!created.id) throw new Error('Vercel did not return a project identifier');
   return { id: created.id, name: created.name || name, repo };
+}
+
+async function syncVercelRootDirectory({ token, teamId, projectId, profile = {} }, fetchImpl) {
+  if (!Object.prototype.hasOwnProperty.call(profile, 'rootDir')) return;
+  const rootDirectory = profile.rootDir && profile.rootDir !== '.' ? String(profile.rootDir) : null;
+  await request(token, `/v9/projects/${encodeURIComponent(projectId)}`, {
+    method: 'PATCH', teamId, fetchImpl, body: { rootDirectory },
+  });
 }
 
 async function syncVercelEnvironment({ token, teamId, projectId, env = {} }, fetchImpl) {
@@ -85,6 +100,7 @@ async function syncVercelEnvironment({ token, teamId, projectId, env = {} }, fet
 
 async function deploy({ token, teamId, projectId, name, repo, branch, commitSha, profile, env = {} }, { fetchImpl = fetch } = {}) {
   validCommit(commitSha);
+  await syncVercelRootDirectory({ token, teamId, projectId, profile }, fetchImpl);
   await syncVercelEnvironment({ token, teamId, projectId, env }, fetchImpl);
   const source = repo || repository(profile.repositoryUrl);
   const deployment = await request(token, '/v13/deployments?forceNew=1', {
