@@ -8,6 +8,7 @@ import { redactSecrets } from '../server/lib/security.mjs';
 import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
+import { resolveJobWorkingDirectory } from './working-directory.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
@@ -331,7 +332,7 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
 }
 
 // Upload real artifact bytes to private object storage through the authenticated control plane.
-async function collectArtifacts(job, workspace) {
+async function collectArtifacts(job, workspace, workingDirectory = workspace) {
   const roots = ['dist', 'build', 'artifacts'];
   const maxFiles = 5000;
   const maxTotal = 250 * 1024 * 1024;
@@ -376,7 +377,7 @@ async function collectArtifacts(job, workspace) {
   }
 
   for (const root of roots) {
-    const absolute = path.join(workspace, root);
+    const absolute = path.join(workingDirectory, root);
     try {
       const stat = await fs.lstat(absolute);
       if (stat.isDirectory() && !stat.isSymbolicLink()) await walk(absolute, root);
@@ -475,10 +476,11 @@ async function execute(job) {
     }
 
     if (EXECUTOR === 'docker') await makeWorkspaceWritable(workspace);
+    const workingDirectory = await resolveJobWorkingDirectory(workspace, job.workingDirectory || '.');
 
     const result = await runCommand(
       job.command,
-      workspace,
+      workingDirectory,
       (stream, message) => {
         console.log(`[${job.name}:${stream}] ${message}`);
         if (logBytes < 10 * 1024 * 1024) {
@@ -497,7 +499,7 @@ async function execute(job) {
 
     // Collect any generated artifacts
     if (result.exitCode === 0) {
-      await collectArtifacts(job, workspace);
+      await collectArtifacts(job, workspace, workingDirectory);
     }
 
     while (logBuffer.length || logFlushActive) {
