@@ -8,6 +8,7 @@ type Provider = {
 type Deployment = {
   id: string; provider: string; status: string; branch: string; commitSha: string;
   providerUrl?: string | null; createdAt?: string; providerStatus?: string;
+  herokuDynoSize?: string | null; herokuDynoQuantity?: number | null; estimatedMonthlyCostUsd?: number | null;
 };
 type Field = { key: string; label: string; placeholder?: string; multiline?: boolean; optional?: boolean };
 type HerokuPricing = { catalogVersion: string; plans: Record<string, { label: string; monthlyUsd: number }> };
@@ -235,7 +236,7 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
       <div className="panel-head"><div><h3>Managed deployment history</h3><p>Provider status and public URL for each deployment.</p></div></div>
       {!deployments.length ? <p className="deployment-muted">No managed deployments yet.</p> : <div className="managed-deployment-list">
         {deployments.map((item) => <div className="managed-deployment-row" key={item.id}>
-          <div><b>{item.provider}</b><small>{item.branch} · {item.commitSha?.slice(0, 8)}</small></div>
+          <div><b>{item.provider}</b><small>{item.branch} · {item.commitSha?.slice(0, 8)}</small>{item.provider === 'heroku' && item.estimatedMonthlyCostUsd != null && <small>Approved: {item.herokuDynoQuantity} × {item.herokuDynoSize} · up to ${item.estimatedMonthlyCostUsd.toFixed(2)}/month</small>}</div>
           <span className={item.status === 'live' ? 'pill pill-green' : 'pill pill-muted'}>{item.status}</span>
           {item.providerUrl ? <a href={item.providerUrl} target="_blank" rel="noreferrer">Open app ↗</a> : <small>URL pending</small>}
           <div className="managed-deployment-actions">
