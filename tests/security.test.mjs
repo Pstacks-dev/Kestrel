@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+process.env.KESTREL_ENCRYPTION_KEY ||= 'kestrel-test-encryption-key-32-characters-minimum';
+
 import {
   encryptSecret,
   decryptSecret,
@@ -19,6 +21,19 @@ test('encryptSecret and decryptSecret roundtrip with AES-256-GCM', () => {
 
   const decrypted = decryptSecret(encrypted.encryptedValue, encrypted.iv, encrypted.authTag);
   assert.equal(decrypted, secret);
+});
+
+test('encryption refuses missing or weak dedicated keys instead of falling back to public secrets', () => {
+  const original = process.env.KESTREL_ENCRYPTION_KEY;
+  try {
+    delete process.env.KESTREL_ENCRYPTION_KEY;
+    assert.throws(() => encryptSecret('must-not-use-an-insecure-fallback'), /KESTREL_ENCRYPTION_KEY/);
+    process.env.KESTREL_ENCRYPTION_KEY = 'short';
+    assert.throws(() => encryptSecret('must-not-use-a-weak-key'), /at least 32 characters/);
+  } finally {
+    if (original === undefined) delete process.env.KESTREL_ENCRYPTION_KEY;
+    else process.env.KESTREL_ENCRYPTION_KEY = original;
+  }
 });
 
 test('decryptSecret fails when encrypted text or auth tag is tampered', () => {
