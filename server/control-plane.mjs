@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
 import { validatePipelineJobs } from './lib/pipeline.mjs';
-import { isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush, isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha } from './lib/github-webhooks.mjs';
+import { isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush, isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId } from './lib/github-webhooks.mjs';
 import {
   encryptSecret,
   decryptSecret,
@@ -668,7 +668,7 @@ app.post('/api/webhooks/github', async (req, res) => {
       return res.status(401).json({ error: 'Invalid GitHub App webhook signature' });
     }
     const installationId = String(body?.installation?.id || '');
-    if (!/^\\d+$/.test(installationId)) return res.status(400).json({ error: 'Invalid GitHub installation event' });
+    if (!isValidGitHubInstallationId(installationId)) return res.status(400).json({ error: 'Invalid GitHub installation event' });
     const action = String(body?.action || '');
     if (!['deleted', 'suspend', 'unsuspend', 'created', 'new_permissions_accepted'].includes(action)) {
       return res.status(200).json({ message: `Ignored installation action: ${action || 'unknown'}` });
