@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
+import { buildAndPublishOciImage, runProcess } from '../server/lib/oci-image-builder.mjs';
 
 const digest = 'sha256:' + 'a'.repeat(64);
 async function fixture() {
@@ -69,4 +69,14 @@ test('rejects invalid commit SHAs and unsafe Dockerfile paths', async () => {
     const { rm } = await import('node:fs/promises');
     await rm(contextDir, { recursive: true, force: true });
   }
+});
+
+
+test('terminates an active Docker subprocess when its worker drain signal is aborted', async () => {
+  const controller = new AbortController();
+  const command = runProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    abortSignal: controller.signal, timeoutMs: 5000,
+  });
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(command, /was aborted/);
 });

@@ -10,6 +10,7 @@ import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
 import { resolveJobWorkingDirectory } from './working-directory.mjs';
 import { resolveWorkerToken } from './config.mjs';
+import { createDrainController } from './drain-controller.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = resolveWorkerToken();
@@ -36,7 +37,9 @@ const headers = {
 };
 
 let isDraining = false;
-const activeJobs = new Map(); // jobId -> { abortController, containerName }
+let managedImageBuildActive = false;
+let managedImageBuildAbortController = null;
+const activeJobs = new Map(); // jobId -> { abortController, containerName?, child? }
 
 async function api(endpoint, body) {
   const r = await fetch(`${API}${endpoint}`, {
@@ -51,10 +54,11 @@ async function api(endpoint, body) {
   return r.json();
 }
 
-async function apiGet(endpoint) {
+async function apiGet(endpoint, signal) {
   const response = await fetch(`${API}${endpoint}`, {
     method: 'GET',
     headers,
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -63,11 +67,13 @@ async function apiGet(endpoint) {
   return response.json();
 }
 
-async function downloadUploadedSource(job, workspace) {
-  const result = await apiGet(`/api/workers/projects/${encodeURIComponent(job.projectId)}/source-files`);
+async function downloadUploadedSource(job, workspace, abortSignal) {
+  if (abortSignal?.aborted) throw new Error('Worker is draining; uploaded-source download was canceled');
+  const result = await apiGet(`/api/workers/projects/${encodeURIComponent(job.projectId)}/source-files`, abortSignal);
   const files = Array.isArray(result.files) ? result.files : [];
   let totalBytes = 0;
   for (const file of files) {
+    if (abortSignal?.aborted) throw new Error('Worker is draining; uploaded-source download was canceled');
     const relative = String(file.path || '').replace(/\\\\/g, '/');
     const segments = relative.split('/');
     if (!relative || relative.startsWith('/') || segments.some((part) => !part || part === '.' || part === '..')) {
@@ -77,7 +83,7 @@ async function downloadUploadedSource(job, workspace) {
     if (destination !== workspace && !destination.startsWith(workspace + path.sep)) {
       throw new Error('Uploaded source path escaped the job workspace');
     }
-    const response = await fetch(file.url);
+    const response = await fetch(file.url, abortSignal ? { signal: abortSignal } : {});
     if (!response.ok) throw new Error(`Could not download uploaded source file: ${relative}`);
     const bytes = Buffer.from(await response.arrayBuffer());
     if (bytes.length > 20 * 1024 * 1024) throw new Error(`Uploaded source file exceeds 20 MiB: ${relative}`);
@@ -90,7 +96,8 @@ async function downloadUploadedSource(job, workspace) {
   if (!files.length) throw new Error('This uploaded project contains no files');
 }
 
-async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) {
+async function runCommand(command, cwd, onLine, job, secretValues, abortController) {
+  const abortSignal = abortController?.signal;
   const start = Date.now();
   const timeoutMs = (job.timeoutSeconds || 1800) * 1000;
 
@@ -121,6 +128,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      activeJobs.set(job.id, { ...activeJobs.get(job.id), abortController, child });
 
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -157,6 +165,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       child.on('close', (code) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
+        activeJobs.set(job.id, { abortController });
         resolve({
           exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
           durationMs: Date.now() - start,
@@ -166,6 +175,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       child.on('error', (e) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
+        activeJobs.set(job.id, { abortController });
         onLine('stderr', redactSecrets(e.message, secretValues));
         resolve({ exitCode: 1, durationMs: Date.now() - start });
       });
@@ -175,7 +185,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
   // Default Docker container executor
   return new Promise((resolve) => {
     const containerName = `kestrel-job-${String(job.id).replace(/[^a-zA-Z0-9_.-]/g, '')}`;
-    activeJobs.set(job.id, { containerName, abortSignal });
+    activeJobs.set(job.id, { ...activeJobs.get(job.id), containerName, abortController });
 
     const args = [
       'run',
@@ -264,7 +274,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
     child.on('close', (code) => {
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
-      activeJobs.delete(job.id);
+      activeJobs.set(job.id, { abortController });
       resolve({
         exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
         durationMs: Date.now() - start,
@@ -274,7 +284,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
     child.on('error', (e) => {
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
-      activeJobs.delete(job.id);
+      activeJobs.set(job.id, { abortController });
       onLine('stderr', redactSecrets(e.message, secretValues));
       resolve({ exitCode: 1, durationMs: Date.now() - start });
     });
@@ -295,9 +305,13 @@ async function ensureJobImage() {
   });
 }
 
-async function runGit(args, cwd, onLine, extraEnv = {}) {
+async function runGit(args, cwd, onLine, extraEnv = {}, abortSignal) {
   return new Promise((resolve) => {
     const start = Date.now();
+    if (abortSignal?.aborted) {
+      resolve({ exitCode: 130, durationMs: Date.now() - start, stdout: '' });
+      return;
+    }
     const child = spawn('git', args, {
       cwd,
       shell: false,
@@ -306,6 +320,12 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
     });
     let stdout = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), Number(process.env.KESTREL_GIT_TIMEOUT_MS || 300000));
+    const abortHandler = () => child.kill('SIGTERM');
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', abortHandler);
+    };
+    abortSignal?.addEventListener('abort', abortHandler, { once: true });
 
     for (const [stream, pipe] of [
       ['stdout', child.stdout],
@@ -321,11 +341,11 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
     }
 
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, durationMs: Date.now() - start, stdout });
+      cleanup();
+      resolve({ exitCode: abortSignal?.aborted ? 130 : code ?? 1, durationMs: Date.now() - start, stdout });
     });
     child.on('error', (e) => {
-      clearTimeout(timer);
+      cleanup();
       onLine('stderr', e.message);
       resolve({ exitCode: 1, durationMs: Date.now() - start, stdout });
     });
@@ -333,7 +353,7 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
 }
 
 // Upload real artifact bytes to private object storage through the authenticated control plane.
-async function collectArtifacts(job, workspace, workingDirectory = workspace) {
+async function collectArtifacts(job, workspace, workingDirectory = workspace, abortSignal) {
   const roots = ['dist', 'build', 'artifacts'];
   const maxFiles = 5000;
   const maxTotal = 250 * 1024 * 1024;
@@ -345,6 +365,7 @@ async function collectArtifacts(job, workspace, workingDirectory = workspace) {
     if (uploaded >= maxFiles || total >= maxTotal) return;
     const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
+      if (abortSignal?.aborted) throw new Error('Worker is draining; artifact collection was canceled');
       if (uploaded >= maxFiles || total >= maxTotal) break;
       const absolute = path.join(directory, entry.name);
       const relative = path.posix.join(relativeRoot, entry.name);
@@ -366,6 +387,7 @@ async function collectArtifacts(job, workspace, workingDirectory = workspace) {
         method: 'PUT',
         headers: { 'content-type': 'application/octet-stream', 'x-upsert': 'false' },
         body: bytes,
+        ...(abortSignal ? { signal: abortSignal } : {}),
       });
       if (!response.ok) throw new Error(`Artifact object upload failed for ${relative}: ${response.status}`);
       await api(`/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/finalize`, {
@@ -401,14 +423,20 @@ async function makeWorkspaceWritable(directory) {
 }
 
 async function execute(job) {
+  const abortController = new AbortController();
+  activeJobs.set(job.id, { abortController });
   const workspace = path.join(ROOT, String(job.runId), String(job.id));
-  await fs.mkdir(workspace, { recursive: true });
+  try {
+    await fs.mkdir(workspace, { recursive: true });
+  } catch (error) {
+    activeJobs.delete(job.id);
+    throw error;
+  }
 
   const logBuffer = [];
   let logFlushActive = false;
   let logBytes = 0;
   let logTruncated = false;
-  const abortController = new AbortController();
 
   const secretValues = Object.values(job.secrets || {}).filter(Boolean);
   if (job.sourceToken) secretValues.push(job.sourceToken);
@@ -456,7 +484,7 @@ async function execute(job) {
 
   try {
     if (job.sourceType === 'upload' && EXECUTOR !== 'mock') {
-      await downloadUploadedSource(job, workspace);
+      await downloadUploadedSource(job, workspace, abortController.signal);
     } else {
       const repository = /^https:\/\//.test(job.repositoryUrl || '') ? job.repositoryUrl : REPO_URL || '';
       if (repository && EXECUTOR !== 'mock') {
@@ -464,7 +492,8 @@ async function execute(job) {
         ['clone', '--depth', '1', '--branch', String(job.branch || 'main'), '--', repository, '.'],
         workspace,
         (s, m) => console.log(`[clone:${s}] ${redactSecrets(m, secretValues)}`),
-        gitAuthEnv
+        gitAuthEnv,
+        abortController.signal
       );
         if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
       }
@@ -472,7 +501,7 @@ async function execute(job) {
 
     if (job.commitSha && EXECUTOR !== 'mock' && job.sourceType !== 'upload') {
       if (!/^[a-f0-9]{7,64}$/i.test(job.commitSha)) throw new Error('Invalid commit SHA format');
-      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv);
+      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv, abortController.signal);
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');
     }
 
@@ -495,35 +524,55 @@ async function execute(job) {
       },
       job,
       secretValues,
-      abortController.signal
+      abortController
     );
 
     // Collect any generated artifacts
     if (result.exitCode === 0) {
-      await collectArtifacts(job, workspace, workingDirectory);
+      await collectArtifacts(job, workspace, workingDirectory, abortController.signal);
     }
 
-    while (logBuffer.length || logFlushActive) {
+    while ((logBuffer.length || logFlushActive) && !abortController.signal.aborted) {
       await flushLogs();
-      if (logBuffer.length || logFlushActive) await new Promise((r) => setTimeout(r, 50));
+      if ((logBuffer.length || logFlushActive) && !abortController.signal.aborted) await new Promise((r) => setTimeout(r, 50));
     }
 
+    if (abortController.signal.aborted) {
+      await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
+      return;
+    }
     await api(`/api/workers/jobs/${job.id}/complete`, {
       leaseToken: job.leaseToken,
-      status: abortController.signal.aborted ? 'canceled' : undefined,
       ...result,
     });
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
+      console.log(`[worker] Released job ${job.id} after execution was aborted`);
+      return;
+    }
+    throw error;
   } finally {
     clearInterval(logTimer);
     clearInterval(leaseHeartbeat);
     await fs.rm(workspace, { recursive: true, force: true }).catch((e) => console.error('workspace cleanup:', e.message));
+    activeJobs.delete(job.id);
   }
 }
 
 async function executeManagedImageBuild(build) {
+  managedImageBuildActive = true;
+  managedImageBuildAbortController = new AbortController();
   const startedAt = Date.now();
-  await fs.mkdir(ROOT, { recursive: true });
-  const workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
+  let workspace;
+  try {
+    await fs.mkdir(ROOT, { recursive: true });
+    workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
+  } catch (error) {
+    managedImageBuildActive = false;
+    managedImageBuildAbortController = null;
+    throw error;
+  }
   const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
   let leaseLost = false;
   const heartbeat = setInterval(async () => {
@@ -544,15 +593,15 @@ async function executeManagedImageBuild(build) {
       GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + build.sourceToken).toString('base64'),
     } : {};
     const clone = await runGit(['clone', '--no-checkout', '--filter=blob:none', '--', build.repositoryUrl, workspace], workspace,
-      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv, managedImageBuildAbortController.signal);
     if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build; verify the connected GitHub App has repository access');
     const fetch = await runGit(['fetch', '--depth=1', 'origin', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv, managedImageBuildAbortController.signal);
     if (fetch.exitCode !== 0) throw new Error('Could not fetch the exact pipeline commit for OCI build');
     const checkout = await runGit(['checkout', '--detach', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)));
+      (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)), {}, managedImageBuildAbortController.signal);
     if (checkout.exitCode !== 0) throw new Error('Could not check out the exact pipeline commit for OCI build');
-    const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {});
+    const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {}, {}, managedImageBuildAbortController.signal);
     if (tree.exitCode !== 0) throw new Error('Could not inspect tracked files at the exact pipeline commit');
     const buildContext = await resolveOciBuildContext(workspace, tree.stdout.split(/\r?\n/).filter(Boolean), build.buildContext);
     console.log('[oci] Using build context ' + buildContext.relativeContext + ' and Dockerfile ' + buildContext.dockerfile);
@@ -565,7 +614,7 @@ async function executeManagedImageBuild(build) {
       registry: build.registry,
       registryUsername: build.registryUsername,
       registryPassword: build.registryPassword,
-    }, { dockerBin: DOCKER, timeoutMs: 30 * 60 * 1000 });
+    }, { dockerBin: DOCKER, timeoutMs: 30 * 60 * 1000, abortSignal: managedImageBuildAbortController.signal });
     if (leaseLost) throw new Error('Managed OCI build lease was lost before publishing could be confirmed');
     await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
       leaseToken: build.leaseToken, status: 'succeeded',
@@ -573,13 +622,20 @@ async function executeManagedImageBuild(build) {
     });
     console.log('[oci] Published ' + result.imageDigestRef + ' for commit ' + build.commitSha);
   } catch (error) {
-    const safeError = redactSecrets(String(error?.message || 'OCI image build failed'), secretValues).slice(0, 500);
-    console.error('[oci] Managed image build failed:', safeError);
-    await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
-      leaseToken: build.leaseToken, status: 'failed', error: safeError,
-    }).catch(() => {});
+    if (managedImageBuildAbortController?.signal.aborted) {
+      await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/release', { leaseToken: build.leaseToken }).catch(() => {});
+      console.log('[oci] Released managed image build after worker drain');
+    } else {
+      const safeError = redactSecrets(String(error?.message || 'OCI image build failed'), secretValues).slice(0, 500);
+      console.error('[oci] Managed image build failed:', safeError);
+      await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
+        leaseToken: build.leaseToken, status: 'failed', error: safeError,
+      }).catch(() => {});
+    }
   } finally {
     clearInterval(heartbeat);
+    managedImageBuildActive = false;
+    managedImageBuildAbortController = null;
     await fs.rm(workspace, { recursive: true, force: true }).catch(() => {});
     console.log('[oci] Worker build duration: ' + (Date.now() - startedAt) + 'ms');
   }
@@ -592,6 +648,10 @@ async function managedImageBuildLoop() {
       if (!build) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         continue;
+      }
+      if (isDraining) {
+        await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/release', { leaseToken: build.leaseToken }).catch(() => {});
+        break;
       }
       console.log('[oci] Claimed managed image build ' + build.id + ' for ' + build.commitSha);
       await executeManagedImageBuild(build);
@@ -626,34 +686,33 @@ const heartbeatInterval = setInterval(() => {
   }).catch((e) => console.error('heartbeat error:', e.message));
 }, 10000);
 
-// Graceful shutdown handling
+// Graceful shutdown stops claims, lets current work finish, then uses a bounded
+// cancellation window so the control plane can recover leases after a forced exit.
+const drainTimeoutMs = Math.max(5000, Math.min(600000, Number(process.env.KESTREL_WORKER_DRAIN_TIMEOUT_MS || 60000)));
+const drainController = createDrainController({
+  activeJobs,
+  isManagedImageBuildActive: () => managedImageBuildActive,
+  abortManagedImageBuild: () => managedImageBuildAbortController?.abort(),
+  timeoutMs: drainTimeoutMs,
+  stopContainer: (name) => spawn(DOCKER, ['stop', '--time', '2', name], { stdio: 'ignore' }),
+  killChild: (child) => child.kill('SIGTERM'),
+  forceExit: () => process.exit(1),
+  logger: console,
+});
+
 function handleShutdown(signal) {
+  if (isDraining) return;
   console.log(`Received ${signal}, draining worker...`);
   isDraining = true;
   api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
-
-  if (activeJobs.size === 0) {
-    clearInterval(heartbeatInterval);
-    process.exit(0);
-  }
-
-  const drainTimer = setTimeout(() => {
-    console.log('Drain timeout exceeded; aborting remaining containers.');
-    for (const [jobId, { abortSignal, containerName }] of activeJobs.entries()) {
-      abortSignal?.abort();
-      if (EXECUTOR === 'docker') {
-        spawn(DOCKER, ['stop', '--time', '2', containerName], { stdio: 'ignore' });
-      }
-    }
-    process.exit(0);
-  }, 15000);
-  drainTimer.unref();
+  drainController.begin(signal);
 }
 
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
-// Managed OCI builds share the registered worker pool and have a separate durable lease queue.\nif (EXECUTOR === 'docker') void managedImageBuildLoop();\n\n// Polling loop for job claims
+// Managed OCI builds share the registered worker pool and have a separate durable lease queue.
+const managedImageBuildTask = EXECUTOR === 'docker' ? managedImageBuildLoop() : Promise.resolve();
 async function pollLoop(slot) {
   while (!isDraining) {
     try {
@@ -661,6 +720,10 @@ async function pollLoop(slot) {
       if (!job) {
         await new Promise((r) => setTimeout(r, 600));
         continue;
+      }
+      if (isDraining) {
+        await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
+        break;
       }
 
       console.log(`[Slot ${slot}] Claimed job "${job.name}" (${job.id}) for run ${job.runId}`);
@@ -682,3 +745,7 @@ async function pollLoop(slot) {
 }
 
 await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => pollLoop(i + 1)));
+await managedImageBuildTask;
+drainController.complete();
+clearInterval(heartbeatInterval);
+await api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
