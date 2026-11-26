@@ -88,8 +88,41 @@ async function syncVercelRootDirectory({ token, teamId, projectId, profile = {} 
   });
 }
 
-async function syncVercelEnvironment({ token, teamId, projectId, env = {} }, fetchImpl) {
-  for (const [key, value] of Object.entries(env)) {
+async function listVercelProjectEnvironmentVariables(token, teamId, projectId, fetchImpl) {
+  const entries = [];
+  const cursors = new Set();
+  let until = null;
+  for (let page = 0; page < 20; page += 1) {
+    const query = `?limit=100${until ? `&until=${encodeURIComponent(until)}` : ''}`;
+    const result = await request(token, `/v10/projects/${encodeURIComponent(projectId)}/env${query}`, { teamId, fetchImpl });
+    entries.push(...(Array.isArray(result.envs) ? result.envs : []));
+    const next = result.pagination?.next;
+    if (next === undefined || next === null || next === '' || next === 0) return entries;
+    const cursor = String(next);
+    if (cursors.has(cursor)) throw new Error('Vercel environment-variable pagination repeated a cursor');
+    cursors.add(cursor);
+    until = cursor;
+  }
+  throw new Error('Vercel environment-variable listing exceeded its pagination limit');
+}
+
+async function syncVercelEnvironment({ token, teamId, projectId, env = {}, managedEnvKeys = [] }, fetchImpl) {
+  const desiredKeys = new Set(Object.keys(env || {}));
+  const staleManagedKeys = new Set((Array.isArray(managedEnvKeys) ? managedEnvKeys : []).filter((key) => !desiredKeys.has(key)));
+  if (staleManagedKeys.size) {
+    const existing = await listVercelProjectEnvironmentVariables(token, teamId, projectId, fetchImpl);
+    for (const variable of existing) {
+      if (!variable?.id || !staleManagedKeys.has(variable.key) || variable.system === true || variable.configurationId) continue;
+      try {
+        await request(token, `/v9/projects/${encodeURIComponent(projectId)}/env/${encodeURIComponent(variable.id)}`, {
+          method: 'DELETE', teamId, fetchImpl,
+        });
+      } catch (error) {
+        if (error.status !== 404) throw error;
+      }
+    }
+  }
+  for (const [key, value] of Object.entries(env || {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Vercel environment variable');
     await request(token, `/v10/projects/${encodeURIComponent(projectId)}/env?upsert=true`, {
       method: 'POST', teamId, fetchImpl,
@@ -98,10 +131,11 @@ async function syncVercelEnvironment({ token, teamId, projectId, env = {} }, fet
   }
 }
 
-async function deploy({ token, teamId, projectId, name, repo, branch, commitSha, profile, env = {} }, { fetchImpl = fetch } = {}) {
+
+async function deploy({ token, teamId, projectId, name, repo, branch, commitSha, profile, env = {}, managedEnvKeys = [] }, { fetchImpl = fetch } = {}) {
   validCommit(commitSha);
   await syncVercelRootDirectory({ token, teamId, projectId, profile }, fetchImpl);
-  await syncVercelEnvironment({ token, teamId, projectId, env }, fetchImpl);
+  await syncVercelEnvironment({ token, teamId, projectId, env, managedEnvKeys }, fetchImpl);
   const source = repo || repository(profile.repositoryUrl);
   const deployment = await request(token, '/v13/deployments?forceNew=1', {
     method: 'POST', teamId, fetchImpl,
@@ -115,7 +149,7 @@ async function deploy({ token, teamId, projectId, name, repo, branch, commitSha,
   return { provider: 'vercel', deploymentId: deployment.id, status: status(deployment.readyState || deployment.status), providerUrl: publicUrl(deployment.url) };
 }
 
-export async function createVercelDeployment({ token, teamId = null, repositoryUrl, branch = 'main', commitSha, projectName: name, profile = {}, env = {} }, options = {}) {
+export async function createVercelDeployment({ token, teamId = null, repositoryUrl, branch = 'main', commitSha, projectName: name, profile = {}, env = {}, managedEnvKeys = [] }, options = {}) {
   validCommit(commitSha);
   const repo = repository(repositoryUrl);
   const nameSafe = projectName(name);
@@ -124,7 +158,7 @@ export async function createVercelDeployment({ token, teamId = null, repositoryU
   return { ...result, projectId: project.id, serviceId: project.name, environmentId: null };
 }
 
-export async function deployVercelProject({ token, teamId = null, projectId, projectName: name, repositoryUrl, branch = 'main', commitSha, profile = {}, env = {} }, options = {}) {
+export async function deployVercelProject({ token, teamId = null, projectId, projectName: name, repositoryUrl, branch = 'main', commitSha, profile = {}, env = {}, managedEnvKeys = [] }, options = {}) {
   const repo = repository(repositoryUrl);
   const result = await deploy({ token, teamId, projectId, name: projectName(name), repo, branch, commitSha, profile, env }, options);
   return { ...result, projectId, serviceId: projectName(name), environmentId: null };
