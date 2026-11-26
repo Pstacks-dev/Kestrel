@@ -3,7 +3,7 @@ import { decryptSecret, redactSecrets } from '../lib/security.mjs';
 import { parseGitHubRepository } from './git-import.mjs';
 import { detectProjectProfile, rankHostingProviders } from '../lib/hosting-providers.mjs';
 import {
-  ACTIVE_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
+  ACTIVE_MANAGED_PROVIDERS, AUTOMATIC_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
   getManagedProviderDeployment, getManagedProviderDeploymentLogs, rollbackManagedProviderDeployment,
 } from '../lib/hosting-managed-adapters.mjs';
 import { createGitHubInstallationToken } from '../lib/github-app.mjs';
@@ -234,7 +234,7 @@ export function registerManagedDeploymentRoutes(app, {
       const projectEnv = await loadProjectEnvironment(query, project.id);
       const selected = compatible.find((provider) =>
         ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
-        (requestedProvider === 'auto' ? provider.id !== 'heroku' : provider.id === requestedProvider) &&
+        (requestedProvider === 'auto' ? AUTOMATIC_MANAGED_PROVIDERS.includes(provider.id) : provider.id === requestedProvider) &&
         verified.has(provider.id) &&
         (provider.id !== 'netlify' ||
           (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0 && Object.keys(projectEnv).length === 0)));
