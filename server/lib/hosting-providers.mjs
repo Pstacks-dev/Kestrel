@@ -76,10 +76,16 @@ export function detectProjectProfile({ files = [], packageJson = null } = {}) {
   const scripts = pkg.scripts || {};
   const has = (...values) => values.some((value) => names.has(value));
   const hasDependency = (...values) => values.some((value) => dependencies[value]);
+  const declaredPackageManager = String(pkg.packageManager || '').split('@')[0].toLowerCase();
+  const packageManager = ['npm', 'pnpm', 'yarn', 'bun'].includes(declaredPackageManager)
+    ? declaredPackageManager
+    : names.has('pnpm-lock.yaml') ? 'pnpm'
+      : names.has('yarn.lock') ? 'yarn'
+        : names.has('bun.lock') || names.has('bun.lockb') ? 'bun' : 'npm';
   const profile = {
     runtime: 'unknown', kind: 'web', isStatic: false, needsContainer: false,
     needsPersistentProcess: false, needsBackgroundWorker: false, needsDatabase: false,
-    framework: null, outputDirectory: null, detectedFrom: [],
+    framework: null, outputDirectory: null, packageManager, detectedFrom: [],
   };
 
   if (has('dockerfile', 'containerfile')) {
@@ -91,6 +97,9 @@ export function detectProjectProfile({ files = [], packageJson = null } = {}) {
   if (Object.keys(dependencies).length || has('package.json')) {
     profile.runtime = 'node';
     profile.detectedFrom.push('package.json');
+    if (typeof scripts.build === 'string' && scripts.build.trim()) {
+      profile.buildCommand = packageManager === 'yarn' ? 'yarn build' : `${packageManager} run build`;
+    }
 
     if (hasDependency('next')) profile.framework = 'nextjs';
     else if (hasDependency('nuxt')) profile.framework = 'nuxt';
