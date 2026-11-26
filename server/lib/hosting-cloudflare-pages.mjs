@@ -143,6 +143,8 @@ export async function createCloudflarePagesDeployment({ apiToken, accountId, pro
   if (!apiToken || !accountId) throw new Error('Cloudflare API token and account ID are required');
   parseRepository(repositoryUrl);
   const name = projectName(rawName);
+  buildConfig({ buildCommand, destinationDir, rootDir });
+  envVars(env);
   const project = await ensureProject({ apiToken, accountId, projectName: name, repositoryUrl, branch, buildCommand, destinationDir, rootDir, env }, fetchImpl);
   const deployment = await createDeployment({ apiToken, accountId, projectName: name, branch, commitSha, commitMessage }, fetchImpl);
   return {
