@@ -107,8 +107,16 @@ async function listVercelProjectEnvironmentVariables(token, teamId, projectId, f
 }
 
 async function syncVercelEnvironment({ token, teamId, projectId, env = {}, managedEnvKeys = [] }, fetchImpl) {
-  const desiredKeys = new Set(Object.keys(env || {}));
-  const staleManagedKeys = new Set((Array.isArray(managedEnvKeys) ? managedEnvKeys : []).filter((key) => !desiredKeys.has(key)));
+  if (!env || typeof env !== 'object' || Array.isArray(env)) throw new Error('Vercel environment variables must be an object');
+  const entries = Object.entries(env);
+  for (const [key, value] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Vercel environment variable');
+  }
+  const desiredKeys = new Set(entries.map(([key]) => key));
+  const managedKeys = Array.isArray(managedEnvKeys)
+    ? managedEnvKeys.filter((key) => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key))
+    : [];
+  const staleManagedKeys = new Set(managedKeys.filter((key) => !desiredKeys.has(key)));
   if (staleManagedKeys.size) {
     const existing = await listVercelProjectEnvironmentVariables(token, teamId, projectId, fetchImpl);
     for (const variable of existing) {
@@ -122,8 +130,7 @@ async function syncVercelEnvironment({ token, teamId, projectId, env = {}, manag
       }
     }
   }
-  for (const [key, value] of Object.entries(env || {})) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Vercel environment variable');
+  for (const [key, value] of entries) {
     await request(token, `/v10/projects/${encodeURIComponent(projectId)}/env?upsert=true`, {
       method: 'POST', teamId, fetchImpl,
       body: { key, value, type: 'sensitive', visibility: 'secret', target: ['production', 'preview', 'development'] },
