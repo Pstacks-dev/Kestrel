@@ -214,3 +214,28 @@ test('reports unknown projects explicitly instead of guessing a language', async
   assert.deepEqual(profile.languages, []);
   assert.equal(profile.detectionStatus, 'unknown');
 });
+
+
+test('does not recommend source-build providers for unsupported detected languages', () => {
+  for (const runtime of ['swift', 'dart', 'elixir', 'erlang', 'haskell', 'ocaml', 'perl', 'r', 'julia', 'lua', 'solidity', 'cpp', 'c', 'zig']) {
+    assert.deepEqual(rankHostingProviders({ runtime, needsPersistentProcess: true }, {}), [], runtime);
+  }
+  const java = rankHostingProviders({ runtime: 'java', needsPersistentProcess: true }, {}).map((provider) => provider.id);
+  assert.ok(java.includes('railway'));
+  assert.ok(java.includes('digitalocean-app-platform'));
+  assert.ok(!java.includes('render'));
+  assert.ok(!java.includes('vercel'));
+});
+
+test('allows unknown runtimes only when the repository supplies a container build contract', () => {
+  assert.deepEqual(rankHostingProviders({ runtime: 'unknown', needsPersistentProcess: true }, {}), []);
+  const container = rankHostingProviders({ runtime: 'unknown', needsContainer: true, needsPersistentProcess: true }, {}).map((provider) => provider.id);
+  assert.ok(container.includes('render'));
+  assert.ok(container.includes('railway'));
+  assert.ok(container.includes('flyio'));
+});
+
+test('keeps Node-built static projects eligible for Cloudflare Pages', () => {
+  const ids = rankHostingProviders({ runtime: 'node', isStatic: true }, {}).map((provider) => provider.id);
+  assert.ok(ids.includes('cloudflare-pages'));
+});
