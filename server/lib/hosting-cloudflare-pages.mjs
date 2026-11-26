@@ -53,10 +53,14 @@ function buildConfig({ buildCommand, destinationDir, rootDir }) {
   const destination = String(destinationDir || 'dist');
   const root = String(rootDir || '/');
   if (!command || command.length > 500 || /[\r\n\0]/.test(command)) throw new Error('Invalid Cloudflare Pages build command');
-  for (const path of [destination, root]) {
-    if (!path || path.length > 200 || path.includes('\\') || path.split('/').some((part) => part === '..')) {
-      throw new Error('Invalid Cloudflare Pages build directory');
-    }
+  if (!destination || destination.length > 200 || destination.startsWith('/') || /^[A-Za-z]:/.test(destination) ||
+      destination.includes('\\') || destination.includes('\\0') ||
+      destination.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid Cloudflare Pages build directory');
+  }
+  if (!root || root.length > 200 || root.includes('\\') || root.includes('\\0') ||
+      root.split('/').some((part) => part === '..')) {
+    throw new Error('Invalid Cloudflare Pages build directory');
   }
   return { build_command: command, destination_dir: destination, root_dir: root, build_caching: true };
 }
