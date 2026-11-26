@@ -601,6 +601,10 @@ async function managedImageBuildLoop() {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         continue;
       }
+      if (isDraining) {
+        await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/release', { leaseToken: build.leaseToken }).catch(() => {});
+        break;
+      }
       console.log('[oci] Claimed managed image build ' + build.id + ' for ' + build.commitSha);
       await executeManagedImageBuild(build);
     } catch (error) {
@@ -667,6 +671,10 @@ async function pollLoop(slot) {
       if (!job) {
         await new Promise((r) => setTimeout(r, 600));
         continue;
+      }
+      if (isDraining) {
+        await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
+        break;
       }
 
       console.log(`[Slot ${slot}] Claimed job "${job.name}" (${job.id}) for run ${job.runId}`);
