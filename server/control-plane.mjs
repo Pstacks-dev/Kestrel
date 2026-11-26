@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
 import { validatePipelineJobs } from './lib/pipeline.mjs';
-import { isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush, isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId } from './lib/github-webhooks.mjs';
+import { isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush, isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId, claimGitHubProjectWebhookDelivery } from './lib/github-webhooks.mjs';
 import {
   encryptSecret,
   decryptSecret,
@@ -790,12 +790,10 @@ app.post('/api/webhooks/github', async (req, res) => {
     const safe = validatePipelineJobs(defaultJobs);
 
     const result = await transaction(async (c) => {
-      const accepted = await c.query(
-        `insert into public.github_webhook_deliveries(project_id, delivery_id, event_name, branch, commit_sha)
-         values($1,$2,$3,$4,$5) on conflict (delivery_id) do nothing returning id`,
-        [project.id, deliveryId, event, branch, commitSha],
-      );
-      if (!accepted.rowCount) return { duplicate: true };
+      const accepted = await claimGitHubProjectWebhookDelivery(c, {
+        projectId: project.id, deliveryId, eventName: event, branch, commitSha,
+      });
+      if (!accepted) return { duplicate: true };
       await c.query('select id from public.projects where id = $1 for update', [project.id]);
       const n = await c.query('select coalesce(max(run_number), 0) + 1 n from public.pipeline_runs where project_id = $1', [project.id]);
       const rr = await c.query(
@@ -810,7 +808,7 @@ app.post('/api/webhooks/github', async (req, res) => {
         );
       }
       await c.query('update public.github_webhooks set last_triggered_at = now() where project_id = $1', [project.id]);
-      await c.query('update public.github_webhook_deliveries set run_id = $2 where id = $1', [accepted.rows[0].id, rr.rows[0].id]);
+      await c.query('update public.github_webhook_deliveries set run_id = $2 where id = $1', [accepted.id, rr.rows[0].id]);
       await c.query(
         'insert into public.audit_events(organization_id, action, target_type, target_id, metadata) values($1, $2, $3, $4, $5)',
         [project.organization_id, 'pipeline.run.webhook_triggered', 'pipeline_run', rr.rows[0].id, JSON.stringify({ event, deliveryId, branch, commitSha })]
