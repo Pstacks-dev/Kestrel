@@ -7,7 +7,7 @@ import {
   getManagedProviderDeployment, getManagedProviderDeploymentLogs, rollbackManagedProviderDeployment,
 } from '../lib/hosting-managed-adapters.mjs';
 import { createGitHubInstallationToken } from '../lib/github-app.mjs';
-import { resolveHerokuSourceArchiveUrl } from '../lib/hosting-heroku.mjs';
+import { deleteHerokuApp, resolveHerokuSourceArchiveUrl } from '../lib/hosting-heroku.mjs';
 import { HEROKU_DYNO_PLANS, HEROKU_PRICING_CATALOG_VERSION, validateHerokuCostApproval } from '../lib/heroku-pricing.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
@@ -295,7 +295,9 @@ export function registerManagedDeploymentRoutes(app, {
         ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir, managedEnvKeys: providerInput.managedEnvKeys, dynoSize: providerInput.dynoSize, dynoQuantity: providerInput.dynoQuantity, sourceArchiveUrl: providerInput.sourceArchiveUrl })
         : await createManagedProviderDeployment(providerId, credentials, providerInput, { fetchImpl });
 
-      const saved = await transaction(async (client) => {
+      let saved;
+      try {
+        saved = await transaction(async (client) => {
         let resourceId;
         if (resource) {
           resourceId = resource.id;
@@ -360,7 +362,14 @@ export function registerManagedDeploymentRoutes(app, {
             })],
         );
         return inserted.rows[0];
-      });
+        });
+      } catch (error) {
+        if (providerId === 'heroku' && !resource && providerDeployment?.projectId) {
+          try { await deleteHerokuApp({ apiKey: credentials.apiKey, appId: providerDeployment.projectId }, { fetchImpl }); }
+          catch (cleanupError) { console.error('Heroku app cleanup after persistence failure failed:', { code: cleanupError.code || 'CLEANUP_ERROR' }); }
+        }
+        throw error;
+      }
       return res.status(202).json({
         deployment: deploymentView(saved), selectedProvider: providerId, profile,
         providerUrl: providerDeployment.providerUrl || null,
