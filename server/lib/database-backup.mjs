@@ -208,7 +208,7 @@ export async function pruneExpiredDatabaseBackups({
   const base = String(storageUrl || '').replace(/\/$/, '');
   const headers = storageHeaders(serviceKey, { 'content-type': 'application/json' });
   let offset = 0;
-  let removed = 0;
+  const expired = [];
   while (true) {
     const response = await fetchImpl(`${base}/storage/v1/object/list/${encodeURIComponent(bucket)}`, {
       method: 'POST', headers,
@@ -218,24 +218,26 @@ export async function pruneExpiredDatabaseBackups({
     if (!response.ok) throw new Error(`Backup retention listing failed: ${response.status} ${(await response.text()).slice(0, 500)}`);
     const objects = await response.json();
     if (!Array.isArray(objects)) throw new Error('Backup retention listing returned an invalid response');
-    const expired = objects
+    expired.push(...objects
       .filter((item) => /^kestrel-[0-9T-]+\.kstr$/.test(String(item.name || '')))
       .filter((item) => {
         const created = Date.parse(item.created_at || item.updated_at || '');
         return Number.isFinite(created) && created < cutoff;
       })
-      .map((item) => `backups/${item.name}`);
-    if (expired.length) {
-      const deletion = await fetchImpl(`${base}/storage/v1/object/${encodeURIComponent(bucket)}`, {
-        method: 'DELETE', headers,
-        body: JSON.stringify({ prefixes: expired }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!deletion.ok) throw new Error(`Backup retention deletion failed: ${deletion.status} ${(await deletion.text()).slice(0, 500)}`);
-      removed += expired.length;
-    }
+      .map((item) => `backups/${item.name}`));
     if (objects.length < 100) break;
     offset += objects.length;
+  }
+  let removed = 0;
+  for (let index = 0; index < expired.length; index += 100) {
+    const batch = expired.slice(index, index + 100);
+    const deletion = await fetchImpl(`${base}/storage/v1/object/${encodeURIComponent(bucket)}`, {
+      method: 'DELETE', headers,
+      body: JSON.stringify({ prefixes: batch }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!deletion.ok) throw new Error(`Backup retention deletion failed: ${deletion.status} ${(await deletion.text()).slice(0, 500)}`);
+    removed += batch.length;
   }
   return { removed, retentionDays: days };
 }
