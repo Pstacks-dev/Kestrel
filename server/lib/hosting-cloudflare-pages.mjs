@@ -25,7 +25,7 @@ function projectName(value) {
 function parseRepository(repositoryUrl) {
   const url = new URL(repositoryUrl);
   if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) {
-    throw new Error('Cloudflare Pages Git integration requires a public GitHub repository URL');
+    throw new Error('Cloudflare Pages Git integration requires a valid GitHub repository URL');
   }
   const parts = url.pathname.replace(/\.git$/i, '').split('/').filter(Boolean);
   if (parts.length !== 2) throw new Error('Invalid GitHub repository URL');
