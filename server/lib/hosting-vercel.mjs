@@ -34,7 +34,7 @@ function projectName(value) {
 }
 
 function framework(profile = {}) {
-  const values = { nextjs: 'nextjs', vite: 'vite', 'create-react-app': 'create-react-app', gatsby: 'gatsby', django: 'django', fastapi: 'fastapi', flask: 'flask', express: 'express', nuxt: 'nuxtjs', remix: 'remix' };
+  const values = { nextjs: 'nextjs', vite: 'vite', 'create-react-app': 'create-react-app', gatsby: 'gatsby', astro: 'astro', angular: 'angular', vue: 'vue', svelte: 'svelte', sveltekit: 'sveltekit', django: 'django', fastapi: 'fastapi', flask: 'flask', express: 'express', nuxt: 'nuxtjs', remix: 'remix' };
   return values[profile.framework] || null;
 }
 
