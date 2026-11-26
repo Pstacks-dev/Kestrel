@@ -19,7 +19,7 @@ test('creates a Railway project, GitHub service and deployment for the exact com
     { serviceInstanceDeployV2: 'deployment-1' },
   ];
   const result = await createRailwayDeployment({
-    token: 'railway-test-token', repositoryUrl: 'https://github.com/acme/demo.git',
+    token: 'railway-test-token', repositoryUrl: 'https://github.com/acme/private-demo.git',
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo', serviceName: 'Demo API',
     workspaceId: 'workspace-1', env: { DATABASE_URL: 'postgres://secret' },
   }, {
@@ -31,7 +31,7 @@ test('creates a Railway project, GitHub service and deployment for the exact com
   });
   assert.equal(calls.length, 5);
   assert.equal(calls[0].variables.input.workspaceId, 'workspace-1');
-  assert.deepEqual(calls[2].variables.input.source, { repo: 'acme/demo' });
+  assert.deepEqual(calls[2].variables.input.source, { repo: 'acme/private-demo' });
   assert.equal(calls[2].variables.input.branch, 'main');
   assert.equal(calls[3].query.includes('variableCollectionUpsert'), true);
   assert.equal(calls[3].variables.input.variables.DATABASE_URL, 'postgres://secret');

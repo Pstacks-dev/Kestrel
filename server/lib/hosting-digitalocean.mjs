@@ -18,7 +18,7 @@ async function request(token, path, { method = 'GET', body, fetchImpl = fetch } 
 
 function repositoryPath(repositoryUrl) {
   const url = new URL(repositoryUrl);
-  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) throw new Error('A public GitHub repository URL is required');
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) throw new Error('A GitHub repository URL is required');
   const parts = url.pathname.replace(/\.git$/i, '').split('/').filter(Boolean);
   if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9_.-]{1,100}$/.test(part))) throw new Error('Invalid GitHub repository URL');
   return `${parts[0]}/${parts[1]}`;
