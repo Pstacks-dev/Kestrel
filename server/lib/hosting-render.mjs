@@ -56,7 +56,7 @@ function normalizeRenderRootDir(value) {
   const raw = String(value ?? '').trim();
   if (!raw || raw === '.' || raw === '/') return null;
   const root = raw.replace(/^\.\//, '').replace(/^\/+|\/+$/g, '');
-  if (!root || root.includes('\\\\') || root.includes('\\0') || /^[A-Za-z]:/.test(root) ||
+  if (!root || root.includes('\\') || root.includes('\0') || /^[A-Za-z]:/.test(root) ||
       root.split('/').some((part) => !part || part === '.' || part === '..')) {
     throw new Error('Invalid Render root directory');
   }
@@ -65,7 +65,7 @@ function normalizeRenderRootDir(value) {
 
 function normalizeRenderRelativePath(value, label) {
   const path = String(value || '').trim().replace(/^\.\//, '');
-  if (!path || path.length > 500 || path.startsWith('/') || path.includes('\\\\') || path.includes('\\0') ||
+  if (!path || path.length > 500 || path.startsWith('/') || path.includes('\\') || path.includes('\0') ||
       /^[A-Za-z]:/.test(path) || path.split('/').some((part) => !part || part === '.' || part === '..')) {
     throw new Error(`Invalid Render ${label}`);
   }
