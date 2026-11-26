@@ -46,24 +46,24 @@ export function decryptSecret(encryptedValue, ivHex, authTagHex) {
  * Verify GitHub webhook HMAC-SHA256 signature
  */
 export function verifyGitHubSignature(rawBody, signatureHeader, secret) {
-  if (!signatureHeader || !secret) return false;
-  
-  const parts = signatureHeader.split('=');
-  if (parts.length !== 2 || parts[0] !== 'sha256') return false;
-  
-  const expectedSignature = parts[1];
-  const hmac = crypto.createHmac('sha256', secret);
-  hmac.update(rawBody);
-  const computedSignature = hmac.digest('hex');
-  
-  try {
-    const expectedBuf = Buffer.from(expectedSignature, 'hex');
-    const computedBuf = Buffer.from(computedSignature, 'hex');
-    if (expectedBuf.length !== computedBuf.length) return false;
-    return crypto.timingSafeEqual(expectedBuf, computedBuf);
-  } catch {
+  // GitHub sends exactly 32 digest bytes encoded as 64 hexadecimal characters.
+  // Reject malformed encodings before Buffer.from(), which otherwise accepts
+  // truncated and partially valid hexadecimal input.
+  if ((typeof rawBody !== 'string' && !Buffer.isBuffer(rawBody)) ||
+      typeof signatureHeader !== 'string' ||
+      !/^sha256=[a-f0-9]{64}$/i.test(signatureHeader) ||
+      typeof secret !== 'string' || secret.length === 0) {
     return false;
   }
+
+  const expectedSignature = signatureHeader.slice('sha256='.length);
+  const hmac = crypto.createHmac('sha256', secret);
+  hmac.update(rawBody);
+  const expectedBuf = Buffer.from(expectedSignature, 'hex');
+  const computedBuf = hmac.digest();
+
+  return expectedBuf.length === computedBuf.length &&
+    crypto.timingSafeEqual(expectedBuf, computedBuf);
 }
 
 /**
