@@ -67,15 +67,15 @@ function projectSlug(project) {
   return slug || `kestrel-${String(project.id).slice(0, 8)}`;
 }
 
-async function markQueue(query, queueId, status, error = null, attemptCount = 0) {
+async function markQueue(query, queueId, status, error = null, attemptCount = 0, claimToken = null) {
   const retry = status === 'failed' && attemptCount < 6;
   await query(
     `update public.managed_hosting_automation_queue
      set status = $2, locked_at = null, last_error = $3,
          available_at = case when $4 then now() + make_interval(secs => least(900, 15 * power(2, greatest($5 - 1, 0)))::int) else available_at end,
          updated_at = now()
-     where id = $1`,
-    [queueId, retry ? 'queued' : status, error ? String(error).slice(0, 500) : null, retry, attemptCount],
+     where id = $1 and ($6::timestamptz is null or locked_at = $6::timestamptz)`,
+    [queueId, retry ? 'queued' : status, error ? String(error).slice(0, 500) : null, retry, attemptCount, claimToken],
   );
 }
 
@@ -91,20 +91,20 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
     );
     const run = result.rows[0];
     if (!run || run.run_status !== 'succeeded') {
-      await markQueue(query, item.id, 'skipped', 'Pipeline run is no longer successful', item.attempt_count);
+      await markQueue(query, item.id, 'skipped', 'Pipeline run is no longer successful', item.attempt_count, item.locked_at);
       return { status: 'skipped' };
     }
     if (run.source_type !== 'git' || run.branch !== run.default_branch) {
-      await markQueue(query, item.id, 'skipped', 'Automatic production deployments are limited to successful default-branch Git runs', item.attempt_count);
+      await markQueue(query, item.id, 'skipped', 'Automatic production deployments are limited to successful default-branch Git runs', item.attempt_count, item.locked_at);
       return { status: 'skipped' };
     }
     if (!/^[a-fA-F0-9]{40}$/.test(run.commit_sha || '')) {
-      await markQueue(query, item.id, 'skipped', 'Pipeline run has no immutable Git commit SHA', item.attempt_count);
+      await markQueue(query, item.id, 'skipped', 'Pipeline run has no immutable Git commit SHA', item.attempt_count, item.locked_at);
       return { status: 'skipped' };
     }
     const repository = parseGitHubRepository(run.repository_url);
     if (!repository) {
-      await markQueue(query, item.id, 'skipped', 'Automatic managed deployments require a valid HTTPS GitHub repository URL', item.attempt_count);
+      await markQueue(query, item.id, 'skipped', 'Automatic managed deployments require a valid HTTPS GitHub repository URL', item.attempt_count, item.locked_at);
       return { status: 'skipped' };
     }
 
@@ -148,7 +148,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       verified.has(provider.id) &&
       (provider.id !== 'netlify' || (artifacts.rows.length > 0 && Object.keys(env).length === 0)));
     if (!selected) {
-      await markQueue(query, item.id, 'skipped', 'No verified compatible provider is available. Netlify requires successful static artifacts and currently cannot sync project secrets.', item.attempt_count);
+      await markQueue(query, item.id, 'skipped', 'No verified compatible provider is available. Netlify requires successful static artifacts and currently cannot sync project secrets.', item.attempt_count, item.locked_at);
       return { status: 'skipped' };
     }
 
@@ -161,7 +161,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
         [item.image_build_id, run.organization_id, run.project_id],
       )).rows[0] : null;
       if (imageBuild && imageBuild.provider_id !== selected.id) {
-        await markQueue(query, item.id, 'skipped', 'The provider connection changed after the image registry was provisioned; retry the deployment with a fresh pipeline run', item.attempt_count);
+        await markQueue(query, item.id, 'skipped', 'The provider connection changed after the image registry was provisioned; retry the deployment with a fresh pipeline run', item.attempt_count, item.locked_at);
         return { status: 'skipped' };
       }
       if (!imageBuild) {
@@ -188,19 +188,19 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
           [item.id],
         )).rows[0];
         await query(
-          'update public.managed_hosting_automation_queue set image_build_id = $2, status = \'waiting_for_image\', locked_at = null, available_at = now() + interval \'20 seconds\', updated_at = now() where id = $1',
-          [item.id, imageBuild.id],
+          'update public.managed_hosting_automation_queue set image_build_id = $2, status = \'waiting_for_image\', locked_at = null, available_at = now() + interval \'20 seconds\', updated_at = now() where id = $1 and locked_at = $3',
+          [item.id, imageBuild.id, item.locked_at],
         );
         return { status: 'waiting_for_image', imageBuildId: imageBuild.id, provider: selected.id };
       }
       if (imageBuild.status !== 'succeeded' || !imageBuild.image_digest_ref) {
         if (imageBuild.status === 'failed' && imageBuild.attempt_count >= 4) {
-          await markQueue(query, item.id, 'skipped', 'Managed OCI image build exhausted its retry budget', item.attempt_count);
+          await markQueue(query, item.id, 'skipped', 'Managed OCI image build exhausted its retry budget', item.attempt_count, item.locked_at);
           return { status: 'skipped' };
         }
         await query(
-          'update public.managed_hosting_automation_queue set status = \'waiting_for_image\', locked_at = null, available_at = now() + interval \'30 seconds\', updated_at = now() where id = $1',
-          [item.id],
+          'update public.managed_hosting_automation_queue set status = \'waiting_for_image\', locked_at = null, available_at = now() + interval \'30 seconds\', updated_at = now() where id = $1 and locked_at = $2',
+          [item.id, item.locked_at],
         );
         return { status: 'waiting_for_image', imageBuildId: imageBuild.id, buildStatus: imageBuild.status };
       }
@@ -261,11 +261,11 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       );
       return inserted.rows[0];
     });
-    await markQueue(query, item.id, 'succeeded', null, item.attempt_count);
+    await markQueue(query, item.id, 'succeeded', null, item.attempt_count, item.locked_at);
     return { status: 'succeeded', deploymentId: saved.id, provider: selected.id };
   } catch (error) {
     const safeMessage = redactSecrets(String(error?.message || 'Managed deployment failed'));
-    await markQueue(query, item.id, 'failed', safeMessage, item.attempt_count);
+    await markQueue(query, item.id, 'failed', safeMessage, item.attempt_count, item.locked_at);
     return { status: 'failed', error: safeMessage };
   }
 }
@@ -278,20 +278,37 @@ export async function processManagedHostingQueue({ query, transaction, fetchImpl
       `with candidate as (
          select q.id
          from public.managed_hosting_automation_queue q
-         where q.status in ('queued','failed')
+         where (
+             q.status in ('queued','failed','waiting_for_image')
+             or (q.status = 'running' and (q.locked_at is null or q.locked_at < now() - interval '10 minutes'))
+           )
            and q.attempt_count < 6
            and q.available_at <= now()
-           and (q.locked_at is null or q.locked_at < now() - interval '10 minutes')
            and not exists (
              select 1 from public.managed_hosting_automation_queue running
-             where running.project_id = q.project_id and running.status = 'running'
+             where running.project_id = q.project_id
+               and running.status = 'running'
+               and running.id <> q.id
+               and running.locked_at is not null
+               and running.locked_at >= now() - interval '10 minutes'
            )
          order by q.created_at
          for update skip locked
          limit 1
+       ), exhausted as (
+         update public.managed_hosting_automation_queue q
+         set status = 'failed', locked_at = null,
+             last_error = 'Worker lease expired after retry budget was exhausted',
+             updated_at = now()
+         where q.status = 'running'
+           and q.attempt_count >= 6
+           and (q.locked_at is null or q.locked_at < now() - interval '10 minutes')
+         returning q.id
        )
        update public.managed_hosting_automation_queue q
-       set status = 'running', attempt_count = attempt_count + 1, locked_at = now(), updated_at = now()
+       set status = 'running',
+           attempt_count = attempt_count + case when q.status = 'waiting_for_image' then 0 else 1 end,
+           locked_at = now(), updated_at = now()
        from candidate where q.id = candidate.id
        returning q.*`,
     );
