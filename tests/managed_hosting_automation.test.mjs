@@ -15,6 +15,7 @@ test('managed hosting queue processor exits cleanly when no events are ready', a
 test('skips an automation event if its pipeline is no longer successful', async () => {
   const queueItem = {
     id: 'queue-1', pipeline_run_id: 'run-1', attempt_count: 1,
+    locked_at: '2026-11-26T12:00:00.000Z',
   };
   const updates = [];
   let claim = true;
@@ -37,6 +38,8 @@ test('skips an automation event if its pipeline is no longer successful', async 
   assert.deepEqual(result, { processed: 1 });
   assert.equal(updates.length, 1);
   assert.equal(updates[0].params[1], 'skipped');
+  assert.match(updates[0].sql, /locked_at = \$6::timestamptz/i);
+  assert.equal(updates[0].params[5], queueItem.locked_at);
 });
 
 test('bounds each queue batch to at most twenty events', async () => {
@@ -160,4 +163,33 @@ test('refuses a suspended or cross-workspace installation before requesting a to
   assert.equal(updates.length, 1);
   assert.equal(updates[0][1], 'queued'); // Retryable installation failures are re-queued.
   assert.match(updates[0][2], /missing, suspended, or not linked/);
+});
+
+
+test('claims image-waiting jobs and reclaims expired running leases safely', async () => {
+  let claimSql = '';
+  const result = await processManagedHostingQueue({
+    query: async (sql) => {
+      claimSql = sql;
+      return { rowCount: 0, rows: [] };
+    },
+    transaction: async () => { throw new Error('No transaction should be opened'); },
+  });
+  assert.deepEqual(result, { processed: 0 });
+  assert.match(claimSql, /'queued','failed','waiting_for_image'/i);
+  assert.match(claimSql, /q\.status = 'running'.*q\.locked_at is null or q\.locked_at < now\(\) - interval '10 minutes'/is);
+  assert.match(claimSql, /running\.id <> q\.id/i);
+  assert.match(claimSql, /case when q\.status = 'waiting_for_image' then 0 else 1 end/i);
+});
+
+test('uses a claim timestamp as a fencing token for image-wait state transitions', async () => {
+  let claimSql = '';
+  await processManagedHostingQueue({
+    query: async (sql) => {
+      claimSql = sql;
+      return { rowCount: 0, rows: [] };
+    },
+    transaction: async () => {},
+  });
+  assert.match(claimSql, /locked_at = now\(\).*returning q\.\*/is);
 });
