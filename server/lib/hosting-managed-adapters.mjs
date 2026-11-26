@@ -46,9 +46,9 @@ export async function createManagedProviderDeployment(provider, credentials, inp
 }
 
 export async function deployManagedProviderService(provider, credentials, resource, commitSha, options, context = {}) {
-  if (provider === 'render') return deployRenderService({ ...credentials, serviceId: resource.provider_service_id, commitSha, env: context.env || {} }, options);
+  if (provider === 'render') return deployRenderService({ ...credentials, ...context, serviceId: resource.provider_service_id, commitSha, env: context.env || {} }, options);
   if (provider === 'railway') return deployRailwayService({ ...credentials, projectId: resource.provider_project_id, serviceId: resource.provider_service_id, environmentId: resource.provider_environment_id, commitSha, env: context.env || {}, profile: context.profile || {} }, options);
-  if (provider === 'digitalocean-app-platform') return deployDigitalOceanApp({ ...credentials, appId: resource.provider_project_id, commitSha, env: context.env || {} }, options);
+  if (provider === 'digitalocean-app-platform') return deployDigitalOceanApp({ ...credentials, ...context, appId: resource.provider_project_id, commitSha, env: context.env || {} }, options);
   if (provider === 'vercel') return deployVercelProject({ ...credentials, projectId: resource.provider_project_id, projectName: resource.provider_service_id, commitSha, ...context }, options);
   if (provider === 'heroku') return deployHerokuApp({ ...credentials, appId: resource.provider_project_id, commitSha, ...context }, options);
   if (provider === 'flyio') return deployFlyApp({ ...credentials, appName: resource.provider_project_id, commitSha, ...context }, options);
