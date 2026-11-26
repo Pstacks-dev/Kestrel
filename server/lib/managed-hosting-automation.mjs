@@ -84,7 +84,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
     const result = await query(
       `select r.id as run_id, r.project_id, r.branch, r.commit_sha, r.status as run_status,
               p.organization_id, p.name as project_name, p.repository_url, p.default_branch, p.source_type,
-              p.github_installation_id
+              p.github_installation_id, p.oci_build_context
        from public.pipeline_runs r join public.projects p on p.id = r.project_id
        where r.id = $1`,
       [item.pipeline_run_id],
@@ -173,14 +173,14 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
         const inserted = await query(
           `insert into public.managed_hosting_image_builds
              (automation_queue_id, organization_id, project_id, provider_id, repository_url, branch,
-              commit_sha, image, registry, registry_username_ciphertext, registry_username_iv,
+              commit_sha, image, registry, build_context, registry_username_ciphertext, registry_username_iv,
               registry_username_auth_tag, registry_password_ciphertext, registry_password_iv,
               registry_password_auth_tag)
-           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
            on conflict (automation_queue_id) do update set updated_at = now()
            returning *`,
           [item.id, run.organization_id, run.project_id, selected.id, run.repository_url, run.branch,
-            run.commit_sha, registry.image, registry.registry, username.encryptedValue, username.iv,
+            run.commit_sha, registry.image, registry.registry, run.oci_build_context || null, username.encryptedValue, username.iv,
             username.authTag, password.encryptedValue, password.iv, password.authTag],
         );
         imageBuild = inserted.rows[0] || (await query(

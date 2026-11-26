@@ -170,3 +170,17 @@ test('GitHub installation webhook validates delivery ID and applies state change
   assert.match(routes, /await transaction\(async \(client\) =>/);
   assert.match(routes, /processGitHubInstallationDelivery\(client, \{ deliveryId, action, installationId \}\)/);
 });
+
+
+test('project OCI build context is configurable and passed to managed image workers', async () => {
+  const sql = await readFile(new URL('../db/migrations/036_project_oci_build_context.sql', import.meta.url), 'utf8');
+  const automation = await readFile(new URL('../server/lib/managed-hosting-automation.mjs', import.meta.url), 'utf8');
+  const routes = await readFile(new URL('../server/control-plane.mjs', import.meta.url), 'utf8');
+  const worker = await readFile(new URL('../worker/agent.mjs', import.meta.url), 'utf8');
+  assert.match(sql, /add column if not exists oci_build_context text/i);
+  assert.match(sql, /add column if not exists build_context text/i);
+  assert.match(automation, /p\.oci_build_context/);
+  assert.match(routes, /buildContext: row\.build_context/);
+  assert.match(worker, /resolveOciBuildContext\([\s\S]*build\.buildContext\)/);
+  assert.match(routes, /api\/projects\/:projectId\/build-settings/);
+});

@@ -654,6 +654,65 @@ app.get('/api/projects/:projectId/webhook-config', userAuth, async (req, res) =>
   }
 });
 
+// Project-level OCI build settings. The worker validates the selected path against the pinned commit.
+app.get('/api/projects/:projectId/build-settings', userAuth, async (req, res) => {
+  try {
+    const result = await query(
+      `select p.oci_build_context as "ociBuildContext"
+       from public.projects p
+       join public.organization_members m on m.organization_id = p.organization_id
+       where p.id = $1 and m.user_id = $2`,
+      [req.params.projectId, req.user.id],
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Project not found' });
+    return res.json({ ociBuildContext: result.rows[0].ociBuildContext || null });
+  } catch (error) {
+    console.error('Project build settings lookup failed:', error.message);
+    return res.status(500).json({ error: 'Could not load project build settings' });
+  }
+});
+
+app.patch('/api/projects/:projectId/build-settings', userAuth, async (req, res) => {
+  const rawContext = req.body?.ociBuildContext;
+  const buildContext = rawContext === null || rawContext === '' ? null : rawContext;
+  if (buildContext !== null) {
+    if (typeof buildContext !== 'string' || buildContext.length > 200 ||
+        buildContext.includes('\\') || buildContext.includes('\0') ||
+        buildContext.startsWith('/') || /^[A-Za-z]:/.test(buildContext)) {
+      return res.status(400).json({ error: 'OCI build context must be a safe repository-relative directory' });
+    }
+    const parts = buildContext.split('/');
+    if (buildContext !== '.' && parts.some((part) => !part || part === '.' || part === '..')) {
+      return res.status(400).json({ error: 'OCI build context cannot contain empty or traversal path segments' });
+    }
+  }
+  try {
+    const member = await query(
+      `select m.role, p.organization_id from public.projects p
+       join public.organization_members m on m.organization_id = p.organization_id
+       where p.id = $1 and m.user_id = $2`,
+      [req.params.projectId, req.user.id],
+    );
+    if (!member.rowCount) return res.status(404).json({ error: 'Project not found' });
+    if (!['owner', 'admin', 'developer'].includes(member.rows[0].role)) {
+      return res.status(403).json({ error: 'Developer access required to change build settings' });
+    }
+    await query(
+      'update public.projects set oci_build_context = $2 where id = $1',
+      [req.params.projectId, buildContext],
+    );
+    await query(
+      `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
+       values($1,$2,'project.build_context_updated','project',$3,$4::jsonb)`,
+      [member.rows[0].organization_id, req.user.id, req.params.projectId, JSON.stringify({ ociBuildContext: buildContext })],
+    );
+    return res.json({ ok: true, ociBuildContext: buildContext });
+  } catch (error) {
+    console.error('Project build settings update failed:', error.message);
+    return res.status(500).json({ error: 'Could not update project build settings' });
+  }
+});
+
 // GitHub Webhook Receiver
 app.post('/api/webhooks/github', async (req, res) => {
   const signature = req.headers['x-hub-signature-256'];
@@ -1348,7 +1407,7 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
         id: row.id, leaseToken: row.lease_token, organizationId: row.organization_id,
         projectId: row.project_id, repositoryUrl: row.repository_url,
         githubInstallationId: row.github_installation_id,
-        branch: row.branch, commitSha: row.commit_sha, image: row.image,
+        branch: row.branch, commitSha: row.commit_sha, image: row.image, buildContext: row.build_context || null,
         registry: row.registry, provider: row.provider_id,
         registryUsername: decryptSecret(row.registry_username_ciphertext, row.registry_username_iv, row.registry_username_auth_tag),
         registryPassword: decryptSecret(row.registry_password_ciphertext, row.registry_password_iv, row.registry_password_auth_tag),
