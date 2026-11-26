@@ -70,12 +70,13 @@ test('creates ECS Express service from immutable OCI image and signs AWS request
 test('updates ECS Express service to a later container image', async () => {
   const result = await updateEcsExpressDeployment({
     ...credentials, serviceArn: 'arn:aws:ecs:us-east-1:123456789012:service/default/demo',
-    containerImage: '123456789012.dkr.ecr.us-east-1.amazonaws.com/demo:next',
+    containerImage: '123456789012.dkr.ecr.us-east-1.amazonaws.com/demo:next', env: {},
   }, { fetchImpl: async (url, options) => {
     assert.equal(options.headers['x-amz-target'], 'AmazonEC2ContainerServiceV20141113.UpdateExpressGatewayService');
     const body = JSON.parse(options.body);
     assert.equal(body.serviceArn.endsWith('/demo'), true);
     assert.match(body.primaryContainer.image, /:next$/);
+    assert.deepEqual(body.primaryContainer.environment, []);
     return response({ service: service('UPDATING', 'arn:aws:ecs:us-east-1:123456789012:service-revision/demo/next') });
   } });
   assert.match(result.deploymentId, /service-revision\/demo\/next$/);
