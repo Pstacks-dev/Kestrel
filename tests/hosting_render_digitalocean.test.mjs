@@ -424,3 +424,17 @@ test('updates DigitalOcean Dockerfile paths with the monorepo source directory o
   assert.equal(updatedSpec.services[0].dockerfile_path, 'services/api/Dockerfile');
 });
 
+
+
+test('rejects unsafe existing Render and DigitalOcean monorepo roots before provider requests', async () => {
+  const noNetwork = async () => assert.fail('Provider API must not be called for an unsafe monorepo root');
+  await assert.rejects(deployRenderService({
+    apiKey: 'render-token', serviceId: 'srv-unsafe', commitSha: 'a'.repeat(40),
+    rootDir: '../outside', profile: {}, env: {},
+  }, { fetchImpl: noNetwork }), /Invalid Render root directory/);
+  await assert.rejects(deployDigitalOceanApp({
+    accessToken: 'do-token', appId: 'app-unsafe', commitSha: 'b'.repeat(40),
+    rootDir: '../outside', profile: {}, env: {},
+  }, { fetchImpl: noNetwork }), /Invalid DigitalOcean source directory/);
+});
+
