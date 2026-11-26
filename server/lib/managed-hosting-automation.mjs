@@ -62,7 +62,14 @@ export async function inspectGitHubSource(repository, commitSha, fetchImpl = fet
     try { packageJson = JSON.parse(Buffer.from(file.content || '', 'base64').toString('utf8')); }
     catch { throw new Error('Repository package.json is invalid'); }
   }
-  return detectProjectProfile({ files, packageJson });
+  const profile = detectProjectProfile({ files, packageJson });
+  profile.rootDir = String(buildContext || '.') === '.' ? '.' : String(buildContext);
+  if (profile.needsContainer) {
+    const dockerfile = files.find((name) => ['dockerfile', 'containerfile'].includes(String(name).toLowerCase())) || 'Dockerfile';
+    profile.dockerfilePath = `./${dockerfile}`;
+    profile.dockerContext = '.';
+  }
+  return profile;
 }
 
 async function loadProjectEnvironment(query, projectId) {
