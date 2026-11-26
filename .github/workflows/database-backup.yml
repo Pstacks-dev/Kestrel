@@ -49,6 +49,7 @@ jobs:
           KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY: ${{ secrets.KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY }}
           KESTREL_BACKUP_ENCRYPTION_KEY: ${{ secrets.KESTREL_BACKUP_ENCRYPTION_KEY }}
           KESTREL_BACKUP_BUCKET: ${{ vars.KESTREL_BACKUP_BUCKET }}
+          KESTREL_BACKUP_RETENTION_DAYS: ${{ vars.KESTREL_BACKUP_RETENTION_DAYS || '90' }}
         run: npm run backup:db
 
       - name: Download, decrypt and verify uploaded archive
