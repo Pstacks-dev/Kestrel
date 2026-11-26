@@ -251,9 +251,9 @@ export function registerManagedDeploymentRoutes(app, {
         port: req.body?.port || (providerId === 'flyio' ? 3000 : 8080),
         env: projectEnv,
         files: staticFiles,
-        buildCommand: req.body?.buildCommand || 'npm run build',
+        buildCommand: req.body?.buildCommand || profile.buildCommand || 'npm run build',
         destinationDir: req.body?.destinationDir || profile.outputDirectory || 'dist',
-        rootDir: req.body?.rootDir || '/',
+        rootDir: profile.rootDir && profile.rootDir !== '.' ? profile.rootDir : '/',
       };
       const providerDeployment = resource
         ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir })
