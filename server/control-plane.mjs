@@ -497,8 +497,7 @@ app.post('/api/projects', sensitiveLimiter, userAuth, orgAccess, async (req, res
       !repoUrl ||
       repoUrl.protocol !== 'https:' ||
       repoUrl.username ||
-      repoUrl.password ||
-      !allowedHosts.includes(repoUrl.hostname.toLowerCase())
+      repoUrl.password ||      !allowedHosts.includes(repoUrl.hostname.toLowerCase())
     ))
   ) {
     return res.status(400).json({
@@ -997,8 +996,7 @@ app.post('/api/runs/:runId/cancel', sensitiveLimiter, userAuth, async (req, res)
       await c.query(
         "update public.jobs set status = 'canceled', finished_at = now(), canceled_at = now() where run_id = $1 and status in ('queued', 'running')",
         [runId]
-      );
-      await c.query(
+      );      await c.query(
         `update public.deployment_releases
          set status = 'failed', health_checked_at = now(), error_message = 'Deployment run was canceled'
          where pipeline_run_id = $1 and status in ('queued', 'deploying')`,
@@ -1497,8 +1495,7 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
     res.json({ build });
   } catch (error) {
     console.error('Managed OCI build claim failed:', { code: error.code, message: redactSecrets(error.message) });
-    res.status(503).json({ error: 'Could not claim managed OCI build; the lease will be recovered automatically' });
-  }
+    res.status(503).json({ error: 'Could not claim managed OCI build; the lease will be recovered automatically' });  }
 });
 
 app.post('/api/workers/managed-image-builds/:buildId/release', workerAuth, async (req, res) => {
@@ -1998,7 +1995,6 @@ registerGitHubAppRoutes(app, { userAuth, query, transaction });
 registerHostingRoutes(app, { userAuth, query });
 registerHostingConnectionRoutes(app, { userAuth, query, transaction });
 registerManagedDeploymentRoutes(app, { userAuth, query, transaction });
-
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
   console.error(err);
@@ -2024,16 +2020,44 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && isMain) {
     console.log(`Kestrel control plane listening on :${port}`)
   );
 
-  async function shutdown() {
+  let shuttingDown = false;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.info(`Kestrel control plane received ${signal}; beginning graceful shutdown.`);
     clearInterval(recovery);
-    stopManagedHostingAutomation();
-    server.close();
+
     try {
+      // Stop new automation ticks and let the active provider operation finish
+      // before closing the shared database pool.
+      await stopManagedHostingAutomation();
+    } catch (error) {
+      console.error('Managed hosting automation did not stop cleanly:', error?.message);
+    }
+
+    const forceCloseTimer = setTimeout(() => {
+      console.error('Control plane graceful shutdown deadline reached; closing remaining HTTP connections.');
+      server.closeAllConnections?.();
+    }, Math.max(1000, Number(process.env.KESTREL_SHUTDOWN_TIMEOUT_MS || 25000)));
+    forceCloseTimer.unref?.();
+
+    try {
+      await new Promise((resolve) => {
+        server.close((error) => {
+          if (error) console.error('HTTP server close reported an error:', error.message);
+          resolve();
+        });
+      });
       await pool.end();
-    } catch {}
-    process.exit(0);
+      console.info('Kestrel control plane shutdown completed.');
+    } catch (error) {
+      console.error('Kestrel control plane shutdown failed:', error?.message);
+      process.exitCode = 1;
+    } finally {
+      clearTimeout(forceCloseTimer);
+    }
   }
 
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
 }
