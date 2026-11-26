@@ -54,7 +54,7 @@ function validateInput(input) {
   return { ...input, registry, dockerfile, platforms, buildArgs };
 }
 
-function runProcess(command, args, { env, input, timeoutMs = 30 * 60 * 1000, abortSignal } = {}) {
+export function runProcess(command, args, { env, input, timeoutMs = 30 * 60 * 1000, abortSignal } = {}) {
   return new Promise((resolve, reject) => {
     if (abortSignal?.aborted) {
       reject(new OciBuildError('OCI builder command was aborted', 'oci_build_aborted', 503));
