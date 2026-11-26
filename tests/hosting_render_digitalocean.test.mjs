@@ -288,7 +288,7 @@ test('creates a Render Docker service using the configured monorepo root and Doc
   assert.equal(body.rootDir, 'apps/api');
   assert.equal(body.serviceDetails.runtime, 'docker');
   assert.deepEqual(body.serviceDetails.envSpecificDetails, {
-    dockerfilePath: './Dockerfile',
+    dockerfilePath: 'Dockerfile',
     dockerContext: '.',
   });
   assert.equal(body.serviceDetails.buildCommand, undefined);
