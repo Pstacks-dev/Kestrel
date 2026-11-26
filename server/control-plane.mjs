@@ -1394,6 +1394,10 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
          set status = case when attempt_count < 4 then 'queued' else 'failed' end,
              worker_id = null, lease_token = null, lease_expires_at = null,
              available_at = case when attempt_count < 4 then now() + interval '15 seconds' else available_at end,
+             finished_at = case when attempt_count < 4 then null else now() end,
+             last_error = case when attempt_count < 4
+               then 'Worker lease expired; retrying managed image build'
+               else 'Worker lease expired after retry budget was exhausted' end,
              updated_at = now()
          where organization_id = $1 and status = 'running' and lease_expires_at <= now()`,
         [worker.rows[0].organization_id],
