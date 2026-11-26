@@ -1,3 +1,7 @@
+export function isGitHubWebhookSecretReadableRole(role) {
+  return ['owner', 'admin', 'developer'].includes(role);
+}
+
 export function isSupportedGitHubWebhookEvent(event) {
   return event === 'push' || event === 'pull_request';
 }

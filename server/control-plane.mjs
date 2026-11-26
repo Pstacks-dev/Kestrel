@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { pool, query, transaction } from './lib/db.mjs';
 import { validatePipelineJobs } from './lib/pipeline.mjs';
-import { isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush, isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId, claimGitHubProjectWebhookDelivery } from './lib/github-webhooks.mjs';
+import { isGitHubWebhookSecretReadableRole, isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush, isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId, claimGitHubProjectWebhookDelivery } from './lib/github-webhooks.mjs';
 import {
   encryptSecret,
   decryptSecret,
@@ -632,6 +632,9 @@ app.get('/api/projects/:projectId/webhook-config', userAuth, async (req, res) =>
       [projectId, req.user.id]
     );
     if (!authCheck.rowCount) return res.status(403).json({ error: 'Project access denied' });
+    if (!isGitHubWebhookSecretReadableRole(authCheck.rows[0].role)) {
+      return res.status(403).json({ error: 'Developer access required to view webhook signing credentials' });
+    }
 
     let r = await query(
       'select id, webhook_secret as "webhookSecret", events, active, last_triggered_at as "lastTriggeredAt" from public.github_webhooks where project_id = $1',
