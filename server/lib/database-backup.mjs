@@ -28,7 +28,7 @@ export function parsePostgresConnection(value, label = 'database') {
     throw new Error(`A valid ${label} PostgreSQL URL is required`);
   }
   if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || !url.username || !url.pathname.slice(1)) {
-    throw new Error(`The ${label} URL must include PostgreSQL host, username and database name`);
+    throw new Error(`The ${label} URL must be a PostgreSQL URL with host, username and database name`);
   }
   return {
     host: url.hostname,
