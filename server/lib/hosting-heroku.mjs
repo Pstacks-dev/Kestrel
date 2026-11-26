@@ -20,10 +20,48 @@ async function request(apiKey, path, { method = 'GET', body, fetchImpl = fetch }
 
 function repository(repositoryUrl) {
   const url = new URL(repositoryUrl);
-  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) throw new Error('A public GitHub repository URL is required');
-  const parts = url.pathname.replace(/\.git$/i, '').split('/').filter(Boolean);
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) throw new Error('A GitHub repository URL is required');
+  const parts = url.pathname.replace(/\\.git$/i, '').split('/').filter(Boolean);
   if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9_.-]{1,100}$/.test(part))) throw new Error('Invalid GitHub repository URL');
   return { owner: parts[0], repo: parts[1] };
+}
+
+export async function resolveHerokuSourceArchiveUrl({ repositoryUrl, commitSha, installationToken, fetchImpl = fetch }) {
+  const repo = repository(repositoryUrl);
+  if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
+  if (!installationToken) return `https://github.com/${repo.owner}/${repo.repo}/archive/${commitSha}.tar.gz`;
+
+  const response = await fetchImpl(`https://api.github.com/repos/${repo.owner}/${repo.repo}/tarball/${commitSha}`, {
+    headers: {
+      authorization: `Bearer ${installationToken}`,
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+    },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(15000),
+  });
+  if (![301, 302, 303, 307, 308].includes(response.status)) {
+    throw new Error('GitHub did not provide a signed source archive URL for the private repository');
+  }
+  const location = response.headers.get('location');
+  if (!location) throw new Error('GitHub source archive response did not include a redirect URL');
+  const archive = new URL(location);
+  if (archive.protocol !== 'https:' || archive.hostname !== 'codeload.github.com' || !archive.pathname.includes(commitSha)) {
+    throw new Error('GitHub returned an invalid signed source archive URL');
+  }
+  return archive.href;
+}
+
+function validateSourceArchiveUrl(repositoryUrl, commitSha, sourceArchiveUrl) {
+  if (!sourceArchiveUrl) {
+    const repo = repository(repositoryUrl);
+    return `https://github.com/${repo.owner}/${repo.repo}/archive/${commitSha}.tar.gz`;
+  }
+  const archive = new URL(sourceArchiveUrl);
+  if (archive.protocol !== 'https:' || !['github.com', 'codeload.github.com'].includes(archive.hostname) || !archive.pathname.includes(commitSha)) {
+    throw new Error('Invalid Heroku source archive URL');
+  }
+  return archive.href;
 }
 
 function appName(value) {
@@ -40,10 +78,10 @@ function status(value) {
   return 'unknown';
 }
 
-async function createBuild({ apiKey, appId, repositoryUrl, commitSha }, { fetchImpl = fetch } = {}) {
+async function createBuild({ apiKey, appId, repositoryUrl, commitSha, sourceArchiveUrl }, { fetchImpl = fetch } = {}) {
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
   const repo = repository(repositoryUrl);
-  const sourceUrl = `https://github.com/${repo.owner}/${repo.repo}/archive/${commitSha}.tar.gz`;
+  const sourceUrl = validateSourceArchiveUrl(repositoryUrl, commitSha, sourceArchiveUrl);
   const build = await request(apiKey, `/apps/${encodeURIComponent(appId)}/builds`, {
     method: 'POST', fetchImpl,
     body: { source_blob: { url: sourceUrl, version: commitSha } },
@@ -52,7 +90,7 @@ async function createBuild({ apiKey, appId, repositoryUrl, commitSha }, { fetchI
   return { provider: 'heroku', deploymentId: build.id, status: status(build.status), releaseId: build.release?.id || null };
 }
 
-export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = 'main', commitSha, projectName: name, dynoSize = 'basic', dynoQuantity = 1 }, { fetchImpl = fetch } = {}) {
+export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = 'main', commitSha, projectName: name, dynoSize = 'basic', dynoQuantity = 1, sourceArchiveUrl }, { fetchImpl = fetch } = {}) {
   if (!apiKey) throw new Error('Heroku API key is required');
   estimateHerokuDynoCost(dynoSize, dynoQuantity);
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) throw new Error('Invalid deployment branch');
@@ -63,13 +101,13 @@ export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = '
     body: { name: appName(name), region: 'us', stack: 'heroku-24' },
   });
   if (!app.id || !app.name) throw new Error('Heroku did not return an app identifier');
-  const build = await createBuild({ apiKey, appId: app.id, repositoryUrl: `https://github.com/${repo.owner}/${repo.repo}`, commitSha }, { fetchImpl });
+  const build = await createBuild({ apiKey, appId: app.id, repositoryUrl: `https://github.com/${repo.owner}/${repo.repo}`, commitSha, sourceArchiveUrl }, { fetchImpl });
   return { ...build, projectId: app.id, serviceId: app.name, environmentId: null, providerUrl: app.web_url || null, dynoSize, dynoQuantity };
 }
 
-export async function deployHerokuApp({ apiKey, appId, repositoryUrl, commitSha, dynoSize = 'basic', dynoQuantity = 1 }, { fetchImpl = fetch } = {}) {
+export async function deployHerokuApp({ apiKey, appId, repositoryUrl, commitSha, dynoSize = 'basic', dynoQuantity = 1, sourceArchiveUrl }, { fetchImpl = fetch } = {}) {
   estimateHerokuDynoCost(dynoSize, dynoQuantity);
-  return createBuild({ apiKey, appId, repositoryUrl, commitSha }, { fetchImpl });
+  return createBuild({ apiKey, appId, repositoryUrl, commitSha, sourceArchiveUrl }, { fetchImpl });
 }
 
 export async function getHerokuDeployment({ apiKey, appId, deploymentId, dynoSize = 'basic', dynoQuantity = 1 }, { fetchImpl = fetch } = {}) {
