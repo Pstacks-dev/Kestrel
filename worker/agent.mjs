@@ -10,6 +10,7 @@ import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
 import { resolveJobWorkingDirectory } from './working-directory.mjs';
 import { resolveWorkerToken } from './config.mjs';
+import { createDrainController } from './drain-controller.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = resolveWorkerToken();
@@ -36,7 +37,8 @@ const headers = {
 };
 
 let isDraining = false;
-const activeJobs = new Map(); // jobId -> { abortController, containerName }
+let managedImageBuildActive = false;
+const activeJobs = new Map(); // jobId -> { abortController, containerName?, child? }
 
 async function api(endpoint, body) {
   const r = await fetch(`${API}${endpoint}`, {
@@ -90,7 +92,8 @@ async function downloadUploadedSource(job, workspace) {
   if (!files.length) throw new Error('This uploaded project contains no files');
 }
 
-async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) {
+async function runCommand(command, cwd, onLine, job, secretValues, abortController) {
+  const abortSignal = abortController?.signal;
   const start = Date.now();
   const timeoutMs = (job.timeoutSeconds || 1800) * 1000;
 
@@ -121,6 +124,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      activeJobs.set(job.id, { abortController, child });
 
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -157,6 +161,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       child.on('close', (code) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
+        activeJobs.delete(job.id);
         resolve({
           exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
           durationMs: Date.now() - start,
@@ -166,6 +171,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       child.on('error', (e) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
+        activeJobs.delete(job.id);
         onLine('stderr', redactSecrets(e.message, secretValues));
         resolve({ exitCode: 1, durationMs: Date.now() - start });
       });
@@ -175,7 +181,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
   // Default Docker container executor
   return new Promise((resolve) => {
     const containerName = `kestrel-job-${String(job.id).replace(/[^a-zA-Z0-9_.-]/g, '')}`;
-    activeJobs.set(job.id, { containerName, abortSignal });
+    activeJobs.set(job.id, { containerName, abortController });
 
     const args = [
       'run',
@@ -495,7 +501,7 @@ async function execute(job) {
       },
       job,
       secretValues,
-      abortController.signal
+      abortController
     );
 
     // Collect any generated artifacts
@@ -527,7 +533,8 @@ async function executeManagedImageBuild(build) {
   const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
   let leaseLost = false;
   const heartbeat = setInterval(async () => {
-    try {
+    managedImageBuildActive = true;
+  try {
       await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/lease', { leaseToken: build.leaseToken });
     } catch (error) {
       if (error.message.includes('409') || error.message.includes('expired')) leaseLost = true;
@@ -580,6 +587,7 @@ async function executeManagedImageBuild(build) {
     }).catch(() => {});
   } finally {
     clearInterval(heartbeat);
+    managedImageBuildActive = false;
     await fs.rm(workspace, { recursive: true, force: true }).catch(() => {});
     console.log('[oci] Worker build duration: ' + (Date.now() - startedAt) + 'ms');
   }
@@ -626,34 +634,32 @@ const heartbeatInterval = setInterval(() => {
   }).catch((e) => console.error('heartbeat error:', e.message));
 }, 10000);
 
-// Graceful shutdown handling
+// Graceful shutdown handling. Poll loops stop claiming work, active jobs finish
+// naturally, and a bounded timeout is only used as a last-resort lease recovery.
+const drainTimeoutMs = Math.max(5000, Math.min(600000, Number(process.env.KESTREL_WORKER_DRAIN_TIMEOUT_MS || 60000)));
+const drainController = createDrainController({
+  activeJobs,
+  isManagedImageBuildActive: () => managedImageBuildActive,
+  timeoutMs: drainTimeoutMs,
+  stopContainer: (name) => spawn(DOCKER, ['stop', '--time', '2', name], { stdio: 'ignore' }),
+  killChild: (child) => child.kill('SIGTERM'),
+  forceExit: () => process.exit(1),
+  logger: console,
+});
+
 function handleShutdown(signal) {
+  if (isDraining) return;
   console.log(`Received ${signal}, draining worker...`);
   isDraining = true;
   api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
-
-  if (activeJobs.size === 0) {
-    clearInterval(heartbeatInterval);
-    process.exit(0);
-  }
-
-  const drainTimer = setTimeout(() => {
-    console.log('Drain timeout exceeded; aborting remaining containers.');
-    for (const [jobId, { abortSignal, containerName }] of activeJobs.entries()) {
-      abortSignal?.abort();
-      if (EXECUTOR === 'docker') {
-        spawn(DOCKER, ['stop', '--time', '2', containerName], { stdio: 'ignore' });
-      }
-    }
-    process.exit(0);
-  }, 15000);
-  drainTimer.unref();
+  drainController.begin(signal);
 }
 
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
-// Managed OCI builds share the registered worker pool and have a separate durable lease queue.\nif (EXECUTOR === 'docker') void managedImageBuildLoop();\n\n// Polling loop for job claims
+// Managed OCI builds share the registered worker pool and have a separate durable lease queue.
+const managedImageBuildTask = EXECUTOR === 'docker' ? managedImageBuildLoop() : Promise.resolve();
 async function pollLoop(slot) {
   while (!isDraining) {
     try {
@@ -682,3 +688,7 @@ async function pollLoop(slot) {
 }
 
 await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => pollLoop(i + 1)));
+await managedImageBuildTask;
+drainController.complete();
+clearInterval(heartbeatInterval);
+await api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
