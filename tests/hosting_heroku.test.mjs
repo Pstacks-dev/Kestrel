@@ -187,7 +187,7 @@ test('syncs Heroku environment variables and removes only previously managed key
   const result = await syncHerokuEnvironment({
     apiKey: 'heroku-token', appId: 'app-1',
     env: { DATABASE_URL: 'postgres://example', NODE_ENV: 'production' },
-    managedEnvKeys: ['DATABASE_URL', 'OLD_SECRET', 'UNMANAGED_KEY'],
+    managedEnvKeys: ['DATABASE_URL', 'OLD_SECRET', 'PREVIOUSLY_MANAGED_KEY'],
   }, {
     fetchImpl: async (url, options) => {
       assert.equal(url, 'https://api.heroku.com/apps/app-1/config-vars');
@@ -200,7 +200,7 @@ test('syncs Heroku environment variables and removes only previously managed key
     DATABASE_URL: 'postgres://example',
     NODE_ENV: 'production',
     OLD_SECRET: null,
-    UNMANAGED_KEY: null,
+    PREVIOUSLY_MANAGED_KEY: null,
   });
   assert.deepEqual(result, { updated: true, keys: ['DATABASE_URL', 'NODE_ENV'] });
 });
