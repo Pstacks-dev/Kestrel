@@ -1,0 +1,33 @@
+name: Kestrel Production Smoke Checks
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kestrel-production-smoke
+  cancel-in-progress: false
+
+jobs:
+  production-health:
+    name: Verify production liveness and readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check public health and worker readiness
+        env:
+          KESTREL_PRODUCTION_URL: ${{ secrets.KESTREL_PRODUCTION_URL }}
+          KESTREL_SMOKE_TIMEOUT_MS: '15000'
+        run: npm run production:smoke
