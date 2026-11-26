@@ -96,3 +96,43 @@ test('Vercel accepts framework-managed Next.js functions without accepting arbit
   const customServer = rankHostingProviders({ runtime: 'node', needsPersistentProcess: true }, {});
   assert.ok(!customServer.some((provider) => provider.id === 'vercel'));
 });
+
+
+test('detects modern JavaScript frameworks and their static output directories', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const cases = [
+    ['astro', { astro: '^5.0.0' }, 'astro', 'dist'],
+    ['angular', { '@angular/core': '^19.0.0' }, 'angular', 'dist'],
+    ['vue', { vue: '^3.0.0', vite: '^6.0.0' }, 'vue', 'dist'],
+    ['svelte', { svelte: '^5.0.0', vite: '^6.0.0' }, 'svelte', 'dist'],
+    ['gatsby', { gatsby: '^5.0.0' }, 'gatsby', 'public'],
+    ['react-scripts', { 'react-scripts': '^5.0.0' }, 'create-react-app', 'build'],
+  ];
+  for (const [label, dependencies, framework, outputDirectory] of cases) {
+    const profile = detectProjectProfile({ files: ['apps/web/package.json'], packageJson: { dependencies, scripts: { build: 'framework build' } } });
+    assert.equal(profile.framework, framework, label);
+    assert.equal(profile.isStatic, true, label);
+    assert.equal(profile.outputDirectory, outputDirectory, label);
+  }
+});
+
+test('detects nested Dockerfiles and Java build manifests', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const docker = detectProjectProfile({ files: ['services/api/Dockerfile', 'services/api/package.json'] });
+  assert.equal(docker.needsContainer, true);
+  const java = detectProjectProfile({ files: ['pom.xml'] });
+  assert.equal(java.runtime, 'java');
+  assert.equal(java.needsPersistentProcess, true);
+});
+
+test('keeps Next.js and Nuxt server projects out of static-only classification', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const next = detectProjectProfile({ files: ['package.json'], packageJson: { dependencies: { next: '^15.0.0' }, scripts: { start: 'next start' } } });
+  const nuxt = detectProjectProfile({ files: ['package.json'], packageJson: { dependencies: { nuxt: '^3.0.0' }, scripts: { start: 'node .output/server/index.mjs' } } });
+  assert.equal(next.framework, 'nextjs');
+  assert.equal(next.isStatic, false);
+  assert.equal(next.needsPersistentProcess, true);
+  assert.equal(nuxt.framework, 'nuxt');
+  assert.equal(nuxt.isStatic, false);
+  assert.equal(nuxt.needsPersistentProcess, true);
+});
