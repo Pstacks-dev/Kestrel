@@ -206,6 +206,7 @@ export async function pruneExpiredDatabaseBackups({
   }
   const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
   const base = String(storageUrl || '').replace(/\/$/, '');
+  if (!/^https:\/\//i.test(base)) throw new Error('KESTREL_BACKUP_STORAGE_URL must be an HTTPS Supabase project URL');
   const headers = storageHeaders(serviceKey, { 'content-type': 'application/json' });
   let offset = 0;
   const expired = [];
@@ -219,7 +220,7 @@ export async function pruneExpiredDatabaseBackups({
     const objects = await response.json();
     if (!Array.isArray(objects)) throw new Error('Backup retention listing returned an invalid response');
     expired.push(...objects
-      .filter((item) => /^kestrel-[0-9T-]+\.kstr$/.test(String(item.name || '')))
+      .filter((item) => /^kestrel-[0-9TZ-]+\.kstr$/.test(String(item.name || '')))
       .filter((item) => {
         const created = Date.parse(item.created_at || item.updated_at || '');
         return Number.isFinite(created) && created < cutoff;
