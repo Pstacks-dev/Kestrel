@@ -129,7 +129,8 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
       }
       await query(
         `update public.managed_hosting_deployments
-         set status = $2, provider_url = coalesce($3, provider_url),
+         set status = case when $4 = 'unhealthy' then 'failed' else $2 end,
+             provider_url = coalesce($3, provider_url),
              health_status = $4, health_checked_at = case when $5 then now() else health_checked_at end,
              health_attempt_count = $6, health_claimed_at = null,
              error_message = case when $4 in ('healthy','unhealthy') then $8 else error_message end,
@@ -146,7 +147,8 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
       logger.warn?.('Managed deployment readiness check failed', { deploymentId: row.id, provider: row.provider_id, error: safeError });
       await query(
         `update public.managed_hosting_deployments
-         set health_status = case when health_attempt_count + 1 >= $2 then 'unhealthy' else 'checking' end,
+         set status = case when health_attempt_count + 1 >= $2 then 'failed' else status end,
+             health_status = case when health_attempt_count + 1 >= $2 then 'unhealthy' else 'checking' end,
              health_attempt_count = health_attempt_count + 1, health_checked_at = now(),
              health_claimed_at = null, error_message = $3, updated_at = now()
          where id = $1 and health_claimed_at = $4`,

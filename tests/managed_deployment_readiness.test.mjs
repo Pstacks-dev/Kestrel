@@ -85,3 +85,63 @@ test('reconciles a live deployment only after its provider URL responds successf
   assert.equal(updates[0].params[3], 'healthy');
   assert.ok(calls.some((call) => call.url === 'https://sample.onrender.com/' && call.method === 'HEAD'));
 });
+
+
+test('marks a deployment failed when its live provider URL remains unhealthy after the final probe', async () => {
+  const updates = [];
+  const encrypted = encryptSecret(JSON.stringify({ apiKey: 'render-test-key' }));
+  const result = await reconcileManagedDeploymentReadiness({
+    query: async (sql, params) => {
+      if (/with candidates as/i.test(sql)) {
+        return { rowCount: 1, rows: [{
+          id: 'deployment-unhealthy', provider_id: 'render', provider_deployment_id: 'provider-deploy-unhealthy',
+          provider_url: 'https://sample.onrender.com/', health_attempt_count: 4,
+          health_claimed_at: new Date('2026-11-25T10:00:00.000Z'),
+          credentials_ciphertext: encrypted.encryptedValue, credentials_iv: encrypted.iv, credentials_auth_tag: encrypted.authTag,
+          provider_service_id: 'srv-1', provider_project_id: 'project-1',
+        }] };
+      }
+      updates.push({ sql, params });
+      return { rowCount: 1, rows: [] };
+    },
+    fetchImpl: async (url) => {
+      if (url === 'https://api.render.com/v1/services/srv-1/deploys/provider-deploy-unhealthy') {
+        return new Response(JSON.stringify({ id: 'provider-deploy-unhealthy', status: 'live' }), { status: 200 });
+      }
+      if (url === 'https://api.render.com/v1/services/srv-1') {
+        return new Response(JSON.stringify({ service: { serviceDetails: { url: 'https://sample.onrender.com/' } } }), { status: 200 });
+      }
+      return new Response(null, { status: 503 });
+    },
+    logger: { warn() {} },
+  }, 5);
+  assert.deepEqual(result, { checked: 1, healthy: 0, unhealthy: 1, pending: 0 });
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /status = case when \$4 = 'unhealthy' then 'failed' else \$2 end/i);
+  assert.equal(updates[0].params[3], 'unhealthy');
+  assert.equal(updates[0].params[6], true);
+});
+
+test('marks deployments failed when readiness reconciliation exhausts attempts after provider errors', async () => {
+  const updates = [];
+  const encrypted = encryptSecret(JSON.stringify({ apiKey: 'render-test-key' }));
+  await reconcileManagedDeploymentReadiness({
+    query: async (sql, params) => {
+      if (/with candidates as/i.test(sql)) return { rowCount: 1, rows: [{
+        id: 'deployment-provider-error', provider_id: 'render', provider_deployment_id: 'provider-deploy-error',
+        provider_url: 'https://sample.onrender.com/', health_attempt_count: 4,
+        health_claimed_at: new Date('2026-11-25T10:00:00.000Z'),
+        credentials_ciphertext: encrypted.encryptedValue, credentials_iv: encrypted.iv, credentials_auth_tag: encrypted.authTag,
+        provider_service_id: 'srv-1', provider_project_id: 'project-1',
+      }] };
+      updates.push({ sql, params });
+      return { rowCount: 1, rows: [] };
+    },
+    fetchImpl: async () => new Response(JSON.stringify({ error: 'provider unavailable' }), { status: 503 }),
+    logger: { warn() {} },
+  }, 5);
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /status = case when health_attempt_count \+ 1 >= \$2 then 'failed' else status end/i);
+  assert.match(updates[0].sql, /health_status = case when health_attempt_count \+ 1 >= \$2 then 'unhealthy' else 'checking' end/i);
+  assert.equal(updates[0].params[1], 5);
+});
