@@ -124,7 +124,6 @@ test('updates Cloudflare Pages monorepo settings and removes deleted secrets', a
     branch: 'main',
     commitSha: 'f'.repeat(40),
     env: { DATABASE_URL: 'postgres://new-secret' },
-    managedEnvKeys: ['OLD_SECRET', 'SHARED_SECRET'],
     rootDir: 'apps/web',
     managedEnvKeys: ['OLD_SECRET'],
     buildCommand: 'npm run build',
