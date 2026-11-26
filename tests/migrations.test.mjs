@@ -221,3 +221,15 @@ test('Fly machine rollback history permits repeated records for the same machine
   assert.match(sql, /create unique index if not exists idx_managed_hosting_deployments_provider_deployment_unique/i);
   assert.match(sql, /where provider_id <> 'flyio'/i);
 });
+
+
+test('Heroku cost approval migration enforces an explicit supported plan and owner approval', async () => {
+  const sql = await readFile(new URL('../db/migrations/040_heroku_cost_approval.sql', import.meta.url), 'utf8');
+  assert.match(sql, /heroku_dyno_size/);
+  assert.match(sql, /heroku_dyno_quantity between 1 and 10/i);
+  assert.match(sql, /cost_approved_by is not null/i);
+  assert.match(sql, /cost_approved_at is not null/i);
+  assert.match(sql, /pricing_catalog_version is not null/i);
+  assert.match(sql, /provider_id <> 'heroku'/i);
+  assert.match(sql, /not valid/i);
+});
