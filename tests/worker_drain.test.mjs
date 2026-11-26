@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createDrainController } from '../worker/drain-controller.mjs';
 
 test('starts a bounded drain timeout only while executions are active', () => {
@@ -89,4 +90,14 @@ test('clears the force-exit timer after all executions drain normally', () => {
   controller.begin('SIGTERM');
   controller.complete();
   assert.equal(cleared, 1);
+});
+
+
+test('starts and awaits managed OCI build polling and tracks claimed jobs from checkout onward', async () => {
+  const source = await readFile(new URL('../worker/agent.mjs', import.meta.url), 'utf8');
+  assert.match(source, /const managedImageBuildTask = EXECUTOR === 'docker' \? managedImageBuildLoop\(\) : Promise\.resolve\(\)/);
+  assert.match(source, /await managedImageBuildTask/);
+  assert.match(source, /activeJobs\.set\(job\.id, \{ abortController \}\)/);
+  assert.match(source, /activeJobs\.delete\(job\.id\)/);
+  assert.match(source, /managedImageBuildAbortController\?\.abort\(\)/);
 });
