@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { verifyHostingProvider } from '../server/lib/hosting-adapters.mjs';
-import { ACTIVE_MANAGED_PROVIDERS } from '../server/lib/hosting-managed-adapters.mjs';
+import { ACTIVE_MANAGED_PROVIDERS, AUTOMATIC_MANAGED_PROVIDERS } from '../server/lib/hosting-managed-adapters.mjs';
 
 const ok = (body = {}) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 
@@ -107,4 +107,11 @@ test('keeps all ten managed hosting providers active, including cost-gated Herok
     'render', 'railway', 'flyio', 'google-cloud-run', 'aws-ecs-express',
     'digitalocean-app-platform', 'heroku', 'vercel', 'netlify', 'cloudflare-pages',
   ]));
+});
+
+
+test('Heroku is manually available only and never part of automatic provider selection', () => {
+  assert.ok(ACTIVE_MANAGED_PROVIDERS.includes('heroku'));
+  assert.ok(!AUTOMATIC_MANAGED_PROVIDERS.includes('heroku'));
+  assert.deepEqual(AUTOMATIC_MANAGED_PROVIDERS, ACTIVE_MANAGED_PROVIDERS.filter((provider) => provider !== 'heroku'));
 });
