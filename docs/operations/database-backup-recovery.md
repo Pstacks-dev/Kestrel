@@ -52,8 +52,8 @@ and can also be started manually from GitHub Actions. It:
    that separate staging database and checks for the `projects`,
    `organizations`, `jobs`, and `managed_hosting_deployments` tables.
 
-The restore script refuses to restore to the same host, port and database as
-`SUPABASE_DB_URL`. The workflow sets an explicit staging-only confirmation
+The restore script refuses to restore to the same host as
+`SUPABASE_DB_URL`; configure a separate staging Supabase project. The workflow sets an explicit staging-only confirmation
 before running the destructive `pg_restore --clean` operation.
 
 ## Manual backup and restore
