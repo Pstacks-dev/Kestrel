@@ -6,6 +6,7 @@ import {
   ACTIVE_MANAGED_PROVIDERS, createManagedProviderDeployment, deployManagedProviderService,
   getManagedProviderDeployment, getManagedProviderDeploymentLogs, rollbackManagedProviderDeployment,
 } from '../lib/hosting-managed-adapters.mjs';
+import { createGitHubInstallationToken } from '../lib/github-app.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 const API_HEADERS = {
@@ -16,30 +17,31 @@ const API_HEADERS = {
 
 function fail(res, status, error) { return res.status(status).json({ error }); }
 
-async function githubJson(url, fetchImpl) {
-  const response = await fetchImpl(url, { headers: API_HEADERS, signal: AbortSignal.timeout(10000) });
+async function githubJson(url, fetchImpl, token = null) {
+  const headers = token ? { ...API_HEADERS, Authorization: `Bearer ${token}` } : API_HEADERS;
+  const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw Object.assign(new Error('GitHub repository inspection failed'), { status: response.status });
   return response.json();
 }
 
-async function inspectProject(repository, branch, fetchImpl) {
+async function inspectProject(repository, branch, fetchImpl, token = null) {
   const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`;
-  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(branch)}`, fetchImpl);
+  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(branch)}`, fetchImpl, token);
   if (!Array.isArray(root)) throw new Error('GitHub repository root could not be inspected');
   const files = root.filter((item) => item.type === 'file').map((item) => item.name);
   let packageJson = null;
   if (files.some((name) => name.toLowerCase() === 'package.json')) {
-    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(branch)}`, fetchImpl);
+    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(branch)}`, fetchImpl, token);
     try { packageJson = JSON.parse(Buffer.from(file.content || '', 'base64').toString('utf8')); }
     catch { throw new Error('Repository package.json is invalid'); }
   }
   return detectProjectProfile({ files, packageJson });
 }
 
-async function resolveCommit(repository, branch, suppliedSha, fetchImpl) {
+async function resolveCommit(repository, branch, suppliedSha, fetchImpl, token = null) {
   const ref = suppliedSha || branch.split('/').map(encodeURIComponent).join('/');
   const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/commits/${ref}`;
-  const commit = await githubJson(base, fetchImpl);
+  const commit = await githubJson(base, fetchImpl, token);
   const sha = commit.sha;
   if (!/^[a-fA-F0-9]{40}$/.test(sha || '')) throw new Error('GitHub did not return a valid commit SHA');
   return sha;
@@ -120,12 +122,15 @@ function deploymentView(row) {
   };
 }
 
-export function registerManagedDeploymentRoutes(app, { userAuth, query, transaction, fetchImpl = fetch, storageFetch = fetch }) {
+export function registerManagedDeploymentRoutes(app, {
+  userAuth, query, transaction, fetchImpl = fetch, storageFetch = fetch,
+  createInstallationToken = createGitHubInstallationToken, githubAppConfig,
+}) {
   app.post('/api/projects/:projectId/managed-deployments', userAuth, async (req, res) => {
     try {
       const projectResult = await query(
         `select p.id, p.organization_id, p.name, p.repository_url, p.default_branch,
-                p.source_type, m.role
+                p.source_type, p.github_installation_id, m.role
          from public.projects p
          join public.organization_members m on m.organization_id = p.organization_id
          where p.id = $1 and m.user_id = $2`,
@@ -139,9 +144,39 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
         return fail(res, 422, 'Managed source deployments currently require a public GitHub repository');
       }
 
+      // Public repositories remain available without a GitHub App. Private repositories
+      // use a short-lived, repository-scoped installation token held only in memory.
+      let sourceToken = null;
+      if (project.github_installation_id) {
+        const installation = await query(
+          `select installation_id from public.github_app_installations
+           where installation_id = $1 and organization_id = $2 and suspended_at is null`,
+          [project.github_installation_id, project.organization_id],
+        );
+        if (!installation.rowCount) {
+          return fail(res, 409, 'The GitHub App installation for this project is missing, suspended, or not connected to this workspace.');
+        }
+        try {
+          const issued = await createInstallationToken(installation.rows[0].installation_id, {
+            repository: `${repository.owner}/${repository.repo}`,
+            permissions: { contents: 'read' },
+            fetchImpl,
+            ...(githubAppConfig ? { config: githubAppConfig } : {}),
+          });
+          sourceToken = issued.token;
+        } catch (error) {
+          if (/GitHub App is not configured/i.test(error.message || '')) {
+            return fail(res, 503, 'The Kestrel GitHub App is not configured. Configure the GitHub App before deploying private repositories.');
+          }
+          if ([401, 403, 404].includes(error.status)) {
+            return fail(res, 409, 'The Kestrel GitHub App cannot access this repository. Check the installation and repository contents permission.');
+          }
+          throw error;
+        }
+      }
       const branch = String(req.body?.branch || project.default_branch || 'main');
-      const commitSha = await resolveCommit(repository, branch, req.body?.commitSha, fetchImpl);
-      const profile = await inspectProject(repository, branch, fetchImpl);
+      const commitSha = await resolveCommit(repository, branch, req.body?.commitSha, fetchImpl, sourceToken);
+      const profile = await inspectProject(repository, branch, fetchImpl, sourceToken);
       const compatible = rankHostingProviders(profile, {});
       const connectionResult = await query(
         `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag
@@ -238,7 +273,7 @@ export function registerManagedDeploymentRoutes(app, { userAuth, query, transact
     } catch (error) {
       const status = [400, 404, 409, 413, 422, 429, 503].includes(error.status) ? error.status : 502;
       console.error('Managed deployment request failed:', { code: error.code || 'PROVIDER_ERROR' });
-      return fail(res, status, status === 404 ? 'GitHub repository or commit was not found' : 'Could not start managed deployment');
+      return fail(res, status, status === 404 ? 'GitHub repository or commit was not found. If the repository is private, connect the Kestrel GitHub App to this workspace and repository.' : 'Could not start managed deployment');
     }
   });
 
