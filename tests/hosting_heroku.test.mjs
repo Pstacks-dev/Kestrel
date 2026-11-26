@@ -116,3 +116,48 @@ test('rejects invalid source URLs and commit SHAs before creating Heroku resourc
     apiKey: 'x', appId: 'app-1', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
 });
+
+
+test('resolves private GitHub source archives through a short-lived signed codeload URL', async () => {
+  const { resolveHerokuSourceArchiveUrl } = await import('../server/lib/hosting-heroku.mjs');
+  const commitSha = 'a'.repeat(40);
+  let request;
+  const url = await resolveHerokuSourceArchiveUrl({
+    repositoryUrl: 'https://github.com/acme/private-app',
+    commitSha,
+    installationToken: 'short-lived-installation-token',
+    fetchImpl: async (input, options) => {
+      request = { input, options };
+      return new Response(null, {
+        status: 302,
+        headers: { location: `https://codeload.github.com/acme/private-app/legacy.tar.gz/${commitSha}?token=signed-temporary-token` },
+      });
+    },
+  });
+  assert.equal(url, `https://codeload.github.com/acme/private-app/legacy.tar.gz/${commitSha}?token=signed-temporary-token`);
+  assert.equal(request.options.headers.authorization, 'Bearer short-lived-installation-token');
+  assert.equal(request.options.redirect, 'manual');
+  assert.ok(request.input.includes(commitSha));
+});
+
+test('uses the public archive URL for public repositories without an installation token', async () => {
+  const { resolveHerokuSourceArchiveUrl } = await import('../server/lib/hosting-heroku.mjs');
+  const commitSha = 'b'.repeat(40);
+  const url = await resolveHerokuSourceArchiveUrl({
+    repositoryUrl: 'https://github.com/acme/public-app',
+    commitSha,
+    fetchImpl: async () => assert.fail('Public source should not require a GitHub API token'),
+  });
+  assert.equal(url, `https://github.com/acme/public-app/archive/${commitSha}.tar.gz`);
+});
+
+test('rejects untrusted or mismatched private source archive redirects', async () => {
+  const { resolveHerokuSourceArchiveUrl } = await import('../server/lib/hosting-heroku.mjs');
+  const commitSha = 'c'.repeat(40);
+  await assert.rejects(resolveHerokuSourceArchiveUrl({
+    repositoryUrl: 'https://github.com/acme/private-app',
+    commitSha,
+    installationToken: 'token',
+    fetchImpl: async () => new Response(null, { status: 302, headers: { location: 'https://attacker.example/archive.tar.gz' } }),
+  }), /invalid signed source archive URL/i);
+});
