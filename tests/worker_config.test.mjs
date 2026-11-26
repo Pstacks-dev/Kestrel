@@ -24,3 +24,21 @@ test('trims surrounding whitespace and rejects weak worker tokens', () => {
   assert.throws(() => resolveWorkerToken({ nodeEnv: 'production', token: ' '.repeat(40) }), /at least 32 characters/);
   assert.equal(resolveWorkerToken({ nodeEnv: 'production', token: '  ' + 'x'.repeat(32) + '  ' }), 'x'.repeat(32));
 });
+
+test('production workers require an explicit provisioned HTTPS control-plane connection', async () => {
+  const { resolveWorkerConnection } = await import('../worker/config.mjs');
+  assert.throws(() => resolveWorkerConnection({ nodeEnv: 'production', apiUrl: undefined, workerId: 'wrk_12345678' }), /KESTREL_API_URL is required/);
+  assert.throws(() => resolveWorkerConnection({ nodeEnv: 'production', apiUrl: 'http://kestrel.internal', workerId: 'wrk_12345678' }), /HTTPS/);
+  assert.throws(() => resolveWorkerConnection({ nodeEnv: 'production', apiUrl: 'https://user:secret@kestrel.example', workerId: 'wrk_12345678' }), /credential-free/);
+  assert.throws(() => resolveWorkerConnection({ nodeEnv: 'production', apiUrl: 'https://kestrel.example', workerId: undefined }), /provisioned KESTREL_WORKER_ID/);
+  assert.deepEqual(resolveWorkerConnection({
+    nodeEnv: 'production', apiUrl: 'https://kestrel.example/', workerId: 'wrk_12345678',
+  }), { api: 'https://kestrel.example', workerId: 'wrk_12345678' });
+});
+
+test('development worker connection retains the local default and generated identity', async () => {
+  const { resolveWorkerConnection } = await import('../worker/config.mjs');
+  const connection = resolveWorkerConnection({ nodeEnv: 'development', apiUrl: undefined, workerId: undefined, hostname: 'dev-worker' });
+  assert.equal(connection.api, 'http://127.0.0.1:4000');
+  assert.match(connection.workerId, /^dev-worker-[a-f0-9]{5}$/);
+});

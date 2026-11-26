@@ -69,14 +69,33 @@ struct LogBatch<'a> { lease_token: &'a str, entries: Vec<LogEntry<'a>> }
 #[serde(rename_all = "camelCase")]
 struct Completion<'a> { lease_token: &'a str, exit_code: i32, duration_ms: u128, status: &'a str }
 
+fn validate_worker_connection(node_env: &str, api: &str, worker_id: &str, explicit_worker_id: bool) -> Result<()> {
+    if node_env == "production" {
+        let parsed = reqwest::Url::parse(api).map_err(|_| anyhow!("KESTREL_API_URL must be a valid absolute URL"))?;
+        anyhow::ensure!(parsed.scheme() == "https" && parsed.username().is_empty() && parsed.password().is_none()
+            && parsed.query().is_none() && parsed.fragment().is_none(),
+            "production workers require a credential-free HTTPS KESTREL_API_URL");
+        let valid_worker_id = worker_id.strip_prefix("wrk_").is_some_and(|suffix| {
+            (8..=100).contains(&suffix.len())
+                && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        });
+        anyhow::ensure!(explicit_worker_id && valid_worker_id,
+            "production workers require the provisioned KESTREL_WORKER_ID from the admin provisioning flow");
+    }
+    Ok(())
+}
+
 fn config() -> Result<Config> {
     let get = |key: &str, default: &str| env::var(key).unwrap_or_else(|_| default.into());
-    let worker_id = get("KESTREL_WORKER_ID", &format!("{}-{}", get("HOSTNAME", "worker"), &uuid::Uuid::new_v4().to_string()[..8]));
+    let explicit_worker_id = env::var("KESTREL_WORKER_ID").ok();
+    let worker_id = explicit_worker_id.clone().unwrap_or_else(|| format!("{}-{}", get("HOSTNAME", "worker"), &uuid::Uuid::new_v4().to_string()[..8]));
     let api = get("KESTREL_API_URL", "");
     let token = get("KESTREL_WORKER_TOKEN", "");
     let image = get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim");
-    anyhow::ensure!(!api.is_empty() && !token.is_empty(), "KESTREL_API_URL and KESTREL_WORKER_TOKEN are required");
-    if get("NODE_ENV", "development") == "production" {
+    let node_env = get("NODE_ENV", "development");
+    anyhow::ensure!(!api.is_empty() && token.len() >= 32, "KESTREL_API_URL and a provisioned KESTREL_WORKER_TOKEN of at least 32 characters are required");
+    validate_worker_connection(&node_env, &api, &worker_id, explicit_worker_id.is_some())?;
+    if node_env == "production" {
         anyhow::ensure!(image.contains("@sha256:") && image.rsplit("@sha256:").next().is_some_and(|d| d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit())),
             "production KESTREL_JOB_IMAGE must be pinned by immutable SHA-256 digest");
     }
@@ -734,7 +753,22 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{docker_host_workspace_path, safe_relative_path};
+    use super::{docker_host_workspace_path, safe_relative_path, validate_worker_connection};
+
+    #[test]
+    fn production_workers_require_https_and_provisioned_identity() {
+        assert!(validate_worker_connection("production", "http://kestrel.example", "wrk_12345678", true).is_err());
+        assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_12345678", false).is_err());
+        assert!(validate_worker_connection("production", "https://user:secret@kestrel.example", "wrk_12345678", true).is_err());
+        assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_12345678", true).is_ok());
+        assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_bad/id", true).is_err());
+        assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_short", true).is_err());
+    }
+
+    #[test]
+    fn development_workers_can_use_local_http_and_generated_identity() {
+        assert!(validate_worker_connection("development", "http://127.0.0.1:4000", "worker-a1b2c3", false).is_ok());
+    }
 
     #[test]
     fn maps_container_workspace_to_host_docker_path() {
