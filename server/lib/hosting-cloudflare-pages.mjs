@@ -54,11 +54,11 @@ function buildConfig({ buildCommand, destinationDir, rootDir }) {
   const root = String(rootDir || '/');
   if (!command || command.length > 500 || /[\r\n\0]/.test(command)) throw new Error('Invalid Cloudflare Pages build command');
   if (!destination || destination.length > 200 || destination.startsWith('/') || /^[A-Za-z]:/.test(destination) ||
-      destination.includes('\\') || destination.includes('\\0') ||
+      destination.includes('\\') || destination.includes('\0') ||
       destination.split('/').some((part) => !part || part === '.' || part === '..')) {
     throw new Error('Invalid Cloudflare Pages build directory');
   }
-  if (!root || root.length > 200 || root.includes('\\') || root.includes('\\0') ||
+  if (!root || root.length > 200 || root.includes('\\') || root.includes('\0') ||
       root.split('/').some((part) => part === '..')) {
     throw new Error('Invalid Cloudflare Pages build directory');
   }
