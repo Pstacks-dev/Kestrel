@@ -10,6 +10,7 @@ import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
 import { resolveJobWorkingDirectory } from './working-directory.mjs';
 import { resolveWorkerToken } from './config.mjs';
+import { createDrainController } from './drain-controller.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
 const TOKEN = resolveWorkerToken();
@@ -36,7 +37,9 @@ const headers = {
 };
 
 let isDraining = false;
-const activeJobs = new Map(); // jobId -> { abortController, containerName }
+let managedImageBuildActive = false;
+let managedImageBuildAbortController = null;
+const activeJobs = new Map(); // jobId -> { abortController, containerName?, child? }
 
 async function api(endpoint, body) {
   const r = await fetch(`${API}${endpoint}`, {
@@ -90,7 +93,8 @@ async function downloadUploadedSource(job, workspace) {
   if (!files.length) throw new Error('This uploaded project contains no files');
 }
 
-async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) {
+async function runCommand(command, cwd, onLine, job, secretValues, abortController) {
+  const abortSignal = abortController?.signal;
   const start = Date.now();
   const timeoutMs = (job.timeoutSeconds || 1800) * 1000;
 
@@ -121,6 +125,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      activeJobs.set(job.id, { ...activeJobs.get(job.id), abortController, child });
 
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -157,6 +162,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       child.on('close', (code) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
+        activeJobs.set(job.id, { abortController });
         resolve({
           exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
           durationMs: Date.now() - start,
@@ -166,6 +172,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
       child.on('error', (e) => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', abortHandler);
+        activeJobs.set(job.id, { abortController });
         onLine('stderr', redactSecrets(e.message, secretValues));
         resolve({ exitCode: 1, durationMs: Date.now() - start });
       });
@@ -175,7 +182,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
   // Default Docker container executor
   return new Promise((resolve) => {
     const containerName = `kestrel-job-${String(job.id).replace(/[^a-zA-Z0-9_.-]/g, '')}`;
-    activeJobs.set(job.id, { containerName, abortSignal });
+    activeJobs.set(job.id, { ...activeJobs.get(job.id), containerName, abortController });
 
     const args = [
       'run',
@@ -264,7 +271,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
     child.on('close', (code) => {
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
-      activeJobs.delete(job.id);
+      activeJobs.set(job.id, { abortController });
       resolve({
         exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
         durationMs: Date.now() - start,
@@ -274,7 +281,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortSignal) 
     child.on('error', (e) => {
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
-      activeJobs.delete(job.id);
+      activeJobs.set(job.id, { abortController });
       onLine('stderr', redactSecrets(e.message, secretValues));
       resolve({ exitCode: 1, durationMs: Date.now() - start });
     });
