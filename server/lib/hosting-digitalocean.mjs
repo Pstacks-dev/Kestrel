@@ -57,18 +57,26 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
   const repo = repositoryPath(repositoryUrl);
   const isStatic = profile.isStatic === true;
+  const buildContext = profile.rootDir && profile.rootDir !== '.' ? String(profile.rootDir).replace(/\/$/, '') : '';
   const component = {
     name: safeName(projectName),
     envs: digitalOceanEnv(env, isStatic ? 'BUILD_TIME' : 'RUN_AND_BUILD_TIME'),
     github: { repo, branch, deploy_on_push: false },
-    source_dir: '/',
+    source_dir: buildContext || '/',
   };
   if (isStatic) {
-    component.build_command = 'npm install && npm run build';
-    component.output_dir = profile.framework === 'create-react-app' ? 'build' : 'dist';
+    component.build_command = profile.buildCommand || 'npm install && npm run build';
+    component.output_dir = profile.outputDirectory || (profile.framework === 'create-react-app' ? 'build' : 'dist');
+  } else if (profile.needsContainer) {
+    const dockerfile = String(profile.dockerfilePath || './Dockerfile').replace(/^\.\//, '');
+    component.dockerfile_path = buildContext ? `${buildContext}/${dockerfile}` : dockerfile;
+    component.routes = [{ path: '/' }];
+    component.instance_size_slug = 'apps-s-1vcpu-0.5gb';
+    component.instance_count = 1;
+    component.http_port = 8080;
   } else {
-    component.build_command = 'npm install && npm run build';
-    component.run_command = 'npm start';
+    component.build_command = profile.buildCommand || 'npm install && npm run build';
+    component.run_command = profile.startCommand || 'npm start';
     component.environment_slug = ({ node: 'node-js', python: 'python', ruby: 'ruby', go: 'go' })[profile.runtime] || 'node-js';
     component.routes = [{ path: '/' }];
     component.instance_size_slug = 'apps-s-1vcpu-0.5gb';
