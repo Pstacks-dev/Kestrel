@@ -158,6 +158,6 @@ test('refuses a suspended or cross-workspace installation before requesting a to
   assert.deepEqual(result, { processed: 1 });
   assert.equal(tokenRequests, 0);
   assert.equal(updates.length, 1);
-  assert.equal(updates[0][1], 'failed');
+  assert.equal(updates[0][1], 'queued'); // Retryable installation failures are re-queued.
   assert.match(updates[0][2], /missing, suspended, or not linked/);
 });
