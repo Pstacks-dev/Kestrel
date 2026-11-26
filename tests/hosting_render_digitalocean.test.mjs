@@ -143,7 +143,7 @@ test('creates a DigitalOcean App Platform app and starts its first deployment', 
   } });
   assert.equal(calls.length, 2);
   const spec = JSON.parse(calls[0].options.body).spec;
-  assert.equal(spec.services[0].github.repo, 'acme/demo');
+  assert.equal(spec.services[0].github.repo, 'acme/private-demo');
   assert.equal(spec.services[0].github.deploy_on_push, false);
   assert.equal(spec.services[0].envs[0].key, 'NODE_ENV');
   assert.equal(spec.services[0].envs[0].type, 'SECRET');
