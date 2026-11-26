@@ -58,6 +58,7 @@ test('manual deployment source inspection uses a short-lived installation token 
         assert.deepEqual(params, ['12345', 'org-1']);
         return { rowCount: 1, rows: [{ installation_id: '12345' }] };
       }
+      if (/from public\.project_secrets/i.test(sql)) return { rowCount: 0, rows: [] };
       if (/from public\.hosting_provider_connections/i.test(sql)) return { rowCount: 0, rows: [] };
       throw new Error('Unexpected query: ' + sql);
     },
@@ -96,6 +97,7 @@ test('public repository deployments do not require a GitHub App installation tok
     project: project(null),
     query: async (sql) => {
       if (/from public\.projects p/i.test(sql)) return { rowCount: 1, rows: [project(null)] };
+      if (/from public\.project_secrets/i.test(sql)) return { rowCount: 0, rows: [] };
       if (/from public\.hosting_provider_connections/i.test(sql)) return { rowCount: 0, rows: [] };
       throw new Error('Unexpected query: ' + sql);
     },
