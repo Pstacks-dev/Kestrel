@@ -1386,17 +1386,41 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
     const build = await transaction(async (client) => {
       const worker = await client.query('select * from public.workers where id = $1 for update', [req.worker.id]);
       if (!worker.rowCount || ['draining', 'offline'].includes(worker.rows[0].state)) return null;
+      // Recover expired image-build leases before enforcing worker concurrency.
+      // Otherwise a worker restarting with its own stale lease can count that lease
+      // against max_concurrency and permanently prevent itself from reclaiming work.
+      await client.query(
+        `update public.managed_hosting_image_builds
+         set status = case when attempt_count < 4 then 'queued' else 'failed' end,
+             worker_id = null, lease_token = null, lease_expires_at = null,
+             available_at = case when attempt_count < 4 then now() + interval '15 seconds' else available_at end,
+             finished_at = case when attempt_count < 4 then null else now() end,
+             last_error = case when attempt_count < 4
+               then 'Worker lease expired; retrying managed image build'
+               else 'Worker lease expired after retry budget was exhausted' end,
+             updated_at = now()
+         where organization_id = $1 and status = 'running' and lease_expires_at <= now()`,
+        [worker.rows[0].organization_id],
+      );
+      await client.query(
+        `update public.managed_hosting_automation_queue q
+         set status = 'queued', locked_at = null, available_at = now(), updated_at = now()
+         where q.organization_id = $1 and q.status = 'waiting_for_image'
+           and exists (
+             select 1 from public.managed_hosting_image_builds b
+             where b.automation_queue_id = q.id and b.status = 'failed'
+           )`,
+        [worker.rows[0].organization_id],
+      );
       const active = await client.query(
-        'select (select count(*)::int from public.jobs where worker_id = $1 and status = \'running\') + (select count(*)::int from public.managed_hosting_image_builds where worker_id = $1 and status = \'running\') as count',
+        `select
+           (select count(*)::int from public.jobs
+            where worker_id = $1 and status = 'running' and lease_expires_at > now()) +
+           (select count(*)::int from public.managed_hosting_image_builds
+            where worker_id = $1 and status = 'running' and lease_expires_at > now()) as count`,
         [req.worker.id],
       );
       if (active.rows[0].count >= worker.rows[0].max_concurrency) return null;
-      await client.query(
-        "update public.managed_hosting_image_builds set status = case when attempt_count < 4 then 'queued' else 'failed' end, worker_id = null, lease_token = null, lease_expires_at = null, available_at = case when attempt_count < 4 then now() + interval '15 seconds' else available_at end, updated_at = now() where status = 'running' and lease_expires_at <= now()",
-      );
-      await client.query(
-        "update public.managed_hosting_automation_queue q set status = 'queued', locked_at = null, available_at = now(), updated_at = now() where q.status = 'waiting_for_image' and exists (select 1 from public.managed_hosting_image_builds b where b.automation_queue_id = q.id and b.status = 'failed')",
-      );
       const claimed = await client.query(
         "with candidate as (select b.id, p.github_installation_id from public.managed_hosting_image_builds b join public.projects p on p.id = b.project_id where p.organization_id = $1 and b.status = 'queued' and b.attempt_count < 4 and b.available_at <= now() order by b.created_at for update of b skip locked limit 1) update public.managed_hosting_image_builds b set status = 'running', attempt_count = attempt_count + 1, worker_id = $2, lease_token = $3, lease_expires_at = now() + interval '45 seconds', started_at = coalesce(started_at, now()), updated_at = now() from candidate where b.id = candidate.id returning b.*, candidate.github_installation_id",
         [worker.rows[0].organization_id, req.worker.id, crypto.randomBytes(32).toString('hex')],
