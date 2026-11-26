@@ -136,3 +136,29 @@ test('keeps Next.js and Nuxt server projects out of static-only classification',
   assert.equal(nuxt.isStatic, false);
   assert.equal(nuxt.needsPersistentProcess, true);
 });
+
+
+test('detects the repository package manager and uses its build script command', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const cases = [
+    { files: ['package.json', 'package-lock.json'], packageJson: { scripts: { build: 'vite build' } }, manager: 'npm', command: 'npm run build' },
+    { files: ['package.json', 'pnpm-lock.yaml'], packageJson: { packageManager: 'pnpm@10.0.0', scripts: { build: 'vite build' } }, manager: 'pnpm', command: 'pnpm run build' },
+    { files: ['package.json', 'yarn.lock'], packageJson: { scripts: { build: 'vite build' } }, manager: 'yarn', command: 'yarn build' },
+    { files: ['package.json', 'bun.lock'], packageJson: { scripts: { build: 'vite build' } }, manager: 'bun', command: 'bun run build' },
+  ];
+  for (const item of cases) {
+    const profile = detectProjectProfile({ files: item.files, packageJson: item.packageJson });
+    assert.equal(profile.packageManager, item.manager);
+    assert.equal(profile.buildCommand, item.command);
+  }
+});
+
+test('does not invent a JavaScript build script when package.json has none', async () => {
+  const { detectProjectProfile } = await import('../server/lib/hosting-providers.mjs');
+  const profile = detectProjectProfile({
+    files: ['package.json', 'pnpm-lock.yaml'],
+    packageJson: { packageManager: 'pnpm@10.0.0', scripts: { start: 'node server.js' } },
+  });
+  assert.equal(profile.packageManager, 'pnpm');
+  assert.equal(profile.buildCommand, undefined);
+});
