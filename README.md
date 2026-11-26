@@ -139,6 +139,7 @@ This returns a `workerId` and a one-time secret `token`.
 
 3. On your dedicated worker host, configure `.env`:
 ```bash
+NODE_ENV=production
 KESTREL_API_URL=https://your-api-domain.com
 KESTREL_WORKER_ID=wrk_...
 KESTREL_WORKER_TOKEN=your-provisioned-token
