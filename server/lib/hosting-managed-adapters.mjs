@@ -30,6 +30,7 @@ import {
 } from './hosting-railway.mjs';
 
 export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'heroku', 'netlify', 'cloudflare-pages', 'flyio', 'google-cloud-run', 'aws-ecs-express'];
+export const AUTOMATIC_MANAGED_PROVIDERS = Object.freeze(ACTIVE_MANAGED_PROVIDERS.filter((provider) => provider !== 'heroku'));
 
 export async function createManagedProviderDeployment(provider, credentials, input, options) {
   if (provider === 'render') return createRenderDeployment({ ...input, ...credentials }, options);
