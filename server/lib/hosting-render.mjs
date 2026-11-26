@@ -40,8 +40,9 @@ function status(value) {
 }
 
 async function syncRenderEnvironment(apiKey, serviceId, env = {}, fetchImpl = fetch) {
-  if (!Object.keys(env || {}).length) return;
-  const variables = Object.entries(env).map(([key, value]) => {
+  // Render's collection PUT replaces the complete environment-variable set.
+  // Always send the current Kestrel set, including [], so deleted secrets are removed.
+  const variables = Object.entries(env || {}).map(([key, value]) => {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Render environment variable');
     return { key, value };
   });
