@@ -1,3 +1,5 @@
+process.env.KESTREL_ENCRYPTION_KEY ||= 'kestrel-test-encryption-key-32-characters-minimum';
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encryptSecret } from '../server/lib/security.mjs';
