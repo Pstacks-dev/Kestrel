@@ -31,6 +31,15 @@ function validate({ branch, commitSha }) {
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
 }
 
+function validateStaticOutputDirectory(value) {
+  const directory = String(value || 'dist');
+  if (!directory || directory.length > 500 || directory.startsWith('/') || directory.includes('\\\\') || directory.includes('\\0') ||
+      /^[A-Za-z]:/.test(directory) || directory.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid Render static publish directory');
+  }
+  return directory;
+}
+
 function status(value) {
   if (value === 'live') return 'live';
   if (['build_failed', 'update_failed', 'canceled', 'pre_deploy_failed', 'deactivated'].includes(value)) return 'failed';
@@ -57,7 +66,7 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
   const isStatic = profile.isStatic === true;
   const serviceType = isStatic ? 'static_site' : 'web_service';
   const details = isStatic
-    ? { buildCommand: profile.buildCommand || 'npm install && npm run build', publishPath: profile.outputDirectory || 'dist' }
+    ? { buildCommand: profile.buildCommand || 'npm install && npm run build', publishPath: validateStaticOutputDirectory(profile.outputDirectory) }
     : profile.needsContainer
       ? {
           runtime: 'docker',
