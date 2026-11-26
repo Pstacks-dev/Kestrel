@@ -295,6 +295,15 @@ export async function processManagedHostingQueue({ query, transaction, fetchImpl
          order by q.created_at
          for update skip locked
          limit 1
+       ), exhausted as (
+         update public.managed_hosting_automation_queue q
+         set status = 'failed', locked_at = null,
+             last_error = 'Worker lease expired after retry budget was exhausted',
+             updated_at = now()
+         where q.status = 'running'
+           and q.attempt_count >= 6
+           and (q.locked_at is null or q.locked_at < now() - interval '10 minutes')
+         returning q.id
        )
        update public.managed_hosting_automation_queue q
        set status = 'running',
