@@ -147,6 +147,7 @@ test('configures a Railway service root directory before deploying a nested mono
     { project: { id: 'project-2', environments: { edges: [{ node: { id: 'env-2', name: 'production' } }] } } },
     { serviceCreate: { id: 'service-2', name: 'API' } },
     { serviceInstanceUpdate: true },
+    { variableCollectionUpsert: true },
     { serviceInstanceDeployV2: 'deployment-2' },
   ];
   const result = await createRailwayDeployment({
@@ -165,10 +166,12 @@ test('configures a Railway service root directory before deploying a nested mono
       return response(responses[calls.length - 1]);
     },
   });
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.equal(calls[3].query.includes('serviceInstanceUpdate'), true);
   assert.deepEqual(calls[3].variables.input, { rootDirectory: '/apps/api' });
-  assert.equal(calls[4].query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(calls[4].query.includes('variableCollectionUpsert'), true);
+  assert.equal(calls[4].variables.input.replace, true);
+  assert.equal(calls[5].query.includes('serviceInstanceDeployV2'), true);
   assert.equal(result.deploymentId, 'deployment-2');
 });
 
@@ -186,13 +189,15 @@ test('updates an existing Railway service root directory before deploying', asyn
     fetchImpl: async (_url, options) => {
       const request = JSON.parse(options.body);
       calls.push(request);
-      return response(request.query.includes('serviceInstanceUpdate')
-        ? { serviceInstanceUpdate: true }
-        : { serviceInstanceDeployV2: 'deployment-3' });
+      if (request.query.includes('serviceInstanceUpdate')) return response({ serviceInstanceUpdate: true });
+      if (request.query.includes('variableCollectionUpsert')) return response({ variableCollectionUpsert: true });
+      return response({ serviceInstanceDeployV2: 'deployment-3' });
     },
   });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.deepEqual(calls[0].variables.input, { rootDirectory: null });
-  assert.equal(calls[1].query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(calls[1].query.includes('variableCollectionUpsert'), true);
+  assert.equal(calls[1].variables.input.replace, true);
+  assert.equal(calls[2].query.includes('serviceInstanceDeployV2'), true);
   assert.equal(result.deploymentId, 'deployment-3');
 });
