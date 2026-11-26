@@ -88,47 +88,56 @@ async function syncVercelRootDirectory({ token, teamId, projectId, profile = {} 
   });
 }
 
-async function listVercelProjectEnvironment({ token, teamId, projectId }, fetchImpl) {
+async function listVercelProjectEnvironmentVariables(token, teamId, projectId, fetchImpl) {
   const entries = [];
+  const cursors = new Set();
   let until = null;
   for (let page = 0; page < 20; page += 1) {
-    const query = new URLSearchParams({ decrypt: 'false' });
-    if (until !== null) query.set('until', String(until));
-    const result = await request(token, `/v10/projects/${encodeURIComponent(projectId)}/env?${query.toString()}`, { teamId, fetchImpl });
-    const current = Array.isArray(result) ? result : Array.isArray(result.envs) ? result.envs : [];
-    entries.push(...current);
-    const next = result.pagination?.next ?? null;
-    if (next === null) return entries;
-    if (next === until) throw new Error('Vercel environment-variable pagination did not advance');
-    until = next;
+    const query = `?limit=100${until ? `&until=${encodeURIComponent(until)}` : ''}`;
+    const result = await request(token, `/v10/projects/${encodeURIComponent(projectId)}/env${query}`, { teamId, fetchImpl });
+    entries.push(...(Array.isArray(result.envs) ? result.envs : []));
+    const next = result.pagination?.next;
+    if (next === undefined || next === null || next === '' || next === 0) return entries;
+    const cursor = String(next);
+    if (cursors.has(cursor)) throw new Error('Vercel environment-variable pagination repeated a cursor');
+    cursors.add(cursor);
+    until = cursor;
   }
-  throw new Error('Vercel environment-variable listing exceeded the safe pagination limit');
+  throw new Error('Vercel environment-variable listing exceeded its pagination limit');
 }
 
 async function syncVercelEnvironment({ token, teamId, projectId, env = {}, managedEnvKeys = [] }, fetchImpl) {
-  for (const [key, value] of Object.entries(env)) {
+  if (!env || typeof env !== 'object' || Array.isArray(env)) throw new Error('Vercel environment variables must be an object');
+  const entries = Object.entries(env);
+  for (const [key, value] of entries) {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') throw new Error('Invalid Vercel environment variable');
   }
-  const desiredKeys = new Set(Object.keys(env));
-  const managedKeys = new Set(Array.isArray(managedEnvKeys) ? managedEnvKeys : []);
-  if (managedKeys.size) {
-    const existing = await listVercelProjectEnvironment({ token, teamId, projectId }, fetchImpl);
-    const obsoleteIds = existing
-      .filter((entry) => entry && !entry.system && managedKeys.has(entry.key) && !desiredKeys.has(entry.key) && typeof entry.id === 'string')
-      .map((entry) => entry.id);
-    if (obsoleteIds.length) {
-      await request(token, `/v1/projects/${encodeURIComponent(projectId)}/env`, {
-        method: 'DELETE', teamId, fetchImpl, body: { ids: [...new Set(obsoleteIds)] },
-      });
+  const desiredKeys = new Set(entries.map(([key]) => key));
+  const managedKeys = Array.isArray(managedEnvKeys)
+    ? managedEnvKeys.filter((key) => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key))
+    : [];
+  const staleManagedKeys = new Set(managedKeys.filter((key) => !desiredKeys.has(key)));
+  if (staleManagedKeys.size) {
+    const existing = await listVercelProjectEnvironmentVariables(token, teamId, projectId, fetchImpl);
+    for (const variable of existing) {
+      if (!variable?.id || !staleManagedKeys.has(variable.key) || variable.system === true || variable.configurationId) continue;
+      try {
+        await request(token, `/v9/projects/${encodeURIComponent(projectId)}/env/${encodeURIComponent(variable.id)}`, {
+          method: 'DELETE', teamId, fetchImpl,
+        });
+      } catch (error) {
+        if (error.status !== 404) throw error;
+      }
     }
   }
-  for (const [key, value] of Object.entries(env)) {
+  for (const [key, value] of entries) {
     await request(token, `/v10/projects/${encodeURIComponent(projectId)}/env?upsert=true`, {
       method: 'POST', teamId, fetchImpl,
       body: { key, value, type: 'sensitive', visibility: 'secret', target: ['production', 'preview', 'development'] },
     });
   }
 }
+
 
 async function deploy({ token, teamId, projectId, name, repo, branch, commitSha, profile, env = {}, managedEnvKeys = [] }, { fetchImpl = fetch } = {}) {
   validCommit(commitSha);

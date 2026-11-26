@@ -114,59 +114,6 @@ test('syncs encrypted Kestrel project secrets to Vercel before deployment', asyn
 });
 
 
-test('deletes only previously Kestrel-managed Vercel variables removed from project settings', async () => {
-  const calls = [];
-  const result = await deployVercelProject({
-    token: 'vercel-token', projectId: 'prj-1', projectName: 'demo-app',
-    repositoryUrl: 'https://github.com/acme/demo', branch: 'main',
-    commitSha: 'd'.repeat(40), env: { DATABASE_URL: 'postgres://new-secret' },
-    managedEnvKeys: ['OLD_SECRET', 'DATABASE_URL'],
-  }, { fetchImpl: async (url, options = {}) => {
-    calls.push({ url, options });
-    if (url.includes('/v10/projects/prj-1/env?decrypt=false')) {
-      const query = new URL(url).searchParams;
-      if (query.get('until') === '123') {
-        return response({ envs: [{ id: 'manual-1', key: 'MANUAL_SECRET' }], pagination: { next: null } });
-      }
-      return response({ envs: [{ id: 'old-1', key: 'OLD_SECRET' }], pagination: { next: 123 } });
-    }
-    if (url.includes('/v1/projects/prj-1/env')) {
-      assert.equal(options.method, 'DELETE');
-      assert.deepEqual(JSON.parse(options.body), { ids: ['old-1'] });
-      return response({ deleted: 1, ids: ['old-1'] });
-    }
-    if (url.includes('/v10/projects/prj-1/env')) {
-      assert.equal(options.method, 'POST');
-      return response({ created: { id: 'new-1' } });
-    }
-    return response({ id: 'dpl-1', readyState: 'BUILDING' });
-  } });
-  assert.equal(calls.length, 5);
-  assert.equal(result.deploymentId, 'dpl-1');
-});
-
-test('removes the final managed Vercel secret when Kestrel environment becomes empty', async () => {
-  const calls = [];
-  await deployVercelProject({
-    token: 'vercel-token', projectId: 'prj-1', projectName: 'demo-app',
-    repositoryUrl: 'https://github.com/acme/demo', branch: 'main',
-    commitSha: 'e'.repeat(40), env: {}, managedEnvKeys: ['OLD_SECRET'],
-  }, { fetchImpl: async (url, options = {}) => {
-    calls.push({ url, options });
-    if (url.includes('/v10/projects/prj-1/env')) {
-      return response({ envs: [{ id: 'old-1', key: 'OLD_SECRET' }], pagination: { next: null } });
-    }
-    if (url.includes('/v1/projects/prj-1/env')) {
-      assert.deepEqual(JSON.parse(options.body), { ids: ['old-1'] });
-      return response({ deleted: 1, ids: ['old-1'] });
-    }
-    return response({ id: 'dpl-empty', readyState: 'BUILDING' });
-  } });
-  assert.equal(calls.length, 3);
-  assert.equal(calls[0].options.method || 'GET', 'GET');
-  assert.equal(calls[1].options.method, 'DELETE');
-});
-
 test('configures a Vercel project root directory for a nested monorepo service', async () => {
   const calls = [];
   const result = await deployVercelProject({
@@ -212,4 +159,66 @@ test('clears a previous Vercel monorepo root directory when deploying from repos
   });
   assert.equal(calls.length, 2);
   assert.deepEqual(JSON.parse(calls[0].body), { rootDirectory: null });
+});
+
+
+test('validates desired Vercel secrets before deleting stale managed variables', async () => {
+  await assert.rejects(deployVercelProject({
+    token: 'vercel-token',
+    projectId: 'prj-secrets',
+    projectName: 'api',
+    repositoryUrl: 'https://github.com/acme/api',
+    branch: 'main',
+    commitSha: 'b'.repeat(40),
+    profile: {},
+    env: { 'INVALID-KEY': 'value' },
+    managedEnvKeys: ['OLD_SECRET'],
+  }, { fetchImpl: async () => assert.fail('Vercel API must not be called for invalid environment variables') }), /Invalid Vercel environment variable/);
+});
+
+test('deletes only stale Kestrel-managed Vercel variables across all pages', async () => {
+  const calls = [];
+  await deployVercelProject({
+    token: 'vercel-token',
+    projectId: 'prj-secrets',
+    projectName: 'api',
+    repositoryUrl: 'https://github.com/acme/api',
+    branch: 'main',
+    commitSha: 'b'.repeat(40),
+    profile: {},
+    env: {},
+    managedEnvKeys: ['OLD_SECRET', 'LINKED_SECRET'],
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.includes('/v10/projects/prj-secrets/env?limit=100&until=123')) {
+        return response({
+          envs: [{ id: 'env-old-2', key: 'OLD_SECRET', system: false }],
+          pagination: { next: null },
+        });
+      }
+      if (url.includes('/v10/projects/prj-secrets/env?limit=100')) {
+        return response({
+          envs: [
+            { id: 'env-old-1', key: 'OLD_SECRET', system: false },
+            { id: 'env-linked', key: 'LINKED_SECRET', configurationId: 'cfg-1', system: false },
+            { id: 'env-system', key: 'OLD_SECRET', system: true },
+            { id: 'env-manual', key: 'MANUAL_SECRET', system: false },
+          ],
+          pagination: { next: 123 },
+        });
+      }
+      if (options.method === 'DELETE') return response({ id: 'deleted' });
+      if (url.includes('/v13/deployments')) return response({ id: 'dpl-cleanup', readyState: 'BUILDING' });
+      throw new Error('Unexpected Vercel request: ' + url);
+    },
+  });
+  const listCalls = calls.filter((call) => call.options.method === 'GET');
+  const deleteCalls = calls.filter((call) => call.options.method === 'DELETE');
+  assert.equal(listCalls.length, 2);
+  assert.equal(deleteCalls.length, 2);
+  assert.ok(deleteCalls.every((call) => call.url.includes('/env/env-old-')));
+  assert.equal(calls.some((call) => call.url.includes('env-linked')), false);
+  assert.equal(calls.some((call) => call.url.includes('env-system')), false);
+  assert.equal(calls.some((call) => call.url.includes('env-manual')), false);
 });
