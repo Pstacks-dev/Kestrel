@@ -63,7 +63,6 @@ jobs:
           KESTREL_BACKUP_RETENTION_DAYS: ${{ vars.KESTREL_BACKUP_RETENTION_DAYS || '90' }}
           KESTREL_BACKUP_OBJECT_KEY: ${{ steps.backup.outputs.object_key }}
           KESTREL_BACKUP_EXPECTED_SHA256: ${{ steps.backup.outputs.sha256 }}
-          KESTREL_BACKUP_EXPECTED_SHA256: ${{ steps.backup.outputs.sha256 }}
         run: npm run backup:verify
 
       - name: Restore drill into isolated staging database
