@@ -52,7 +52,7 @@ function buildConfig({ buildCommand, destinationDir, rootDir }) {
   const command = String(buildCommand || 'npm run build');
   const destination = String(destinationDir || 'dist');
   const suppliedRoot = String(rootDir || '/');
-  const root = suppliedRoot === '.' ? '/' : suppliedRoot.startsWith('/') ? suppliedRoot : \`/\${suppliedRoot}\`;
+  const root = suppliedRoot === '.' ? '/' : suppliedRoot.startsWith('/') ? suppliedRoot : `/${suppliedRoot}`;
   if (!command || command.length > 500 || /[\r\n\0]/.test(command)) throw new Error('Invalid Cloudflare Pages build command');
   if (!destination || destination.length > 200 || destination.startsWith('/') || /^[A-Za-z]:/.test(destination) ||
       destination.includes('\\') || destination.includes('\0') ||
