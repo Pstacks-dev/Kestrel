@@ -47,7 +47,7 @@ test('installation deletion and suspension set suspended_at; restoration actions
   }
   for (const action of ['created', 'unsuspend', 'new_permissions_accepted']) {
     const client = createClient();
-    await processGitHubInstallationDelivery(client, { deliveryId: `delivery-${action}`, action, installationId: '12345' });
+    await processGitHubInstallationDelivery(client, { deliveryId: `delivery-${action.replaceAll('_', '-')}`, action, installationId: '12345' });
     assert.equal(client.calls[1].params[1], null);
   }
 });
