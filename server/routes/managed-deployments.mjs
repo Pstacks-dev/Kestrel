@@ -24,14 +24,30 @@ async function githubJson(url, fetchImpl, token = null) {
   return response.json();
 }
 
-async function inspectProject(repository, branch, fetchImpl, token = null) {
+function normalizeGitHubBuildContext(value) {
+  const context = String(value || '.');
+  if (context === '.') return '';
+  if (context.startsWith('/') || /^[A-Za-z]:/.test(context) || context.includes('\\') || context.includes('\0')) {
+    throw new Error('Project build context must be a repository-relative path');
+  }
+  const segments = context.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw new Error('Project build context contains an unsafe path segment');
+  }
+  return segments.map(encodeURIComponent).join('/');
+}
+
+async function inspectProject(repository, ref, fetchImpl, token = null, buildContext = '.') {
   const base = `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}`;
-  const root = await githubJson(`${base}/contents/?ref=${encodeURIComponent(branch)}`, fetchImpl, token);
-  if (!Array.isArray(root)) throw new Error('GitHub repository root could not be inspected');
+  const contextPath = normalizeGitHubBuildContext(buildContext);
+  const contentsPath = contextPath ? `contents/${contextPath}` : 'contents/';
+  const root = await githubJson(`${base}/${contentsPath}?ref=${encodeURIComponent(ref)}`, fetchImpl, token);
+  if (!Array.isArray(root)) throw new Error('GitHub project build context could not be inspected');
   const files = root.filter((item) => item.type === 'file').map((item) => item.name);
   let packageJson = null;
   if (files.some((name) => name.toLowerCase() === 'package.json')) {
-    const file = await githubJson(`${base}/contents/package.json?ref=${encodeURIComponent(branch)}`, fetchImpl, token);
+    const packagePath = contextPath ? `contents/${contextPath}/package.json` : 'contents/package.json';
+    const file = await githubJson(`${base}/${packagePath}?ref=${encodeURIComponent(ref)}`, fetchImpl, token);
     try { packageJson = JSON.parse(Buffer.from(file.content || '', 'base64').toString('utf8')); }
     catch { throw new Error('Repository package.json is invalid'); }
   }
@@ -130,7 +146,7 @@ export function registerManagedDeploymentRoutes(app, {
     try {
       const projectResult = await query(
         `select p.id, p.organization_id, p.name, p.repository_url, p.default_branch,
-                p.source_type, p.github_installation_id, m.role
+                p.source_type, p.github_installation_id, p.oci_build_context, m.role
          from public.projects p
          join public.organization_members m on m.organization_id = p.organization_id
          where p.id = $1 and m.user_id = $2`,
@@ -176,7 +192,7 @@ export function registerManagedDeploymentRoutes(app, {
       }
       const branch = String(req.body?.branch || project.default_branch || 'main');
       const commitSha = await resolveCommit(repository, branch, req.body?.commitSha, fetchImpl, sourceToken);
-      const profile = await inspectProject(repository, branch, fetchImpl, sourceToken);
+      const profile = await inspectProject(repository, commitSha, fetchImpl, sourceToken, project.oci_build_context || '.');
       const compatible = rankHostingProviders(profile, {});
       const connectionResult = await query(
         `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag

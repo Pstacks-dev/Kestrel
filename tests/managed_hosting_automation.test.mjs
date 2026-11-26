@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { processManagedHostingQueue } from '../server/lib/managed-hosting-automation.mjs';
+import { inspectGitHubSource, processManagedHostingQueue } from '../server/lib/managed-hosting-automation.mjs';
 
 test('managed hosting queue processor exits cleanly when no events are ready', async () => {
   const queries = [];
@@ -195,4 +195,57 @@ test('uses a claim timestamp as a fencing token for image-wait state transitions
     transaction: async () => {},
   });
   assert.match(claimSql, /locked_at = now\(\).*returning q\.\*/is);
+});
+
+
+test('inspects a configured nested monorepo build context at the immutable pipeline commit', async () => {
+  const commitSha = 'd'.repeat(40);
+  const calls = [];
+  const profile = await inspectGitHubSource(
+    { owner: 'acme', repo: 'monorepo' },
+    commitSha,
+    async (url, options) => {
+      calls.push({ url, authorization: options.headers.Authorization });
+      if (url.includes('/contents/apps/api?ref=')) {
+        return new Response(JSON.stringify([
+          { name: 'Dockerfile', type: 'file' },
+          { name: 'package.json', type: 'file' },
+          { name: 'src', type: 'dir' },
+        ]), { status: 200 });
+      }
+      if (url.includes('/contents/apps/api/package.json?ref=')) {
+        return new Response(JSON.stringify({
+          content: Buffer.from(JSON.stringify({
+            dependencies: { next: '^15.0.0' },
+            scripts: { build: 'next build', start: 'next start' },
+          })).toString('base64'),
+        }), { status: 200 });
+      }
+      throw new Error('Unexpected GitHub URL: ' + url);
+    },
+    null,
+    'apps/api',
+  );
+  assert.equal(profile.framework, 'nextjs');
+  assert.equal(profile.needsContainer, true);
+  assert.equal(profile.needsPersistentProcess, true);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((call) => call.url.includes(commitSha)));
+  assert.ok(calls[0].url.includes('/contents/apps/api?ref='));
+  assert.ok(calls[1].url.includes('/contents/apps/api/package.json?ref='));
+});
+
+test('rejects unsafe configured monorepo contexts before making GitHub requests', async () => {
+  let calls = 0;
+  await assert.rejects(
+    inspectGitHubSource(
+      { owner: 'acme', repo: 'monorepo' },
+      'e'.repeat(40),
+      async () => { calls += 1; throw new Error('GitHub must not be called'); },
+      null,
+      '../secrets',
+    ),
+    /unsafe path segment/,
+  );
+  assert.equal(calls, 0);
 });
