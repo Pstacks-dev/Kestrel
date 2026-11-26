@@ -15,6 +15,7 @@ export interface JobStep {
   name: string;
   stage: 'push' | 'build' | 'checks' | 'canary' | 'promote';
   command: string;
+  workingDirectory?: string;
   needs: string[];
   status: JobStatus;
   durationMs: number;

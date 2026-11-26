@@ -25,3 +25,17 @@ test('caps declared artifact count at fifty', () => {
  const [result]=validatePipelineJobs([{id:'build',command:'npm run build',artifacts:paths}]);
  assert.equal(result.artifacts.length,50);
 });
+
+test('accepts safe nested working directories and defaults to repository root', () => {
+ const [nested,root] = validatePipelineJobs([
+  {id:'build',command:'npm run build',workingDirectory:'apps/web'},
+  {id:'test',command:'npm test'},
+ ]);
+ assert.equal(nested.workingDirectory,'apps/web');
+ assert.equal(root.workingDirectory,'.');
+});
+test('rejects unsafe pipeline working directories', () => {
+ for (const workingDirectory of ['../outside','apps/../../secret','/etc','C:/repo','apps\\web','apps//web','./apps/web','apps/']) {
+  assert.throws(() => validatePipelineJobs([{id:'build',command:'npm run build',workingDirectory}]),/unsafe working directory/);
+ }
+});

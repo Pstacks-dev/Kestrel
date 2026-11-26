@@ -413,7 +413,8 @@ app.get('/api/snapshot', userAuth, orgAccess, async (req, res) => {
                       'timeoutSeconds', j.timeout_seconds,
                       'attempt', j.attempt,
                       'startedAt', j.started_at,
-                      'finishedAt', j.finished_at
+                      'finishedAt', j.finished_at,
+                      'workingDirectory', j.working_directory
                     ) order by j.created_at
                   ) filter (where j.id is not null),
                   '[]'
@@ -845,9 +846,9 @@ app.post('/api/webhooks/github', async (req, res) => {
 
     // Default CI jobs pipeline
     const defaultJobs = [
-      { id: 'install', name: 'Install dependencies', stage: 'build', command: "if [ -f package.json ]; then if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci; else npm install; fi; elif [ -f requirements.txt ]; then python -m pip install -r requirements.txt; elif [ -f go.mod ]; then go mod download; elif [ -f Cargo.toml ]; then cargo fetch; else echo 'No dependency manifest found; skipping'; fi" },
-      { id: 'test', name: 'Run tests', stage: 'test', command: "if [ -f package.json ] && node -e \"process.exit(require('./package.json').scripts?.test ? 0 : 1)\"; then npm test; elif [ -f go.mod ]; then go test ./...; elif [ -f Cargo.toml ]; then cargo test; elif [ -f pytest.ini ] || [ -f tox.ini ]; then python -m pytest; else echo 'No test command detected; skipping'; fi", needs: ['install'] },
-      { id: 'build', name: 'Build application', stage: 'package', command: "if [ -f package.json ] && node -e \"process.exit(require('./package.json').scripts?.build ? 0 : 1)\"; then npm run build; elif [ -f go.mod ]; then go build ./...; elif [ -f Cargo.toml ]; then cargo build --release; elif [ -f pyproject.toml ] && python -m build --version >/dev/null 2>&1; then python -m build; else echo 'No build command detected; skipping'; fi", needs: ['test'] },
+      { id: 'install', name: 'Install dependencies', stage: 'build', workingDirectory: project.oci_build_context || '.', command: "if [ -f package.json ]; then if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci; else npm install; fi; elif [ -f requirements.txt ]; then python -m pip install -r requirements.txt; elif [ -f go.mod ]; then go mod download; elif [ -f Cargo.toml ]; then cargo fetch; else echo 'No dependency manifest found; skipping'; fi" },
+      { id: 'test', name: 'Run tests', stage: 'test', workingDirectory: project.oci_build_context || '.', command: "if [ -f package.json ] && node -e \"process.exit(require('./package.json').scripts?.test ? 0 : 1)\"; then npm test; elif [ -f go.mod ]; then go test ./...; elif [ -f Cargo.toml ]; then cargo test; elif [ -f pytest.ini ] || [ -f tox.ini ]; then python -m pytest; else echo 'No test command detected; skipping'; fi", needs: ['install'] },
+      { id: 'build', name: 'Build application', stage: 'package', workingDirectory: project.oci_build_context || '.', command: "if [ -f package.json ] && node -e \"process.exit(require('./package.json').scripts?.build ? 0 : 1)\"; then npm run build; elif [ -f go.mod ]; then go build ./...; elif [ -f Cargo.toml ]; then cargo build --release; elif [ -f pyproject.toml ] && python -m build --version >/dev/null 2>&1; then python -m build; else echo 'No build command detected; skipping'; fi", needs: ['test'] },
     ];
     const safe = validatePipelineJobs(defaultJobs);
 
@@ -864,9 +865,9 @@ app.post('/api/webhooks/github', async (req, res) => {
       );
       for (const j of safe) {
         await c.query(
-          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries, artifact_paths)
-           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries, j.artifacts]
+          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries, artifact_paths, working_directory)
+           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries, j.artifacts, j.workingDirectory]
         );
       }
       await c.query('update public.github_webhooks set last_triggered_at = now() where project_id = $1', [project.id]);
@@ -917,9 +918,9 @@ app.post('/api/runs', sensitiveLimiter, userAuth, async (req, res) => {
 
       for (const j of safe) {
         await c.query(
-          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries, artifact_paths)
-           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries, j.artifacts]
+          `insert into public.jobs(run_id, external_id, name, stage, command, needs, memory_limit_mb, cpu_millicores, timeout_seconds, max_retries, artifact_paths, working_directory)
+           values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [rr.rows[0].id, j.id, j.name, j.stage, j.command, j.needs, j.memory, j.cpu, j.timeoutSeconds, j.maxRetries, j.artifacts, j.workingDirectory]
         );
       }
 
@@ -957,7 +958,7 @@ app.get('/api/runs/:runId', userAuth, async (req, res) => {
     if (!r.rowCount) return res.status(404).json({ error: 'Run not found or access denied' });
 
     const jobs = await query(
-      'select * from public.jobs where run_id = $1 order by created_at',
+      'select j.*, j.working_directory as "workingDirectory" from public.jobs j where j.run_id = $1 order by j.created_at',
       [runId]
     );
     const artifacts = await query(
@@ -1334,6 +1335,7 @@ app.post('/api/workers/claim', workerAuth, async (req, res) => {
         githubInstallationId: j.github_installation_id,
         memoryLimitMb: j.memory_limit_mb,
         cpuMillicores: j.cpu_millicores,
+        workingDirectory: j.working_directory || '.',
         timeoutSeconds: j.timeout_seconds,
         secrets,
         jobType: j.job_type || 'build',
