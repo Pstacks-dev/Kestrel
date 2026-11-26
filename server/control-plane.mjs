@@ -2024,16 +2024,41 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && isMain) {
     console.log(`Kestrel control plane listening on :${port}`)
   );
 
-  async function shutdown() {
+  let shuttingDown = false;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.info(`Kestrel control plane received ${signal}; beginning graceful shutdown.`);
     clearInterval(recovery);
-    stopManagedHostingAutomation();
-    server.close();
+
+    const forceCloseTimer = setTimeout(() => {
+      console.error('Control plane graceful shutdown deadline reached; closing remaining HTTP connections.');
+      server.closeAllConnections?.();
+    }, Math.max(1000, Number(process.env.KESTREL_SHUTDOWN_TIMEOUT_MS || 25000)));
+    forceCloseTimer.unref?.();
+
+    // Stop accepting new requests immediately, while allowing in-flight HTTP
+    // requests and the current provider operation to finish using the DB pool.
+    const httpDrain = new Promise((resolve) => {
+      server.close((error) => {
+        if (error) console.error('HTTP server close reported an error:', error.message);
+        resolve();
+      });
+    });
+
     try {
+      await stopManagedHostingAutomation();
+      await httpDrain;
       await pool.end();
-    } catch {}
-    process.exit(0);
+      console.info('Kestrel control plane shutdown completed.');
+    } catch (error) {
+      console.error('Kestrel control plane shutdown failed:', error?.message);
+      process.exitCode = 1;
+    } finally {
+      clearTimeout(forceCloseTimer);
+    }
   }
 
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
 }

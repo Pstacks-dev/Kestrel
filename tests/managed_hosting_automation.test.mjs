@@ -252,3 +252,36 @@ test('rejects unsafe configured monorepo contexts before making GitHub requests'
   );
   assert.equal(calls, 0);
 });
+
+test('automation shutdown stops future ticks and waits for the active queue pass', async () => {
+  let releaseQueue;
+  let intervalCallback;
+  let intervalCleared = false;
+  let queueStarted = false;
+  const queueGate = new Promise((resolve) => { releaseQueue = resolve; });
+  const stop = (await import('../server/lib/managed-hosting-automation.mjs')).startManagedHostingAutomation({
+    query: async () => {
+      queueStarted = true;
+      await queueGate;
+      return { rowCount: 0, rows: [] };
+    },
+    transaction: async () => { throw new Error('No transaction should be opened'); },
+    setIntervalImpl: (callback) => {
+      intervalCallback = callback;
+      return { unref() {} };
+    },
+    clearIntervalImpl: () => { intervalCleared = true; },
+  });
+
+  await Promise.resolve();
+  assert.equal(queueStarted, true);
+  let stopped = false;
+  const stopping = stop().then(() => { stopped = true; });
+  assert.equal(intervalCleared, true);
+  assert.equal(stopped, false);
+  intervalCallback();
+  assert.equal(stopped, false);
+  releaseQueue();
+  await stopping;
+  assert.equal(stopped, true);
+});

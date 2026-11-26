@@ -354,20 +354,30 @@ export async function processManagedHostingQueue({ query, transaction, fetchImpl
 }
 
 export function startManagedHostingAutomation(dependencies) {
-  let busy = false;
-  const tick = async () => {
-    if (busy) return;
-    busy = true;
-    try {
-      await processManagedHostingQueue(dependencies, 5);
-    } catch (error) {
-      dependencies.logger?.error?.('Managed deployment automation queue poll failed', { message: error?.message });
-    } finally {
-      busy = false;
-    }
+  const setIntervalImpl = dependencies.setIntervalImpl || setInterval;
+  const clearIntervalImpl = dependencies.clearIntervalImpl || clearInterval;
+  let stopped = false;
+  let inFlight = null;
+
+  const tick = () => {
+    if (stopped || inFlight) return inFlight;
+    inFlight = processManagedHostingQueue(dependencies, 5)
+      .catch((error) => {
+        dependencies.logger?.error?.('Managed deployment automation queue poll failed', { message: error?.message });
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+    return inFlight;
   };
-  const timer = setInterval(tick, 15000);
+
+  const timer = setIntervalImpl(() => { void tick(); }, 15000);
   timer.unref?.();
   void tick();
-  return () => clearInterval(timer);
+
+  return async () => {
+    stopped = true;
+    clearIntervalImpl(timer);
+    await inFlight;
+  };
 }
