@@ -12,7 +12,7 @@ function response(payload, status = 200) {
 test('creates a Git-connected Vercel project and deploys the exact Git commit', async () => {
   const calls = [];
   const result = await createVercelDeployment({
-    token: 'vercel-token', teamId: 'team-1', repositoryUrl: 'https://github.com/acme/private-demo.git',
+    token: 'vercel-token', teamId: 'team-1', repositoryUrl: 'https://github.com/acme/demo.git',
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo App', profile: { framework: 'nextjs' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
@@ -23,7 +23,7 @@ test('creates a Git-connected Vercel project and deploys the exact Git commit', 
   assert.equal(calls.length, 3);
   assert.equal(calls[0].url.endsWith('?teamId=team-1'), true);
   const project = JSON.parse(calls[1].options.body);
-  assert.deepEqual(project.gitRepository, { type: 'github', repo: 'acme/private-demo' });
+  assert.deepEqual(project.gitRepository, { type: 'github', repo: 'acme/demo' });
   const deployment = JSON.parse(calls[2].options.body);
   assert.equal(deployment.project, 'prj-1');
   assert.equal(deployment.gitSource.sha, 'a'.repeat(40));
@@ -83,7 +83,7 @@ test('rejects invalid GitHub URLs and unverified commit SHAs before provider cal
   const noNetwork = async () => assert.fail('Vercel API must not be called');
   await assert.rejects(createVercelDeployment({
     token: 'x', repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'a'.repeat(40),
-  }, { fetchImpl: noNetwork }), /GitHub repository/);
+  }, { fetchImpl: noNetwork }), /public GitHub repository/);
   await assert.rejects(deployVercelProject({
     token: 'x', projectId: 'prj-1', projectName: 'demo', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
