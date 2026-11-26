@@ -7,6 +7,7 @@ import {
   getManagedProviderDeployment, getManagedProviderDeploymentLogs, rollbackManagedProviderDeployment,
 } from '../lib/hosting-managed-adapters.mjs';
 import { createGitHubInstallationToken } from '../lib/github-app.mjs';
+import { HEROKU_DYNO_PLANS, HEROKU_PRICING_CATALOG_VERSION, validateHerokuCostApproval } from '../lib/heroku-pricing.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 const API_HEADERS = {
@@ -141,6 +142,11 @@ function deploymentView(row) {
     providerUrl: row.provider_url, rollbackOf: row.rollback_of,
     healthStatus: row.health_status || 'pending', healthCheckedAt: row.health_checked_at || null,
     healthAttemptCount: Number(row.health_attempt_count || 0),
+    herokuDynoSize: row.heroku_dyno_size || null,
+    herokuDynoQuantity: row.heroku_dyno_quantity == null ? null : Number(row.heroku_dyno_quantity),
+    estimatedMonthlyCostUsd: row.estimated_monthly_cost_usd == null ? null : Number(row.estimated_monthly_cost_usd),
+    costApprovedAt: row.cost_approved_at || null,
+    pricingCatalogVersion: row.pricing_catalog_version || null,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -149,6 +155,10 @@ export function registerManagedDeploymentRoutes(app, {
   userAuth, query, transaction, fetchImpl = fetch, storageFetch = fetch,
   createInstallationToken = createGitHubInstallationToken, githubAppConfig,
 }) {
+  app.get('/api/heroku/dyno-pricing', userAuth, (_req, res) => {
+    res.json({ catalogVersion: HEROKU_PRICING_CATALOG_VERSION, plans: HEROKU_DYNO_PLANS });
+  });
+
   app.post('/api/projects/:projectId/managed-deployments', userAuth, async (req, res) => {
     try {
       const projectResult = await query(
@@ -201,6 +211,18 @@ export function registerManagedDeploymentRoutes(app, {
       const commitSha = await resolveCommit(repository, branch, req.body?.commitSha, fetchImpl, sourceToken);
       const profile = await inspectProject(repository, commitSha, fetchImpl, sourceToken, project.oci_build_context || '.');
       const compatible = rankHostingProviders(profile, {});
+      const requestedProvider = String(req.body?.providerId || 'auto');
+      if (requestedProvider !== 'auto' && !ACTIVE_MANAGED_PROVIDERS.includes(requestedProvider)) {
+        return fail(res, 422, 'The requested managed hosting provider is not active or supported.');
+      }
+      let herokuCostApproval = null;
+      if (requestedProvider === 'heroku') {
+        try {
+          herokuCostApproval = validateHerokuCostApproval(req.body?.herokuCostApproval, project.role);
+        } catch (error) {
+          return fail(res, error.status || 422, error.message);
+        }
+      }
       const connectionResult = await query(
         `select provider_id, credentials_ciphertext, credentials_iv, credentials_auth_tag
          from public.hosting_provider_connections
@@ -211,11 +233,17 @@ export function registerManagedDeploymentRoutes(app, {
       const projectEnv = await loadProjectEnvironment(query, project.id);
       const selected = compatible.find((provider) =>
         ACTIVE_MANAGED_PROVIDERS.includes(provider.id) &&
+        (requestedProvider === 'auto' ? provider.id !== 'heroku' : provider.id === requestedProvider) &&
         verified.has(provider.id) &&
         (provider.id !== 'netlify' ||
           (Array.isArray(req.body?.artifactIds) && req.body.artifactIds.length > 0 && Object.keys(projectEnv).length === 0)));
       if (!selected) {
-        return fail(res, 409, 'No verified compatible managed provider is available. Netlify requires completed static build artifacts and cannot currently deploy projects with Kestrel-managed secrets.');
+        if (requestedProvider === 'heroku' && !herokuCostApproval) {
+          return fail(res, 422, 'Heroku requires an explicit workspace owner/admin cost approval.');
+        }
+        return fail(res, 409, requestedProvider === 'auto'
+          ? 'No verified compatible managed provider is available. Heroku requires explicit owner/admin cost approval and Netlify requires completed static build artifacts without Kestrel-managed secrets.'
+          : 'The requested provider is not connected, verified, or compatible with this project.');
       }
 
       const providerId = selected.id;
@@ -255,6 +283,8 @@ export function registerManagedDeploymentRoutes(app, {
         destinationDir: req.body?.destinationDir || profile.outputDirectory || 'dist',
         rootDir: profile.rootDir && profile.rootDir !== '.' ? profile.rootDir : '/',
         managedEnvKeys: Array.isArray(resource?.metadata?.managedEnvKeys) ? resource.metadata.managedEnvKeys : [],
+        dynoSize: herokuCostApproval?.dynoSize,
+        dynoQuantity: herokuCostApproval?.dynoQuantity,
       };
       const providerDeployment = resource
         ? await deployManagedProviderService(providerId, credentials, resource, commitSha, { fetchImpl }, { repositoryUrl: project.repository_url, branch, profile, projectName: providerInput.projectName, containerImage: providerInput.containerImage, port: providerInput.port, env: providerInput.env, files: providerInput.files, buildCommand: providerInput.buildCommand, destinationDir: providerInput.destinationDir, rootDir: providerInput.rootDir, managedEnvKeys: providerInput.managedEnvKeys })
@@ -277,27 +307,52 @@ export function registerManagedDeploymentRoutes(app, {
           );
           resourceId = insertedResource.rows[0].id;
         }
+        const resourceMetadata = {
+          managedEnvKeys: Object.keys(projectEnv),
+          ...(herokuCostApproval ? {
+            herokuDynoSize: herokuCostApproval.dynoSize,
+            herokuDynoQuantity: herokuCostApproval.dynoQuantity,
+            herokuPricingCatalogVersion: herokuCostApproval.pricingCatalogVersion,
+          } : {}),
+        };
         await client.query(
           `update public.managed_hosting_resources
-           set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('managedEnvKeys', $2::jsonb),
+           set metadata = coalesce(metadata, '{}'::jsonb) || $2::jsonb,
                updated_at = now()
            where id = $1`,
-          [resourceId, JSON.stringify(Object.keys(projectEnv))],
+          [resourceId, JSON.stringify(resourceMetadata)],
         );
         const inserted = await client.query(
           `insert into public.managed_hosting_deployments
              (resource_id, organization_id, project_id, provider_id, provider_deployment_id,
-              branch, commit_sha, status, provider_url, created_by)
-           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+              branch, commit_sha, status, provider_url, created_by,
+              heroku_dyno_size, heroku_dyno_quantity, estimated_monthly_cost_usd,
+              cost_approved_by, cost_approved_at, pricing_catalog_version)
+           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
            returning *`,
           [resourceId, project.organization_id, project.id, providerId, providerDeployment.deploymentId,
-            branch, commitSha, providerDeployment.status || 'queued', providerDeployment.providerUrl || null, req.user.id],
+            branch, commitSha, providerDeployment.status || 'queued', providerDeployment.providerUrl || null, req.user.id,
+            herokuCostApproval?.dynoSize || null, herokuCostApproval?.dynoQuantity || null,
+            herokuCostApproval?.monthlyCostUsd || null, herokuCostApproval ? req.user.id : null,
+            herokuCostApproval ? new Date().toISOString() : null,
+            herokuCostApproval?.pricingCatalogVersion || null],
         );
         await client.query(
           `insert into public.audit_events(organization_id, actor_id, action, target_type, target_id, metadata)
            values($1,$2,'managed_deployment.queued','managed_deployment',$3,$4::jsonb)`,
           [project.organization_id, req.user.id, inserted.rows[0].id,
-            JSON.stringify({ provider: providerId, branch, commitSha })],
+            JSON.stringify({
+              provider: providerId, branch, commitSha,
+              ...(herokuCostApproval ? {
+                costApproval: {
+                  approved: true, approvedBy: req.user.id,
+                  dynoSize: herokuCostApproval.dynoSize,
+                  dynoQuantity: herokuCostApproval.dynoQuantity,
+                  estimatedMonthlyCostUsd: herokuCostApproval.monthlyCostUsd,
+                  pricingCatalogVersion: herokuCostApproval.pricingCatalogVersion,
+                },
+              } : {}),
+            })],
         );
         return inserted.rows[0];
       });
