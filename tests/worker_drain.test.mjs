@@ -21,6 +21,8 @@ test('starts a bounded drain timeout only while executions are active', () => {
 
 test('aborts local and Docker jobs and forces exit only after the drain timeout', () => {
   let timerCallback;
+  let forceCallback;
+  let scheduled = 0;
   const calls = [];
   const abortController = new AbortController();
   const child = { kill: (signal) => calls.push(['kill', signal]) };
@@ -32,8 +34,10 @@ test('aborts local and Docker jobs and forces exit only after the drain timeout'
   const controller = createDrainController({
     activeJobs: jobs,
     setTimeoutImpl: (callback, delay) => {
+      scheduled += 1;
       calls.push(['timeout', delay]);
-      timerCallback = callback;
+      if (scheduled === 1) timerCallback = callback;
+      else forceCallback = callback;
       return { unref() {} };
     },
     stopContainer: (name) => calls.push(['stop', name]),
@@ -48,23 +52,31 @@ test('aborts local and Docker jobs and forces exit only after the drain timeout'
   assert.equal(abortController.signal.aborted, true);
   assert.ok(calls.some(([name, value]) => name === 'kill' && value === 'SIGTERM'));
   assert.ok(calls.some(([name, value]) => name === 'stop' && value === 'kestrel-job-2'));
+  assert.equal(typeof forceCallback, 'function');
+  assert.equal(calls.some(([name]) => name === 'exit'), false);
+  forceCallback();
   assert.ok(calls.some(([name, value]) => name === 'exit' && value === 'SIGTERM'));
 });
 
 test('waits for a managed image build even when no ordinary job is active', () => {
   let timerCallback;
+  let forceCallback;
+  let scheduled = 0;
   const calls = [];
   const controller = createDrainController({
     activeJobs: new Map(),
     isManagedImageBuildActive: () => true,
-    setTimeoutImpl: (callback) => { timerCallback = callback; return { unref() {} }; },
+    setTimeoutImpl: (callback) => { scheduled += 1; if (scheduled === 1) timerCallback = callback; else forceCallback = callback; return { unref() {} }; },
+    abortManagedImageBuild: () => calls.push('abort-build'),
     forceExit: (signal) => calls.push(signal),
     logger: { warn() {} },
   });
   assert.equal(controller.begin('SIGTERM'), true);
   assert.equal(typeof timerCallback, 'function');
   timerCallback();
-  assert.deepEqual(calls, ['SIGTERM']);
+  assert.deepEqual(calls, ['abort-build']);
+  forceCallback();
+  assert.deepEqual(calls, ['abort-build', 'SIGTERM']);
 });
 
 test('clears the force-exit timer after all executions drain normally', () => {
