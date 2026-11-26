@@ -155,18 +155,22 @@ export async function createCloudflarePagesDeployment({ apiToken, accountId, pro
   };
 }
 
-export async function deployCloudflarePagesProject({ apiToken, accountId, projectName: name, branch = 'main', commitSha, commitMessage, env }, { fetchImpl = fetch } = {}) {
+export async function deployCloudflarePagesProject({ apiToken, accountId, projectName: name, branch = 'main', commitSha, commitMessage, env, buildCommand, destinationDir, rootDir }, { fetchImpl = fetch } = {}) {
   if (!/^[a-fA-F0-9]{40}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required for Cloudflare Pages deployment');
+  const update = {};
+  if (buildCommand || destinationDir || rootDir) {
+    update.build_config = buildConfig({ buildCommand, destinationDir, rootDir });
+  }
   if (env && Object.keys(env).length) {
     const variables = envVars(env);
+    update.deployment_configs = {
+      production: { env_vars: variables },
+      preview: { env_vars: variables },
+    };
+  }
+  if (Object.keys(update).length) {
     await request(apiToken, projectPath(accountId, name), {
-      method: 'PATCH', fetchImpl,
-      body: {
-        deployment_configs: {
-          production: { env_vars: variables },
-          preview: { env_vars: variables },
-        },
-      },
+      method: 'PATCH', fetchImpl, body: update,
     });
   }
   return createDeployment({ apiToken, accountId, projectName: name, branch, commitSha, commitMessage }, fetchImpl);
