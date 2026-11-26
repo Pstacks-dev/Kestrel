@@ -26,6 +26,13 @@ test('creates a Render web service with autodeploy disabled and deploys the veri
   const service = JSON.parse(calls[0].options.body);
   assert.equal(service.autoDeployTrigger, 'off');
   assert.equal(service.repo, 'https://github.com/acme/demo');
+  assert.equal(service.serviceDetails.runtime, 'node');
+  assert.deepEqual(service.serviceDetails.envSpecificDetails, {
+    buildCommand: 'npm install && npm run build',
+    startCommand: 'npm start',
+  });
+  assert.equal(service.serviceDetails.plan, 'starter');
+  assert.equal(service.serviceDetails.region, 'oregon');
   assert.equal(JSON.parse(calls[2].options.body).commitId, 'a'.repeat(40));
   assert.equal(result.serviceId, 'srv-1');
   assert.equal(result.deploymentId, 'dep-1');
@@ -109,4 +116,46 @@ test('rejects malformed GitHub URLs and invalid commit SHAs before calling provi
   await assert.rejects(createDigitalOceanDeployment({
     accessToken: 'x', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
+});
+
+
+test('creates a Render Docker service using the configured monorepo root and Docker context', async () => {
+  const calls = [];
+  const result = await createRenderDeployment({
+    apiKey: 'render-token',
+    ownerId: 'owner-123',
+    repositoryUrl: 'https://github.com/acme/monorepo',
+    branch: 'main',
+    commitSha: 'e'.repeat(40),
+    projectName: 'API Service',
+    profile: {
+      runtime: 'node',
+      isStatic: false,
+      needsContainer: true,
+      rootDir: 'apps/api',
+      dockerfilePath: './Dockerfile',
+      dockerContext: '.',
+    },
+    env: {},
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/services')) return response({
+        service: { id: 'srv-docker', serviceDetails: { url: 'https://api.onrender.com' } },
+      }, 201);
+      return response({ id: 'dep-docker', status: 'created' }, 201);
+    },
+  });
+  assert.equal(calls.length, 2);
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.rootDir, 'apps/api');
+  assert.equal(body.serviceDetails.runtime, 'docker');
+  assert.deepEqual(body.serviceDetails.envSpecificDetails, {
+    dockerfilePath: './Dockerfile',
+    dockerContext: '.',
+  });
+  assert.equal(body.serviceDetails.buildCommand, undefined);
+  assert.equal(body.serviceDetails.startCommand, undefined);
+  assert.equal(result.serviceId, 'srv-docker');
+  assert.equal(result.deploymentId, 'dep-docker');
 });

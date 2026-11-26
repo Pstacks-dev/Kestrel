@@ -57,11 +57,35 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
   const isStatic = profile.isStatic === true;
   const serviceType = isStatic ? 'static_site' : 'web_service';
   const details = isStatic
-    ? { buildCommand: 'npm install && npm run build', publishPath: 'dist' }
-    : { env: profile.runtime === 'python' ? 'python' : profile.runtime === 'ruby' ? 'ruby' : profile.runtime === 'go' ? 'go' : 'node', plan: 'starter', buildCommand: 'npm install && npm run build', startCommand: 'npm start' };
+    ? { buildCommand: profile.buildCommand || 'npm install && npm run build', publishPath: profile.outputDirectory || 'dist' }
+    : profile.needsContainer
+      ? {
+          runtime: 'docker',
+          envSpecificDetails: {
+            dockerfilePath: profile.dockerfilePath || './Dockerfile',
+            dockerContext: profile.dockerContext || '.',
+          },
+          plan: 'starter',
+          region: 'oregon',
+        }
+      : {
+          runtime: profile.runtime || 'node',
+          envSpecificDetails: {
+            buildCommand: profile.buildCommand || 'npm install && npm run build',
+            startCommand: profile.startCommand || 'npm start',
+          },
+          plan: 'starter',
+          region: 'oregon',
+        };
   const created = await request(apiKey, '/services', {
     method: 'POST', fetchImpl,
-    body: { type: serviceType, name: String(projectName || 'kestrel-app').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60), ownerId, repo, branch, autoDeployTrigger: 'off', serviceDetails: details },
+    body: {
+      type: serviceType,
+      name: String(projectName || 'kestrel-app').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
+      ownerId, repo, branch, autoDeployTrigger: 'off',
+      ...(profile.rootDir && profile.rootDir !== '.' ? { rootDir: profile.rootDir } : {}),
+      serviceDetails: details,
+    },
   });
   const service = created.service || created;
   if (!service.id) throw new Error('Render did not return a service identifier');
