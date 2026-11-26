@@ -51,7 +51,66 @@ async function syncRenderEnvironment(apiKey, serviceId, env = {}, fetchImpl = fe
   });
 }
 
-export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir }, { fetchImpl = fetch } = {}) {
+function normalizeRenderRootDir(value) {
+  if (value === undefined) return undefined;
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '.' || raw === '/') return null;
+  const root = raw.replace(/^\.\//, '').replace(/^\/+|\/+$/g, '');
+  if (!root || root.includes('\\') || root.includes('\0') || /^[A-Za-z]:/.test(root) ||
+      root.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid Render root directory');
+  }
+  return root;
+}
+
+function normalizeRenderRelativePath(value, label) {
+  const path = String(value || '').trim().replace(/^\.\//, '');
+  if (!path || path.length > 500 || path.startsWith('/') || path.includes('\\') || path.includes('\0') ||
+      /^[A-Za-z]:/.test(path) || path.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error(`Invalid Render ${label}`);
+  }
+  return path;
+}
+
+function renderPathRelativeToRoot(value, rootDir, label) {
+  const raw = String(value || '').trim();
+  if (raw === '.' || raw === './') return '.';
+  const path = normalizeRenderRelativePath(raw, label);
+  if (rootDir && path === rootDir) return '.';
+  return rootDir && path.startsWith(`${rootDir}/`) ? path.slice(rootDir.length + 1) : path;
+}
+
+function renderServiceSettings({ profile = {}, rootDir, buildCommand, destinationDir } = {}) {
+  const body = {};
+  const requestedRoot = rootDir !== undefined ? rootDir : profile.rootDir;
+  const normalizedRoot = normalizeRenderRootDir(requestedRoot);
+  if (normalizedRoot !== undefined) body.rootDir = normalizedRoot;
+
+  const hasProfile = profile && Object.keys(profile).length > 0;
+  if (profile.isStatic === true) {
+    const command = String(buildCommand || profile.buildCommand || 'npm install && npm run build').trim();
+    if (!command || command.length > 2000) throw new Error('Invalid Render build command');
+    body.serviceDetails = {
+      buildCommand: command,
+      publishPath: normalizeRenderRelativePath(destinationDir || profile.outputDirectory || 'dist', 'static publish directory'),
+    };
+  } else if (profile.needsContainer === true) {
+    const dockerfilePath = renderPathRelativeToRoot(profile.dockerfilePath || './Dockerfile', normalizedRoot, 'Dockerfile path');
+    const dockerContext = profile.dockerContext
+      ? renderPathRelativeToRoot(profile.dockerContext, normalizedRoot, 'Docker build context')
+      : '.';
+    body.serviceDetails = { envSpecificDetails: { dockerfilePath, dockerContext } };
+  } else if (hasProfile || buildCommand !== undefined) {
+    const command = String(buildCommand || profile.buildCommand || 'npm install && npm run build').trim();
+    if (!command || command.length > 2000) throw new Error('Invalid Render build command');
+    const startCommand = String(profile.startCommand || 'npm start').trim();
+    if (!startCommand || startCommand.length > 2000) throw new Error('Invalid Render start command');
+    body.serviceDetails = { envSpecificDetails: { buildCommand: command, startCommand } };
+  }
+  return body;
+}
+
+export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir, rootDir }, { fetchImpl = fetch } = {}) {
   if (!apiKey || !ownerId) throw new Error('Render API key and workspace owner ID are required');
   validate({ branch, commitSha });
   const repo = repoPath(repositoryUrl);
@@ -69,8 +128,8 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
       ? {
           runtime: 'docker',
           envSpecificDetails: {
-            dockerfilePath: profile.dockerfilePath || './Dockerfile',
-            dockerContext: profile.dockerContext || '.',
+            dockerfilePath: renderPathRelativeToRoot(profile.dockerfilePath || './Dockerfile', normalizeRenderRootDir(rootDir !== undefined ? rootDir : profile.rootDir), 'Dockerfile path'),
+            dockerContext: profile.dockerContext ? renderPathRelativeToRoot(profile.dockerContext, normalizeRenderRootDir(rootDir !== undefined ? rootDir : profile.rootDir), 'Docker build context') : '.',
           },
           plan: 'starter',
           region: 'oregon',
@@ -90,7 +149,7 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
       type: serviceType,
       name: String(projectName || 'kestrel-app').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60),
       ownerId, repo, branch, autoDeployTrigger: 'off',
-      ...(profile.rootDir && profile.rootDir !== '.' ? { rootDir: profile.rootDir } : {}),
+      ...((normalizeRenderRootDir(rootDir !== undefined ? rootDir : profile.rootDir)) ? { rootDir: normalizeRenderRootDir(rootDir !== undefined ? rootDir : profile.rootDir) } : {}),
       serviceDetails: details,
     },
   });
@@ -104,9 +163,11 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
   return { provider: 'render', projectId: ownerId, serviceId: service.id, environmentId: null, deploymentId: deploy.id, status: status(deploy.status || 'created'), providerUrl: service.serviceDetails?.url || service.url || null };
 }
 
-export async function deployRenderService({ apiKey, serviceId, commitSha, env = {} }, { fetchImpl = fetch } = {}) {
+export async function deployRenderService({ apiKey, serviceId, commitSha, env = {}, profile = {}, buildCommand, destinationDir, rootDir }, { fetchImpl = fetch } = {}) {
   if (!serviceId) throw new Error('Render service identifier is required');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
+  const settings = renderServiceSettings({ profile, buildCommand, destinationDir, rootDir });
+  if (Object.keys(settings).length) await request(apiKey, `/services/${encodeURIComponent(serviceId)}`, { method: 'PATCH', fetchImpl, body: settings });
   await syncRenderEnvironment(apiKey, serviceId, env, fetchImpl);
   const deploy = await request(apiKey, `/services/${encodeURIComponent(serviceId)}/deploys`, { method: 'POST', fetchImpl, body: { commitId: commitSha, clearCache: 'do_not_clear' } });
   if (!deploy.id) throw new Error('Render did not return a deployment identifier');
