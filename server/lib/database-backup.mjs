@@ -43,8 +43,8 @@ export function parsePostgresConnection(value, label = 'database') {
 export function assertDistinctRestoreDatabase(sourceUrl, restoreUrl) {
   const source = parsePostgresConnection(sourceUrl, 'source database');
   const restore = parsePostgresConnection(restoreUrl, 'restore database');
-  if (source.host === restore.host && source.port === restore.port && source.database === restore.database) {
-    throw new Error('Restore target must be a different database from the production source');
+  if (source.host === restore.host) {
+    throw new Error('Restore target must use a separate staging host/project from the production source');
   }
   return restore;
 }
