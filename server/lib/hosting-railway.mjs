@@ -44,12 +44,22 @@ async function syncRailwayVariables(token, projectId, environmentId, serviceId, 
     fetchImpl);
 }
 
+async function syncRailwayRootDirectory(token, serviceId, environmentId, profile, fetchImpl) {
+  if (!profile || !Object.prototype.hasOwnProperty.call(profile, 'rootDir')) return;
+  const rootDirectory = profile.rootDir && profile.rootDir !== '.'
+    ? `/${String(profile.rootDir).replace(/^\\/+/, '')}`
+    : null;
+  await railwayGraphQL(token,
+    'mutation ConfigureService($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input) }',
+    { serviceId, environmentId, input: { rootDirectory } }, fetchImpl);
+}
+
 export async function createRailwayDeployment({
   token, repositoryUrl, branch = 'main', commitSha, projectName, serviceName,
-  workspaceId = null, env = {},
+  workspaceId = null, env = {}, profile = {},
 }, { fetchImpl = fetch } = {}) {
   const repository = parseRepository(repositoryUrl);
-  if (!repository) throw new Error('A public GitHub repository URL is required for Railway deployment');
+  if (!repository) throw new Error('A valid GitHub repository URL is required for Railway deployment');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) {
     throw new Error('Invalid deployment branch');
   }
@@ -79,6 +89,7 @@ export async function createRailwayDeployment({
   const serviceId = createdService.serviceCreate?.id;
   if (!serviceId) throw new Error('Railway did not return a service identifier');
 
+  await syncRailwayRootDirectory(token, serviceId, environment.id, profile, fetchImpl);
   await syncRailwayVariables(token, projectId, environment.id, serviceId, env, fetchImpl);
 
   const deploymentData = await railwayGraphQL(token,
@@ -136,9 +147,10 @@ export async function rollbackRailwayDeployment({ token, deploymentId }, { fetch
   return { provider: 'railway', deploymentId: rollback.id, status: normalizeRailwayStatus(rollback.status) };
 }
 
-export async function deployRailwayService({ token, projectId, serviceId, environmentId, commitSha, env = {} }, { fetchImpl = fetch } = {}) {
+export async function deployRailwayService({ token, projectId, serviceId, environmentId, commitSha, env = {}, profile = {} }, { fetchImpl = fetch } = {}) {
   if (!serviceId || !environmentId) throw new Error('Railway service and environment identifiers are required');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
+  await syncRailwayRootDirectory(token, serviceId, environmentId, profile, fetchImpl);
   await syncRailwayVariables(token, projectId, environmentId, serviceId, env, fetchImpl);
   const data = await railwayGraphQL(token,
     'mutation DeployCommit($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }',
