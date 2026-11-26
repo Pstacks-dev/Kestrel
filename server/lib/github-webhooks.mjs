@@ -25,5 +25,6 @@ export function isValidGitCommitSha(value) {
 }
 
 export function isValidGitHubInstallationId(value) {
-  return typeof value === 'string' && /^\d+$/.test(value);
+  // GitHub installation IDs are positive integer identifiers stored as bigint.
+  return typeof value === 'string' && /^[1-9][0-9]{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n;
 }
