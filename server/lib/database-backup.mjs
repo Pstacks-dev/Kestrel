@@ -252,7 +252,6 @@ export async function createEncryptedDatabaseBackup({
   pgDumpBin = process.env.PG_DUMP_BIN || 'pg_dump',
   fetchImpl = fetch,
   now = new Date(),
-  retentionDays = Number(process.env.KESTREL_BACKUP_RETENTION_DAYS || 90),
 } = {}) {
   if (!databaseUrl) throw new Error('SUPABASE_DB_URL is required');
   if (!storageUrl || !serviceKey) throw new Error('Configure a separate backup Supabase project using KESTREL_BACKUP_STORAGE_URL and KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY');
@@ -271,9 +270,7 @@ export async function createEncryptedDatabaseBackup({
     if (downloaded.sha256 !== sha256 || downloaded.sizeBytes !== sizeBytes) {
       throw new Error('Uploaded backup failed read-after-write checksum verification');
     }
-    const retention = await pruneExpiredDatabaseBackups({ storageUrl, serviceKey, bucket, retentionDays, now, fetchImpl })
-      .catch((error) => ({ removed: 0, retentionWarning: error.message, retentionDays }));
-    return { objectKey, bucket, sizeBytes, sha256, createdAt: now.toISOString(), retention };
+    return { objectKey, bucket, sizeBytes, sha256, createdAt: now.toISOString() };
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
@@ -288,6 +285,7 @@ export async function verifyEncryptedDatabaseBackup({
   sourceDatabaseUrl = process.env.SUPABASE_DB_URL,
   restoreDatabaseUrl = process.env.KESTREL_RESTORE_DATABASE_URL,
   restoreConfirmation = process.env.KESTREL_RESTORE_CONFIRM,
+  retentionDays = Number(process.env.KESTREL_BACKUP_RETENTION_DAYS || 90),
   pgRestoreBin = process.env.PG_RESTORE_BIN || 'pg_restore',
   fetchImpl = fetch,
 } = {}) {
@@ -312,7 +310,8 @@ export async function verifyEncryptedDatabaseBackup({
       await runPgRestore(pgRestoreBin, dumpPath, connection);
       restoreVerification = await verifyRestoredSchema(restoreDatabaseUrl);
     }
-    return { objectKey, sha256: downloaded.sha256, encryptedSizeBytes: downloaded.sizeBytes, dumpSizeBytes: decrypted.sizeBytes, archiveEntries: list.entries, restoreVerification };
+    const retention = await pruneExpiredDatabaseBackups({ storageUrl, serviceKey, bucket, retentionDays, fetchImpl });
+    return { objectKey, sha256: downloaded.sha256, encryptedSizeBytes: downloaded.sizeBytes, dumpSizeBytes: decrypted.sizeBytes, archiveEntries: list.entries, restoreVerification, retention };
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
