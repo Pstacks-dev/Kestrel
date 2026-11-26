@@ -20,10 +20,13 @@ export function createDrainController({
 
       timer = setTimeoutImpl(() => {
         logger.warn?.('Worker drain timeout exceeded; stopping remaining executions.');
-        for (const { abortSignal, containerName, child } of activeJobs.values()) {
-          abortSignal?.abort();
-          if (containerName) stopContainer(containerName);
-          if (child) killChild(child);
+        for (const { abortController, containerName, child } of activeJobs.values()) {
+          if (abortController) {
+            abortController.abort();
+          } else {
+            if (containerName) stopContainer(containerName);
+            if (child) killChild(child);
+          }
         }
         forceExit(signal);
       }, Math.max(1000, Number(timeoutMs) || 60_000));
