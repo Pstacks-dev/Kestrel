@@ -192,6 +192,54 @@ export async function downloadEncryptedBackup({ storageUrl, serviceKey, bucket, 
   return { sizeBytes: (await stat(filePath)).size, sha256: await sha256File(filePath) };
 }
 
+export async function pruneExpiredDatabaseBackups({
+  storageUrl,
+  serviceKey,
+  bucket,
+  retentionDays = 90,
+  now = new Date(),
+  fetchImpl = fetch,
+} = {}) {
+  const days = Number(retentionDays);
+  if (!Number.isInteger(days) || days < 7 || days > 3650) {
+    throw new Error('KESTREL_BACKUP_RETENTION_DAYS must be an integer between 7 and 3650');
+  }
+  const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
+  const base = String(storageUrl || '').replace(/\/$/, '');
+  const headers = storageHeaders(serviceKey, { 'content-type': 'application/json' });
+  let offset = 0;
+  let removed = 0;
+  while (true) {
+    const response = await fetchImpl(`${base}/storage/v1/object/list/${encodeURIComponent(bucket)}`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ prefix: 'backups/', limit: 100, offset, sortBy: { column: 'created_at', order: 'asc' } }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) throw new Error(`Backup retention listing failed: ${response.status} ${(await response.text()).slice(0, 500)}`);
+    const objects = await response.json();
+    if (!Array.isArray(objects)) throw new Error('Backup retention listing returned an invalid response');
+    const expired = objects
+      .filter((item) => /^kestrel-[0-9T-]+\.kstr$/.test(String(item.name || '')))
+      .filter((item) => {
+        const created = Date.parse(item.created_at || item.updated_at || '');
+        return Number.isFinite(created) && created < cutoff;
+      })
+      .map((item) => `backups/${item.name}`);
+    if (expired.length) {
+      const deletion = await fetchImpl(`${base}/storage/v1/object/${encodeURIComponent(bucket)}`, {
+        method: 'DELETE', headers,
+        body: JSON.stringify({ prefixes: expired }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!deletion.ok) throw new Error(`Backup retention deletion failed: ${deletion.status} ${(await deletion.text()).slice(0, 500)}`);
+      removed += expired.length;
+    }
+    if (objects.length < 100) break;
+    offset += objects.length;
+  }
+  return { removed, retentionDays: days };
+}
+
 export async function createEncryptedDatabaseBackup({
   databaseUrl = process.env.SUPABASE_DB_URL,
   storageUrl = process.env.KESTREL_BACKUP_STORAGE_URL,
@@ -201,6 +249,7 @@ export async function createEncryptedDatabaseBackup({
   pgDumpBin = process.env.PG_DUMP_BIN || 'pg_dump',
   fetchImpl = fetch,
   now = new Date(),
+  retentionDays = Number(process.env.KESTREL_BACKUP_RETENTION_DAYS || 90),
 } = {}) {
   if (!databaseUrl) throw new Error('SUPABASE_DB_URL is required');
   if (!storageUrl || !serviceKey) throw new Error('Configure a separate backup Supabase project using KESTREL_BACKUP_STORAGE_URL and KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY');
@@ -219,7 +268,9 @@ export async function createEncryptedDatabaseBackup({
     if (downloaded.sha256 !== sha256 || downloaded.sizeBytes !== sizeBytes) {
       throw new Error('Uploaded backup failed read-after-write checksum verification');
     }
-    return { objectKey, bucket, sizeBytes, sha256, createdAt: now.toISOString() };
+    const retention = await pruneExpiredDatabaseBackups({ storageUrl, serviceKey, bucket, retentionDays, now, fetchImpl })
+      .catch((error) => ({ removed: 0, retentionWarning: error.message, retentionDays }));
+    return { objectKey, bucket, sizeBytes, sha256, createdAt: now.toISOString(), retention };
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
