@@ -37,7 +37,10 @@ export function resolveWorkerConnection({
     throw new Error('Production workers require an HTTPS KESTREL_API_URL');
   }
 
-  const resolvedWorkerId = String(workerId || (production ? '' : `${hostname}-${randomUUID().slice(0, 5)}`)).trim();
+  if (production && !workerId) {
+    throw new Error('Production workers require the provisioned KESTREL_WORKER_ID from the admin provisioning flow');
+  }
+  const resolvedWorkerId = String(workerId || `${hostname}-${randomUUID().slice(0, 5)}`).trim();
   if (!resolvedWorkerId || resolvedWorkerId.length > 120 || /[\s/?#]/.test(resolvedWorkerId)) {
     throw new Error('A valid KESTREL_WORKER_ID is required');
   }
