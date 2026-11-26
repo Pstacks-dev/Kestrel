@@ -212,7 +212,7 @@ export async function pruneExpiredDatabaseBackups({
   while (true) {
     const response = await fetchImpl(`${base}/storage/v1/object/list/${encodeURIComponent(bucket)}`, {
       method: 'POST', headers,
-      body: JSON.stringify({ prefix: 'backups/', limit: 100, offset, sortBy: { column: 'created_at', order: 'asc' } }),
+      body: JSON.stringify({ prefix: 'backups/', limit: 100, offset, sortBy: { column: 'name', order: 'asc' } }),
       signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok) throw new Error(`Backup retention listing failed: ${response.status} ${(await response.text()).slice(0, 500)}`);
