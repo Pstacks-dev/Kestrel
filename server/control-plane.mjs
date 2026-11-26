@@ -2031,27 +2031,24 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && isMain) {
     console.info(`Kestrel control plane received ${signal}; beginning graceful shutdown.`);
     clearInterval(recovery);
 
-    try {
-      // Stop new automation ticks and let the active provider operation finish
-      // before closing the shared database pool.
-      await stopManagedHostingAutomation();
-    } catch (error) {
-      console.error('Managed hosting automation did not stop cleanly:', error?.message);
-    }
-
     const forceCloseTimer = setTimeout(() => {
       console.error('Control plane graceful shutdown deadline reached; closing remaining HTTP connections.');
       server.closeAllConnections?.();
     }, Math.max(1000, Number(process.env.KESTREL_SHUTDOWN_TIMEOUT_MS || 25000)));
     forceCloseTimer.unref?.();
 
-    try {
-      await new Promise((resolve) => {
-        server.close((error) => {
-          if (error) console.error('HTTP server close reported an error:', error.message);
-          resolve();
-        });
+    // Stop accepting new requests immediately, while allowing in-flight HTTP
+    // requests and the current provider operation to finish using the DB pool.
+    const httpDrain = new Promise((resolve) => {
+      server.close((error) => {
+        if (error) console.error('HTTP server close reported an error:', error.message);
+        resolve();
       });
+    });
+
+    try {
+      await stopManagedHostingAutomation();
+      await httpDrain;
       await pool.end();
       console.info('Kestrel control plane shutdown completed.');
     } catch (error) {
