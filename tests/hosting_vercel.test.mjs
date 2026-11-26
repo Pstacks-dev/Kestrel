@@ -160,3 +160,51 @@ test('clears a previous Vercel monorepo root directory when deploying from repos
   assert.equal(calls.length, 2);
   assert.deepEqual(JSON.parse(calls[0].body), { rootDirectory: null });
 });
+
+
+test('deletes only stale Kestrel-managed Vercel variables across all pages', async () => {
+  const calls = [];
+  await deployVercelProject({
+    token: 'vercel-token',
+    projectId: 'prj-secrets',
+    projectName: 'api',
+    repositoryUrl: 'https://github.com/acme/api',
+    branch: 'main',
+    commitSha: 'b'.repeat(40),
+    profile: {},
+    env: {},
+    managedEnvKeys: ['OLD_SECRET', 'LINKED_SECRET'],
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.includes('/v10/projects/prj-secrets/env?limit=100&until=123')) {
+        return response({
+          envs: [{ id: 'env-old-2', key: 'OLD_SECRET', system: false }],
+          pagination: { next: null },
+        });
+      }
+      if (url.includes('/v10/projects/prj-secrets/env?limit=100')) {
+        return response({
+          envs: [
+            { id: 'env-old-1', key: 'OLD_SECRET', system: false },
+            { id: 'env-linked', key: 'LINKED_SECRET', configurationId: 'cfg-1', system: false },
+            { id: 'env-system', key: 'OLD_SECRET', system: true },
+            { id: 'env-manual', key: 'MANUAL_SECRET', system: false },
+          ],
+          pagination: { next: 123 },
+        });
+      }
+      if (options.method === 'DELETE') return response({ id: 'deleted' });
+      if (url.includes('/v13/deployments')) return response({ id: 'dpl-cleanup', readyState: 'BUILDING' });
+      throw new Error('Unexpected Vercel request: ' + url);
+    },
+  });
+  const listCalls = calls.filter((call) => call.options.method === 'GET');
+  const deleteCalls = calls.filter((call) => call.options.method === 'DELETE');
+  assert.equal(listCalls.length, 2);
+  assert.equal(deleteCalls.length, 2);
+  assert.ok(deleteCalls.every((call) => call.url.includes('/env/env-old-')));
+  assert.equal(calls.some((call) => call.url.includes('env-linked')), false);
+  assert.equal(calls.some((call) => call.url.includes('env-system')), false);
+  assert.equal(calls.some((call) => call.url.includes('env-manual')), false);
+});
