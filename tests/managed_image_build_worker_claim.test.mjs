@@ -13,6 +13,8 @@ test('managed image worker recovers expired leases before enforcing concurrency'
   assert.ok(recovery >= 0 && capacity > recovery, 'expired image-build leases must be recovered before capacity is checked');
   assert.match(claim, /where organization_id = \$1 and status = 'running' and lease_expires_at <= now\(\)/i);
   assert.match(claim, /where q\.organization_id = \$1 and q\.status = 'waiting_for_image'/i);
+  assert.match(claim, /finished_at = case when attempt_count < 4 then null else now\(\) end/i);
+  assert.match(claim, /Worker lease expired after retry budget was exhausted/i);
   assert.equal((claim.match(/lease_expires_at > now\(\)/g) || []).length, 2,
     'only unexpired job and image-build leases should consume worker concurrency');
 });
