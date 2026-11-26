@@ -271,7 +271,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortControll
     child.on('close', (code) => {
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
-      activeJobs.delete(job.id);
+      activeJobs.set(job.id, { abortController });
       resolve({
         exitCode: timedOut ? 124 : abortSignal?.aborted ? 130 : code ?? 1,
         durationMs: Date.now() - start,
@@ -281,7 +281,7 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortControll
     child.on('error', (e) => {
       clearTimeout(timeout);
       abortSignal?.removeEventListener('abort', abortHandler);
-      activeJobs.delete(job.id);
+      activeJobs.set(job.id, { abortController });
       onLine('stderr', redactSecrets(e.message, secretValues));
       resolve({ exitCode: 1, durationMs: Date.now() - start });
     });
