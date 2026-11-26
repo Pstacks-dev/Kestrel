@@ -212,12 +212,12 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
       {selectedProviderId === 'heroku' && (
         <div className="managed-artifact-field heroku-cost-approval">
           <label>Heroku web dyno plan
-            <select value={herokuDynoSize} onChange={(e) => { setHerokuDynoSize(e.target.value); setHerokuCostApproved(false); }}>
+            <select value={herokuDynoSize} onChange={(e) => { setHerokuDynoSize(e.target.value); if (e.target.value === 'basic') setHerokuDynoQuantity(1); setHerokuCostApproved(false); }}>
               {Object.entries(herokuPricing?.plans || {}).map(([size, plan]) => <option key={size} value={size}>{plan.label} — ${plan.monthlyUsd.toFixed(2)}/month per dyno</option>)}
             </select>
           </label>
           <label>Web dyno quantity
-            <input type="number" min={1} max={10} step={1} value={herokuDynoQuantity} onChange={(e) => { setHerokuDynoQuantity(Math.max(1, Math.min(10, Number(e.target.value) || 1))); setHerokuCostApproved(false); }} />
+            <input type="number" min={1} max={herokuDynoSize === 'basic' ? 1 : 10} step={1} value={herokuDynoQuantity} onChange={(e) => { setHerokuDynoQuantity(herokuDynoSize === 'basic' ? 1 : Math.max(1, Math.min(10, Number(e.target.value) || 1))); setHerokuCostApproved(false); }} />
           </label>
           <p>Estimated maximum recurring cost: <b>${((herokuPricing?.plans[herokuDynoSize]?.monthlyUsd || 0) * herokuDynoQuantity).toFixed(2)} USD/month</b>. This assumes 24/7 use and excludes add-ons and taxes; usage is prorated by Heroku.</p>
           <label className="flex items-start gap-2">
