@@ -243,7 +243,7 @@ export function registerManagedDeploymentRoutes(app, {
           return fail(res, 422, 'Heroku requires an explicit workspace owner/admin cost approval.');
         }
         return fail(res, 409, requestedProvider === 'auto'
-          ? 'No verified compatible managed provider is available. Heroku requires explicit owner/admin cost approval and Netlify requires completed static build artifacts without Kestrel-managed secrets.'
+          ? 'No verified compatible managed provider is available. Netlify requires completed static build artifacts and cannot currently deploy projects with Kestrel-managed secrets. Heroku requires explicit owner/admin cost approval.'
           : 'The requested provider is not connected, verified, or compatible with this project.');
       }
 
