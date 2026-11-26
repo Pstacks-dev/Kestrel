@@ -42,7 +42,7 @@ test('duplicate installation delivery has no repeated state change or audit even
 test('installation deletion and suspension set suspended_at; restoration actions clear it', async () => {
   for (const action of ['deleted', 'suspend']) {
     const client = createClient();
-    await processGitHubInstallationDelivery(client, { deliveryId: `delivery-${action}`, action, installationId: '12345' });
+    await processGitHubInstallationDelivery(client, { deliveryId: `delivery-${action.replaceAll('_', '-')}`, action, installationId: '12345' });
     assert.ok(client.calls[1].params[1]);
   }
   for (const action of ['created', 'unsuspend', 'new_permissions_accepted']) {
