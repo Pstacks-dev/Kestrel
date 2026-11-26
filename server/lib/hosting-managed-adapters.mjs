@@ -29,7 +29,7 @@ import {
   createRailwayDeployment, deployRailwayService, getRailwayDeployment, getRailwayDeploymentLogs, rollbackRailwayDeployment,
 } from './hosting-railway.mjs';
 
-export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'netlify', 'cloudflare-pages', 'flyio', 'google-cloud-run', 'aws-ecs-express'];
+export const ACTIVE_MANAGED_PROVIDERS = ['render', 'railway', 'digitalocean-app-platform', 'heroku', 'netlify', 'cloudflare-pages', 'flyio', 'google-cloud-run', 'aws-ecs-express'];
 
 export async function createManagedProviderDeployment(provider, credentials, input, options) {
   if (provider === 'render') return createRenderDeployment({ ...input, ...credentials }, options);
