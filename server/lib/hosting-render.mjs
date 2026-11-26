@@ -33,7 +33,7 @@ function validate({ branch, commitSha }) {
 
 function validateStaticOutputDirectory(value) {
   const directory = String(value || 'dist');
-  if (!directory || directory.length > 500 || directory.startsWith('/') || directory.includes('\\\\') || directory.includes('\\0') ||
+  if (!directory || directory.length > 500 || directory.startsWith('/') || directory.includes('\\') || directory.includes('\0') ||
       /^[A-Za-z]:/.test(directory) || directory.split('/').some((part) => !part || part === '.' || part === '..')) {
     throw new Error('Invalid Render static publish directory');
   }
