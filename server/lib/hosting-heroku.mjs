@@ -71,6 +71,37 @@ function appName(value) {
   return bounded.length >= 3 ? bounded : 'kestrel-app';
 }
 
+export async function syncHerokuEnvironment({ apiKey, appId, env = {}, managedEnvKeys = [] }, { fetchImpl = fetch } = {}) {
+  if (!env || typeof env !== 'object' || Array.isArray(env)) throw new Error('Invalid Heroku environment variables');
+  const updates = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) || typeof value !== 'string') {
+      throw new Error('Invalid Heroku environment variable');
+    }
+    updates[key] = value;
+  }
+  for (const key of new Set(Array.isArray(managedEnvKeys) ? managedEnvKeys : [])) {
+    if (typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,254}$/.test(key) && !Object.hasOwn(env, key)) {
+      updates[key] = null;
+    }
+  }
+  if (!Object.keys(updates).length) return { updated: false, keys: [] };
+  await request(apiKey, `/apps/${encodeURIComponent(appId)}/config-vars`, {
+    method: 'PATCH', fetchImpl, body: updates,
+  });
+  return { updated: true, keys: Object.keys(env) };
+}
+
+export async function deleteHerokuApp({ apiKey, appId }, { fetchImpl = fetch } = {}) {
+  if (!apiKey || !appId) throw new Error('Heroku API key and app ID are required');
+  try {
+    await request(apiKey, `/apps/${encodeURIComponent(appId)}`, { method: 'DELETE', fetchImpl });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+  }
+  return { deleted: true, appId };
+}
+
 function status(value) {
   if (value === 'succeeded') return 'deploying';
   if (value === 'failed') return 'failed';
@@ -90,7 +121,7 @@ async function createBuild({ apiKey, appId, repositoryUrl, commitSha, sourceArch
   return { provider: 'heroku', deploymentId: build.id, status: status(build.status), releaseId: build.release?.id || null };
 }
 
-export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = 'main', commitSha, projectName: name, dynoSize = 'basic', dynoQuantity = 1, sourceArchiveUrl }, { fetchImpl = fetch } = {}) {
+export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = 'main', commitSha, projectName: name, dynoSize = 'basic', dynoQuantity = 1, sourceArchiveUrl, env = {}, managedEnvKeys = [] }, { fetchImpl = fetch } = {}) {
   if (!apiKey) throw new Error('Heroku API key is required');
   estimateHerokuDynoCost(dynoSize, dynoQuantity);
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) throw new Error('Invalid deployment branch');
@@ -101,12 +132,19 @@ export async function createHerokuDeployment({ apiKey, repositoryUrl, branch = '
     body: { name: appName(name), region: 'us', stack: 'heroku-24' },
   });
   if (!app.id || !app.name) throw new Error('Heroku did not return an app identifier');
-  const build = await createBuild({ apiKey, appId: app.id, repositoryUrl: `https://github.com/${repo.owner}/${repo.repo}`, commitSha, sourceArchiveUrl }, { fetchImpl });
-  return { ...build, projectId: app.id, serviceId: app.name, environmentId: null, providerUrl: app.web_url || null, dynoSize, dynoQuantity };
+  try {
+    await syncHerokuEnvironment({ apiKey, appId: app.id, env, managedEnvKeys }, { fetchImpl });
+    const build = await createBuild({ apiKey, appId: app.id, repositoryUrl: `https://github.com/${repo.owner}/${repo.repo}`, commitSha, sourceArchiveUrl }, { fetchImpl });
+    return { ...build, projectId: app.id, serviceId: app.name, environmentId: null, providerUrl: app.web_url || null, dynoSize, dynoQuantity };
+  } catch (error) {
+    try { await deleteHerokuApp({ apiKey, appId: app.id }, { fetchImpl }); } catch {}
+    throw error;
+  }
 }
 
-export async function deployHerokuApp({ apiKey, appId, repositoryUrl, commitSha, dynoSize = 'basic', dynoQuantity = 1, sourceArchiveUrl }, { fetchImpl = fetch } = {}) {
+export async function deployHerokuApp({ apiKey, appId, repositoryUrl, commitSha, dynoSize = 'basic', dynoQuantity = 1, sourceArchiveUrl, env = {}, managedEnvKeys = [] }, { fetchImpl = fetch } = {}) {
   estimateHerokuDynoCost(dynoSize, dynoQuantity);
+  await syncHerokuEnvironment({ apiKey, appId, env, managedEnvKeys }, { fetchImpl });
   return createBuild({ apiKey, appId, repositoryUrl, commitSha, sourceArchiveUrl }, { fetchImpl });
 }
 
