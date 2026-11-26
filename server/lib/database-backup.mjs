@@ -278,6 +278,7 @@ export async function createEncryptedDatabaseBackup({
 
 export async function verifyEncryptedDatabaseBackup({
   objectKey,
+  expectedSha256 = process.env.KESTREL_BACKUP_EXPECTED_SHA256,
   storageUrl = process.env.KESTREL_BACKUP_STORAGE_URL,
   serviceKey = process.env.KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY,
   bucket = process.env.KESTREL_BACKUP_BUCKET || 'kestrel-backups',
@@ -298,6 +299,7 @@ export async function verifyEncryptedDatabaseBackup({
   const dumpPath = path.join(directory, 'database.dump');
   try {
     const downloaded = await downloadEncryptedBackup({ storageUrl, serviceKey, bucket, objectKey, filePath: encryptedPath, fetchImpl });
+    if (expectedSha256 && downloaded.sha256 !== expectedSha256) throw new Error('Downloaded backup SHA-256 does not match the backup job output');
     const decrypted = await decryptBackupFile(encryptedPath, dumpPath, key);
     const list = await runPgRestoreList(pgRestoreBin, dumpPath);
     if (!list.entries) throw new Error('pg_restore returned no entries for the downloaded backup archive');
