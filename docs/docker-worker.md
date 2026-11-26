@@ -66,6 +66,13 @@ View startup, registration, heartbeat, and job logs:
 docker compose -f docker-compose.worker.yml logs -f kestrel-worker
 ```
 
+On `SIGTERM` or `SIGINT`, the worker stops claiming new work, returns any claim
+received during shutdown to the queue, and lets active job containers and managed
+image builds finish. The default drain limit is 60 seconds; configure
+`KESTREL_WORKER_DRAIN_TIMEOUT_MS` between 5 seconds and 10 minutes if your jobs
+need a different shutdown window. If the limit expires, active executions are
+aborted and their leases are recovered by the control plane.
+
 Stop it:
 
 ```sh
