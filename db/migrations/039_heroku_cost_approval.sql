@@ -22,6 +22,7 @@ alter table public.managed_hosting_deployments
         'performance-l','performance-l-ram','performance-xl','performance-2xl'
       )
       and heroku_dyno_quantity between 1 and 10
+      and (heroku_dyno_size <> 'basic' or heroku_dyno_quantity = 1)
       and estimated_monthly_cost_usd > 0
       and cost_approved_by is not null
       and cost_approved_at is not null
