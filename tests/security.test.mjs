@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { signJwt } from '../server/lib/auth.mjs';
-process.env.KESTREL_ENCRYPTION_KEY ||= 'kestrel-test-encryption-key-32-characters-minimum';
-process.env.JWT_SECRET ||= 'kestrel-test-jwt-secret-32-characters-minimum';
-
 import {
   encryptSecret,
   decryptSecret,
   verifyGitHubSignature,
   redactSecrets,
 } from '../server/lib/security.mjs';
+
+process.env.KESTREL_ENCRYPTION_KEY ||= 'kestrel-test-encryption-key-32-characters-minimum';
+process.env.JWT_SECRET ||= 'kestrel-test-jwt-secret-32-characters-minimum';
 
 test('encryptSecret and decryptSecret roundtrip with AES-256-GCM', () => {
   const secret = 'super-secret-api-key-12345';
