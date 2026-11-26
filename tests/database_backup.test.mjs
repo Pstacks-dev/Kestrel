@@ -73,7 +73,8 @@ test('parses Supabase PostgreSQL connection URLs without exposing credentials', 
 
 test('refuses to restore a production backup over the source database', () => {
   const source = 'postgresql://postgres:secret@db.example.test:5432/postgres?sslmode=require';
-  assert.throws(() => assertDistinctRestoreDatabase(source, source), /different database/);
+  assert.throws(() => assertDistinctRestoreDatabase(source, source), /separate staging host/);
+  assert.throws(() => assertDistinctRestoreDatabase(source, 'postgresql://postgres:secret@db.example.test:5432/staging?sslmode=require'), /separate staging host/);
   assert.doesNotThrow(() => assertDistinctRestoreDatabase(
     source, 'postgresql://postgres:secret@staging.example.test:5432/kestrel_restore?sslmode=require',
   ));
