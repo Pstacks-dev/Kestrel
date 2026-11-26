@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerManagedDeploymentRoutes } from '../server/routes/managed-deployments.mjs';
+import { encryptSecret } from '../server/lib/security.mjs';
 
-function registerRoute({ project, query, fetchImpl, createInstallationToken }) {
+function registerRoute({ project, query, fetchImpl, createInstallationToken, body = { branch: 'main' } }) {
   let handler;
   const app = {
     post(path, _auth, callback) {
@@ -28,7 +29,7 @@ function registerRoute({ project, query, fetchImpl, createInstallationToken }) {
     await handler({
       params: { projectId: 'project-1' },
       user: { id: 'user-1' },
-      body: { branch: 'main' },
+      body,
     }, res);
     return res;
   };
@@ -57,6 +58,7 @@ test('manual deployment source inspection uses a short-lived installation token 
         assert.deepEqual(params, ['12345', 'org-1']);
         return { rowCount: 1, rows: [{ installation_id: '12345' }] };
       }
+      if (/from public\.project_secrets/i.test(sql)) return { rowCount: 0, rows: [] };
       if (/from public\.hosting_provider_connections/i.test(sql)) return { rowCount: 0, rows: [] };
       throw new Error('Unexpected query: ' + sql);
     },
@@ -95,6 +97,7 @@ test('public repository deployments do not require a GitHub App installation tok
     project: project(null),
     query: async (sql) => {
       if (/from public\.projects p/i.test(sql)) return { rowCount: 1, rows: [project(null)] };
+      if (/from public\.project_secrets/i.test(sql)) return { rowCount: 0, rows: [] };
       if (/from public\.hosting_provider_connections/i.test(sql)) return { rowCount: 0, rows: [] };
       throw new Error('Unexpected query: ' + sql);
     },
@@ -146,4 +149,69 @@ test('private repository deployment reports missing GitHub App configuration as 
   const response = await run();
   assert.equal(response.statusCode, 503);
   assert.match(response.body.error, /GitHub App is not configured/);
+});
+
+
+test('manual deployment refuses Netlify when project secrets cannot be synchronized', async () => {
+  const secret = encryptSecret('postgres://private-db');
+  let artifactLookup = false;
+  const calls = [];
+  const run = registerRoute({
+    project: {
+      ...project(null),
+      repository_url: 'https://github.com/acme/static-app',
+    },
+    body: { branch: 'main', artifactIds: ['11111111-1111-4111-8111-111111111111'] },
+    query: async (sql) => {
+      if (/from public\.projects p/i.test(sql)) return {
+        rowCount: 1,
+        rows: [{
+          ...project(null),
+          repository_url: 'https://github.com/acme/static-app',
+        }],
+      };
+      if (/from public\.hosting_provider_connections/i.test(sql)) return {
+        rowCount: 1,
+        rows: [{
+          provider_id: 'netlify',
+          credentials_ciphertext: 'not-decrypted',
+          credentials_iv: 'not-decrypted',
+          credentials_auth_tag: 'not-decrypted',
+        }],
+      };
+      if (/from public\.project_secrets/i.test(sql)) return {
+        rowCount: 1,
+        rows: [{
+          name: 'DATABASE_URL',
+          encrypted_value: secret.encryptedValue,
+          iv: secret.iv,
+          auth_tag: secret.authTag,
+        }],
+      };
+      if (/from public\.artifacts/i.test(sql)) {
+        artifactLookup = true;
+        return { rowCount: 1, rows: [{ id: '11111111-1111-4111-8111-111111111111' }] };
+      }
+      throw new Error('Unexpected query: ' + sql);
+    },
+    createInstallationToken: async () => { assert.fail('Public repository must not mint an installation token'); },
+    fetchImpl: async (url, options) => {
+      calls.push(url);
+      if (url.endsWith('/commits/main')) return new Response(JSON.stringify({ sha: 'c'.repeat(40) }), { status: 200 });
+      if (url.includes('/contents/?ref=main')) {
+        return new Response(JSON.stringify([{ name: 'package.json', type: 'file' }]), { status: 200 });
+      }
+      if (url.includes('/contents/package.json?ref=main')) {
+        return new Response(JSON.stringify({
+          content: Buffer.from(JSON.stringify({ dependencies: { astro: '^5.0.0' }, scripts: { build: 'astro build' } })).toString('base64'),
+        }), { status: 200 });
+      }
+      throw new Error('Unexpected GitHub URL: ' + url);
+    },
+  });
+  const response = await run();
+  assert.equal(response.statusCode, 409);
+  assert.match(response.body.error, /Netlify requires completed static build artifacts and cannot currently deploy projects with Kestrel-managed secrets/);
+  assert.equal(artifactLookup, false);
+  assert.equal(calls.length, 3);
 });
