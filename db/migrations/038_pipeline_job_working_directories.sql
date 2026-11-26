@@ -18,7 +18,7 @@ begin
           and right(working_directory, 1) <> '/'
           and position(chr(92) in working_directory) = 0
           and position('//' in working_directory) = 0
-          and working_directory !~ '(^|/)\\.{1,2}(/|$)'
+          and working_directory !~ '(^|/)\.{1,2}(/|$)'
           and working_directory !~ '^[A-Za-z]:'
           and working_directory !~ '[[:cntrl:]]'
         )
