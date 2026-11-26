@@ -79,9 +79,11 @@ jobs:
           KESTREL_RESTORE_DATABASE_URL: ${{ secrets.KESTREL_RESTORE_DATABASE_URL }}
           KESTREL_RESTORE_CONFIRM: RESTORE_TO_STAGING_DATABASE
         run: |
-          if [ -z "$KESTREL_RESTORE_DATABASE_URL" ]; then
-            echo "::warning::KESTREL_RESTORE_DATABASE_URL is not configured; archive integrity was verified, but the staging restore drill was skipped."
-          elif [ "$(date -u +%u)" = "7" ]; then
+          if [ "$(date -u +%u)" = "7" ]; then
+            if [ -z "$KESTREL_RESTORE_DATABASE_URL" ]; then
+              echo "::error::KESTREL_RESTORE_DATABASE_URL is required for the weekly staging restore drill."
+              exit 1
+            fi
             npm run backup:verify
           else
             echo "Weekly staging restore drill is scheduled for Sunday UTC; daily archive verification has already completed."
