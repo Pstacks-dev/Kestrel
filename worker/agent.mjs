@@ -622,11 +622,16 @@ async function executeManagedImageBuild(build) {
     });
     console.log('[oci] Published ' + result.imageDigestRef + ' for commit ' + build.commitSha);
   } catch (error) {
-    const safeError = redactSecrets(String(error?.message || 'OCI image build failed'), secretValues).slice(0, 500);
-    console.error('[oci] Managed image build failed:', safeError);
-    await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
-      leaseToken: build.leaseToken, status: 'failed', error: safeError,
-    }).catch(() => {});
+    if (managedImageBuildAbortController?.signal.aborted) {
+      await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/release', { leaseToken: build.leaseToken }).catch(() => {});
+      console.log('[oci] Released managed image build after worker drain');
+    } else {
+      const safeError = redactSecrets(String(error?.message || 'OCI image build failed'), secretValues).slice(0, 500);
+      console.error('[oci] Managed image build failed:', safeError);
+      await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
+        leaseToken: build.leaseToken, status: 'failed', error: safeError,
+      }).catch(() => {});
+    }
   } finally {
     clearInterval(heartbeat);
     managedImageBuildActive = false;
