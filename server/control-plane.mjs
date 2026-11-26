@@ -31,6 +31,7 @@ import { registerHostingConnectionRoutes } from './routes/hosting-connections.mj
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
 import { startManagedHostingAutomation, processManagedHostingQueue } from './lib/managed-hosting-automation.mjs';
 import { reconcileManagedDeploymentReadiness } from './lib/managed-deployment-readiness.mjs';
+import { processManagedDeploymentRollbacks } from './lib/managed-deployment-rollback-queue.mjs';
 import { refreshProviderImageRegistryCredentials } from './lib/oci-registries.mjs';
 import { createGitHubInstallationToken } from './lib/github-app.mjs';
 
@@ -1918,7 +1919,8 @@ const processManagedDeploymentCron = async (req, res) => {
   try {
     const result = await processManagedHostingQueue({ query, transaction, logger: console }, 1);
     const readiness = await reconcileManagedDeploymentReadiness({ query, logger: console }, 10);
-    res.json({ ok: true, ...result, readiness, time: now() });
+    const rollbacks = await processManagedDeploymentRollbacks({ query, transaction, logger: console }, 3);
+    res.json({ ok: true, ...result, readiness, rollbacks, time: now() });
   } catch (error) {
     console.error('Managed deployment cron failed:', { message: error?.message });
     res.status(500).json({ error: 'Managed deployment queue processing failed' });
@@ -1959,12 +1961,21 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && isMain) {
   }, 5000).unref();
 
   const stopManagedHostingAutomation = startManagedHostingAutomation({ query, transaction, logger: console });
+  const managedDeploymentHealth = setInterval(async () => {
+    try {
+      await reconcileManagedDeploymentReadiness({ query, logger: console }, 10);
+      await processManagedDeploymentRollbacks({ query, transaction, logger: console }, 3);
+    } catch (error) {
+      console.error('Scheduled managed deployment readiness/rollback failed:', { code: error?.code || 'PROCESSING_ERROR' });
+    }
+  }, 60000).unref();
   const server = app.listen(port, '0.0.0.0', () =>
     console.log(`Kestrel control plane listening on :${port}`)
   );
 
   async function shutdown() {
     clearInterval(recovery);
+    clearInterval(managedDeploymentHealth);
     stopManagedHostingAutomation();
     server.close();
     try {
