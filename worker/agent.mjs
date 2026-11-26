@@ -527,9 +527,16 @@ async function execute(job) {
 }
 
 async function executeManagedImageBuild(build) {
+  managedImageBuildActive = true;
   const startedAt = Date.now();
-  await fs.mkdir(ROOT, { recursive: true });
-  const workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
+  let workspace;
+  try {
+    await fs.mkdir(ROOT, { recursive: true });
+    workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
+  } catch (error) {
+    managedImageBuildActive = false;
+    throw error;
+  }
   const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
   let leaseLost = false;
   const heartbeat = setInterval(async () => {
@@ -539,7 +546,6 @@ async function executeManagedImageBuild(build) {
       if (error.message.includes('409') || error.message.includes('expired')) leaseLost = true;
     }
   }, 10000);
-  managedImageBuildActive = true;
   try {
     const repository = new URL(build.repositoryUrl);
     if (repository.protocol !== 'https:' || repository.hostname !== 'github.com' || repository.username || repository.password) {
