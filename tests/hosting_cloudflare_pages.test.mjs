@@ -124,6 +124,7 @@ test('updates Cloudflare Pages monorepo settings and removes deleted secrets', a
     branch: 'main',
     commitSha: 'f'.repeat(40),
     env: { DATABASE_URL: 'postgres://new-secret' },
+    managedEnvKeys: ['OLD_SECRET', 'SHARED_SECRET'],
     rootDir: 'apps/web',
     managedEnvKeys: ['OLD_SECRET'],
     buildCommand: 'npm run build',
@@ -134,8 +135,8 @@ test('updates Cloudflare Pages monorepo settings and removes deleted secrets', a
       name: 'kestrel-demo',
       build_config: { root_dir: '/', build_command: 'old build', destination_dir: 'old-dist', build_caching: true },
       deployment_configs: {
-        production: { env_vars: { OLD_SECRET: { type: 'secret_text' }, SHARED_SECRET: { type: 'secret_text' } } },
-        preview: { env_vars: { OLD_SECRET: { type: 'secret_text' }, SHARED_SECRET: { type: 'secret_text' } } },
+        production: { env_vars: { OLD_SECRET: { type: 'secret_text' }, SHARED_SECRET: { type: 'secret_text' }, PROVIDER_MANAGED: { type: 'plain_text', value: 'keep' } } },
+        preview: { env_vars: { OLD_SECRET: { type: 'secret_text' }, SHARED_SECRET: { type: 'secret_text' }, PROVIDER_MANAGED: { type: 'plain_text', value: 'keep' } } },
       },
     });
     if (options.method === 'PATCH') return response({ name: 'kestrel-demo' });
