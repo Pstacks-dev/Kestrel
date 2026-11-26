@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { appendFile, mkdtemp, open, readFile, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdtemp, open, rm, stat } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 
@@ -248,15 +248,16 @@ export async function verifyEncryptedDatabaseBackup({
     const downloaded = await downloadEncryptedBackup({ storageUrl, serviceKey, bucket, objectKey, filePath: encryptedPath, fetchImpl });
     const decrypted = await decryptBackupFile(encryptedPath, dumpPath, key);
     const list = await runPgRestoreList(pgRestoreBin, dumpPath);
+    let restoreVerification = null;
     if (restoreDatabaseUrl) {
       if (restoreConfirmation !== 'RESTORE_TO_STAGING_DATABASE') {
         throw new Error('Set KESTREL_RESTORE_CONFIRM=RESTORE_TO_STAGING_DATABASE to run the destructive staging restore drill');
       }
       const connection = assertDistinctRestoreDatabase(sourceDatabaseUrl, restoreDatabaseUrl);
       await runPgRestore(pgRestoreBin, dumpPath, connection);
-      await verifyRestoredSchema(restoreDatabaseUrl);
+      restoreVerification = await verifyRestoredSchema(restoreDatabaseUrl);
     }
-    return { objectKey, sha256: downloaded.sha256, encryptedSizeBytes: downloaded.sizeBytes, dumpSizeBytes: decrypted.sizeBytes, archiveEntries: list.entries };
+    return { objectKey, sha256: downloaded.sha256, encryptedSizeBytes: downloaded.sizeBytes, dumpSizeBytes: decrypted.sizeBytes, archiveEntries: list.entries, restoreVerification };
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
