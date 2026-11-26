@@ -91,8 +91,8 @@ test('retains recent encrypted backups and prunes only expired Kestrel archives'
       calls.push({ url, options });
       if (options.method === 'POST') {
         return new Response(JSON.stringify([
-          { name: 'kestrel-old.kstr', created_at: '2026-10-01T00:00:00.000Z' },
-          { name: 'kestrel-new.kstr', created_at: '2026-11-20T00:00:00.000Z' },
+          { name: 'kestrel-2026-10-01T00-00-00-000Z.kstr', created_at: '2026-10-01T00:00:00.000Z' },
+          { name: 'kestrel-2026-11-20T00-00-00-000Z.kstr', created_at: '2026-11-20T00:00:00.000Z' },
           { name: 'manual-export.dump', created_at: '2026-09-01T00:00:00.000Z' },
         ]), { status: 200 });
       }
@@ -102,7 +102,7 @@ test('retains recent encrypted backups and prunes only expired Kestrel archives'
   assert.deepEqual(result, { removed: 1, retentionDays: 30 });
   assert.equal(calls.length, 2);
   assert.equal(calls[1].options.method, 'DELETE');
-  assert.deepEqual(JSON.parse(calls[1].options.body), { prefixes: ['backups/kestrel-old.kstr'] });
+  assert.deepEqual(JSON.parse(calls[1].options.body), { prefixes: ['backups/kestrel-2026-10-01T00-00-00-000Z.kstr'] });
 });
 
 test('rejects unsafe backup retention windows', async () => {
