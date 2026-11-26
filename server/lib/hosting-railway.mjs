@@ -46,9 +46,7 @@ async function syncRailwayVariables(token, projectId, environmentId, serviceId, 
 
 async function syncRailwayRootDirectory(token, serviceId, environmentId, profile, fetchImpl) {
   if (!profile || !Object.prototype.hasOwnProperty.call(profile, 'rootDir')) return;
-  const rootDirectory = profile.rootDir && profile.rootDir !== '.'
-    ? `/${String(profile.rootDir).replace(/^\\/+/, '')}`
-    : null;
+  const rootDirectory = profile.rootDir && profile.rootDir !== '.' ? `/${String(profile.rootDir)}` : null;
   await railwayGraphQL(token,
     'mutation ConfigureService($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input) }',
     { serviceId, environmentId, input: { rootDirectory } }, fetchImpl);
