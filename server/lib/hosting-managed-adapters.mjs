@@ -74,7 +74,7 @@ export async function getManagedProviderDeployment(provider, credentials, resour
 }
 
 export async function getManagedProviderDeploymentLogs(provider, credentials, resource, deploymentId, options) {
-  if (provider === 'render') return getRenderDeploymentLogs({ ...credentials, serviceId: resource.provider_service_id, deploymentId }, options);
+  if (provider === 'render') return getRenderDeploymentLogs({ ...credentials, ownerId: resource.provider_project_id, serviceId: resource.provider_service_id, deploymentId }, options);
   if (provider === 'railway') return getRailwayDeploymentLogs({ ...credentials, deploymentId }, options);
   if (provider === 'digitalocean-app-platform') return getDigitalOceanDeploymentLogs({ ...credentials, appId: resource.provider_project_id, deploymentId }, options);
   if (provider === 'vercel') return getVercelDeploymentLogs({ ...credentials, deploymentId }, options);
