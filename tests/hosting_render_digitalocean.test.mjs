@@ -215,10 +215,15 @@ test('creates a Render Docker service using the configured monorepo root and Doc
       if (url.endsWith('/services')) return response({
         service: { id: 'srv-docker', serviceDetails: { url: 'https://api.onrender.com' } },
       }, 201);
+      if (url.endsWith('/services/srv-docker/env-vars')) {
+        assert.equal(options.method, 'PUT');
+        assert.deepEqual(JSON.parse(options.body), []);
+        return response([]);
+      }
       return response({ id: 'dep-docker', status: 'created' }, 201);
     },
   });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   const body = JSON.parse(calls[0].options.body);
   assert.equal(body.rootDir, 'apps/api');
   assert.equal(body.serviceDetails.runtime, 'docker');
@@ -230,4 +235,28 @@ test('creates a Render Docker service using the configured monorepo root and Doc
   assert.equal(body.serviceDetails.startCommand, undefined);
   assert.equal(result.serviceId, 'srv-docker');
   assert.equal(result.deploymentId, 'dep-docker');
+});
+
+
+test('sends an empty Render environment set to remove deleted Kestrel secrets', async () => {
+  const calls = [];
+  const result = await deployRenderService({
+    apiKey: 'render-token',
+    serviceId: 'srv-empty-env',
+    commitSha: 'f'.repeat(40),
+    env: {},
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/env-vars')) {
+        assert.equal(options.method, 'PUT');
+        assert.deepEqual(JSON.parse(options.body), []);
+        return response([]);
+      }
+      assert.equal(url.endsWith('/deploys'), true);
+      return response({ id: 'dep-empty-env', status: 'created' }, 201);
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(result.deploymentId, 'dep-empty-env');
 });
