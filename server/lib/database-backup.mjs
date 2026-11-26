@@ -257,9 +257,11 @@ export async function createEncryptedDatabaseBackup({
   if (!storageUrl || !serviceKey) throw new Error('Configure a separate backup Supabase project using KESTREL_BACKUP_STORAGE_URL and KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY');
   if (!/^[a-z0-9][a-z0-9_-]{1,62}$/i.test(bucket)) throw new Error('KESTREL_BACKUP_BUCKET contains an invalid bucket name');
   const key = parseBackupEncryptionKey(encryptionKey);
+  const objectKey = `backups/kestrel-${now.toISOString().replace(/[:.]/g, '-')}.kstr`;
+  storageObjectUrl(storageUrl, bucket, objectKey);
+  storageHeaders(serviceKey);
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kestrel-db-backup-'));
   const encryptedPath = path.join(directory, 'database.kstr');
-  const objectKey = `backups/kestrel-${now.toISOString().replace(/[:.]/g, '-')}.kstr`;
   try {
     await runPgDump(databaseUrl, encryptedPath, key, pgDumpBin);
     const sizeBytes = (await stat(encryptedPath)).size;
