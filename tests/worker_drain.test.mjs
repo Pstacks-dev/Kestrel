@@ -24,6 +24,7 @@ test('aborts local and Docker jobs and forces exit only after the drain timeout'
   const calls = [];
   const abortController = new AbortController();
   const child = { kill: (signal) => calls.push(['kill', signal]) };
+  abortController.signal.addEventListener('abort', () => child.kill('SIGTERM'));
   const jobs = new Map([
     ['local-job', { abortController, child }],
     ['docker-job', { containerName: 'kestrel-job-2' }],
