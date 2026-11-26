@@ -11,6 +11,7 @@ import {
   encryptBackupStream,
   parseBackupEncryptionKey,
   parsePostgresConnection,
+  pruneExpiredDatabaseBackups,
 } from '../server/lib/database-backup.mjs';
 
 test('parses 32-byte backup encryption keys from hex and base64', () => {
@@ -74,4 +75,39 @@ test('refuses to restore a production backup over the source database', () => {
   assert.doesNotThrow(() => assertDistinctRestoreDatabase(
     source, 'postgresql://postgres:secret@staging.example.test:5432/kestrel_restore?sslmode=require',
   ));
+});
+
+
+test('retains recent encrypted backups and prunes only expired Kestrel archives', async () => {
+  const calls = [];
+  const now = new Date('2026-11-26T00:00:00.000Z');
+  const result = await pruneExpiredDatabaseBackups({
+    storageUrl: 'https://backup-project.supabase.co',
+    serviceKey: 'service-role',
+    bucket: 'kestrel-backups',
+    retentionDays: 30,
+    now,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (options.method === 'POST') {
+        return new Response(JSON.stringify([
+          { name: 'kestrel-old.kstr', created_at: '2026-10-01T00:00:00.000Z' },
+          { name: 'kestrel-new.kstr', created_at: '2026-11-20T00:00:00.000Z' },
+          { name: 'manual-export.dump', created_at: '2026-09-01T00:00:00.000Z' },
+        ]), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    },
+  });
+  assert.deepEqual(result, { removed: 1, retentionDays: 30 });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].options.method, 'DELETE');
+  assert.deepEqual(JSON.parse(calls[1].options.body), { prefixes: ['backups/kestrel-old.kstr'] });
+});
+
+test('rejects unsafe backup retention windows', async () => {
+  await assert.rejects(pruneExpiredDatabaseBackups({
+    storageUrl: 'https://backup-project.supabase.co', serviceKey: 'service-role',
+    bucket: 'kestrel-backups', retentionDays: 1,
+  }), /between 7 and 3650/);
 });
