@@ -19,6 +19,7 @@ test('rejects unknown plans and unsafe dyno quantities', () => {
   assert.throws(() => estimateHerokuDynoCost('eco', 1), /supported Heroku/);
   assert.throws(() => estimateHerokuDynoCost('basic', 0), /between 1 and 10/);
   assert.throws(() => estimateHerokuDynoCost('basic', 11), /between 1 and 10/);
+  assert.throws(() => estimateHerokuDynoCost('basic', 2), /Basic supports only one web dyno/);
   assert.throws(() => estimateHerokuDynoCost('basic', 1.5), /between 1 and 10/);
 });
 
