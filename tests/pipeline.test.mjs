@@ -35,7 +35,7 @@ test('accepts safe nested working directories and defaults to repository root', 
  assert.equal(root.workingDirectory,'.');
 });
 test('rejects unsafe pipeline working directories', () => {
- for (const workingDirectory of ['../outside','apps/../../secret','/etc','C:/repo','apps\\\\web','apps//web','./apps/web','apps/']) {
+ for (const workingDirectory of ['../outside','apps/../../secret','/etc','C:/repo','apps\\web','apps//web','./apps/web','apps/']) {
   assert.throws(() => validatePipelineJobs([{id:'build',command:'npm run build',workingDirectory}]),/unsafe working directory/);
  }
 });
