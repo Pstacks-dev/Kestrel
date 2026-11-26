@@ -1,6 +1,8 @@
 # Kestrel worker runtime. The Docker socket is supplied by Compose at runtime.
 FROM node:22-bookworm-slim
 
+ENV NODE_ENV=production
+
 ENV KESTREL_WORKER_EXECUTOR=docker \
     KESTREL_WORKER_WORKDIR=/var/lib/kestrel/work
 
