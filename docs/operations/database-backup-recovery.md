@@ -13,6 +13,8 @@ Create a **private** bucket named `kestrel-backups` (or set the
 Do not store production database backups in the same Supabase project as the
 production database.
 
+Use the Supabase **direct connection** or **session pooler** URL for `SUPABASE_DB_URL`; do not use transaction-pooler mode for `pg_dump`. The workflow installs PostgreSQL 18 client tools, which can dump supported earlier PostgreSQL server versions.
+
 Configure these GitHub Actions secrets:
 
 | Secret | Purpose |
@@ -83,7 +85,10 @@ the staging environment.
 ## Retention and disaster recovery
 
 Keep the backup bucket private and in a separate project/account from the
-production database. Kestrel prunes only its own encrypted archive objects older
+production database. PostgreSQL dumps cover database records and metadata, not
+the actual bytes stored in Supabase Storage buckets. Replicate project uploads,
+source archives and build artifacts separately before treating this as a full
+application-data recovery plan. Kestrel prunes only its own encrypted archive objects older
 than 90 days by default. Set the `KESTREL_BACKUP_RETENTION_DAYS` repository
 variable to an integer from 7 to 3650 to change that window. Keep Supabase's own
 point-in-time recovery (PITR) enabled where the production plan supports it;
