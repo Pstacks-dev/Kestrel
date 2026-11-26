@@ -50,14 +50,20 @@ async function syncRenderEnvironment(apiKey, serviceId, env = {}, fetchImpl = fe
   });
 }
 
-export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {} }, { fetchImpl = fetch } = {}) {
+export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir }, { fetchImpl = fetch } = {}) {
   if (!apiKey || !ownerId) throw new Error('Render API key and workspace owner ID are required');
   validate({ branch, commitSha });
   const repo = repoPath(repositoryUrl);
   const isStatic = profile.isStatic === true;
   const serviceType = isStatic ? 'static_site' : 'web_service';
+  const renderBuildCommand = String(buildCommand || profile.buildCommand || 'npm install && npm run build').trim();
+  if (!renderBuildCommand || renderBuildCommand.length > 2000) throw new Error('Invalid Render build command');
+  const publishPath = String(destinationDir || profile.outputDirectory || 'dist');
+  if (!publishPath || publishPath.length > 500 || publishPath.startsWith('/') || publishPath.includes('\\') || publishPath.includes('\0') || publishPath.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid Render static publish directory');
+  }
   const details = isStatic
-    ? { buildCommand: profile.buildCommand || 'npm install && npm run build', publishPath: profile.outputDirectory || 'dist' }
+    ? { buildCommand: renderBuildCommand, publishPath }
     : profile.needsContainer
       ? {
           runtime: 'docker',
@@ -71,7 +77,7 @@ export async function createRenderDeployment({ apiKey, ownerId, repositoryUrl, b
       : {
           runtime: profile.runtime || 'node',
           envSpecificDetails: {
-            buildCommand: profile.buildCommand || 'npm install && npm run build',
+            buildCommand: renderBuildCommand,
             startCommand: profile.startCommand || 'npm start',
           },
           plan: 'starter',
