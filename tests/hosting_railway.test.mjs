@@ -19,7 +19,7 @@ test('creates a Railway project, GitHub service and deployment for the exact com
     { serviceInstanceDeployV2: 'deployment-1' },
   ];
   const result = await createRailwayDeployment({
-    token: 'railway-test-token', repositoryUrl: 'https://github.com/acme/demo.git',
+    token: 'railway-test-token', repositoryUrl: 'https://github.com/acme/private-demo.git',
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo', serviceName: 'Demo API',
     workspaceId: 'workspace-1', env: { DATABASE_URL: 'postgres://secret' },
   }, {
