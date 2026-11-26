@@ -78,4 +78,22 @@ test('verifyGitHubSignature correctly validates HMAC-SHA256 signatures', () => {
   // Malformed signature header
   assert.equal(verifyGitHubSignature(payload, 'invalid-signature-header', webhookSecret), false);
   assert.equal(verifyGitHubSignature(payload, null, webhookSecret), false);
+  for (const malformed of [
+    'sha256=',
+    'sha256=abcd',
+    'sha256=' + 'g'.repeat(64),
+    'sha256=' + 'a'.repeat(63),
+    'sha256=' + 'a'.repeat(65),
+    'sha1=' + 'a'.repeat(64),
+    'sha256=' + 'a'.repeat(62) + 'zz',
+    'sha256=' + 'a'.repeat(64) + '=',
+  ]) {
+    assert.equal(verifyGitHubSignature(payload, malformed, webhookSecret), false, malformed);
+  }
+  assert.equal(verifyGitHubSignature(null, signature, webhookSecret), false);
+  assert.equal(verifyGitHubSignature(payload, signature, ''), false);
+  assert.equal(verifyGitHubSignature(payload, ['sha256=' + 'a'.repeat(64)], webhookSecret), false);
+  const rawBytes = Buffer.from(payload);
+  const byteSignature = 'sha256=' + crypto.createHmac('sha256', webhookSecret).update(rawBytes).digest('hex');
+  assert.equal(verifyGitHubSignature(rawBytes, byteSignature, webhookSecret), true);
 });
