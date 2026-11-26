@@ -166,6 +166,8 @@ async function createDeployment({ apiToken, accountId, projectName: name, branch
 export async function createCloudflarePagesDeployment({ apiToken, accountId, projectName: rawName, repositoryUrl, branch = 'main', commitSha, commitMessage, buildCommand, destinationDir, rootDir, env }, { fetchImpl = fetch } = {}) {
   if (!apiToken || !accountId) throw new Error('Cloudflare API token and account ID are required');
   parseRepository(repositoryUrl);
+  // Reject invalid build settings before reading or mutating an existing provider project.
+  buildConfig({ buildCommand, destinationDir, rootDir });
   const name = projectName(rawName);
   const project = await ensureProject({ apiToken, accountId, projectName: name, repositoryUrl, branch, buildCommand, destinationDir, rootDir, env }, fetchImpl);
   const deployment = await createDeployment({ apiToken, accountId, projectName: name, branch, commitSha, commitMessage }, fetchImpl);
