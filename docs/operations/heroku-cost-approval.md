@@ -53,7 +53,7 @@ Official pricing references:
    approved formation through the Heroku Platform API and verifies that the
    live app has the approved dyno size and quantity before marking it healthy.
 
-Apply migration \`039_heroku_cost_approval.sql\` before enabling this flow.
+Apply migration \`040_heroku_cost_approval.sql\` before enabling this flow.
 
 ## Pricing maintenance
 
