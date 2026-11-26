@@ -1,5 +1,5 @@
 function safeWorkingDirectory(value) {
-  if (value === '.') return true;
+  if (value === undefined || value === null || value === '' || value === '.') return true;
   if (typeof value !== 'string' || !value || value.length > 512) return false;
   if (value.startsWith('/') || value.includes('\\') || value.includes('\0') || /^[A-Za-z]:/.test(value)) return false;
   const parts = value.split('/');
@@ -60,7 +60,7 @@ export function validatePipelineJobs(jobs) {
       name: String(j.name || `Job ${i + 1}`).trim().slice(0, 160),
       stage: String(j.stage || 'build').trim().slice(0, 80),
       command,
-      workingDirectory: safeWorkingDirectory(j.workingDirectory) || fail(`Job ${rawId} has an unsafe working directory`),
+      workingDirectory: (safeWorkingDirectory(j.workingDirectory) ? (j.workingDirectory || '.') : fail(`Job ${rawId} has an unsafe working directory`)),
       needs: Array.isArray(j.needs) ? j.needs.map(String).map((s) => s.trim()) : [],
       memory,
       cpu,
