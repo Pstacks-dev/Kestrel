@@ -51,12 +51,18 @@ function safeName(value) {
   return result || 'kestrel-app';
 }
 
-export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {} }, { fetchImpl = fetch } = {}) {
+export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir }, { fetchImpl = fetch } = {}) {
   if (!accessToken) throw new Error('DigitalOcean access token is required');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) throw new Error('Invalid deployment branch');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
   const repo = repositoryPath(repositoryUrl);
   const isStatic = profile.isStatic === true;
+  const resolvedBuildCommand = String(buildCommand || profile.buildCommand || 'npm install && npm run build').trim();
+  if (!resolvedBuildCommand || resolvedBuildCommand.length > 2000) throw new Error('Invalid DigitalOcean build command');
+  const outputDirectory = String(destinationDir || profile.outputDirectory || (profile.framework === 'create-react-app' ? 'build' : 'dist'));
+  if (!outputDirectory || outputDirectory.length > 500 || outputDirectory.startsWith('/') || outputDirectory.includes('\\') || outputDirectory.includes('\0') || outputDirectory.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid DigitalOcean static output directory');
+  }
   const buildContext = profile.rootDir && profile.rootDir !== '.' ? String(profile.rootDir).replace(/\/$/, '') : '';
   const component = {
     name: safeName(projectName),
@@ -65,8 +71,8 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
     source_dir: buildContext || '/',
   };
   if (isStatic) {
-    component.build_command = profile.buildCommand || 'npm install && npm run build';
-    component.output_dir = profile.outputDirectory || (profile.framework === 'create-react-app' ? 'build' : 'dist');
+    component.build_command = resolvedBuildCommand;
+    component.output_dir = outputDirectory;
   } else if (profile.needsContainer) {
     const dockerfile = String(profile.dockerfilePath || './Dockerfile').replace(/^\.\//, '');
     component.dockerfile_path = buildContext ? `${buildContext}/${dockerfile}` : dockerfile;
@@ -75,7 +81,7 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
     component.instance_count = 1;
     component.http_port = 8080;
   } else {
-    component.build_command = profile.buildCommand || 'npm install && npm run build';
+    component.build_command = resolvedBuildCommand;
     component.run_command = profile.startCommand || 'npm start';
     component.environment_slug = ({ node: 'node-js', python: 'python', ruby: 'ruby', go: 'go' })[profile.runtime] || 'node-js';
     component.routes = [{ path: '/' }];

@@ -146,6 +146,40 @@ test('deploys, polls and rolls back a DigitalOcean app', async () => {
   assert.equal(rollback.deploymentId, 'do-dep-3');
 });
 
+test('uses detected framework output directories and custom build commands on DigitalOcean', async () => {
+  const cases = [
+    { outputDirectory: 'public', buildCommand: 'npm run build:docs' },
+    { outputDirectory: 'build', buildCommand: 'npm ci && npm run build' },
+    { outputDirectory: 'dist/site/browser', buildCommand: 'npm run build:production' },
+  ];
+  for (const [index, config] of cases.entries()) {
+    let spec;
+    await createDigitalOceanDeployment({
+      accessToken: 'do-token', repositoryUrl: 'https://github.com/acme/demo',
+      commitSha: String(index + 1).repeat(40), projectName: 'Static Demo',
+      profile: { runtime: 'node', isStatic: true, outputDirectory: config.outputDirectory },
+      buildCommand: config.buildCommand,
+    }, {
+      fetchImpl: async (url, options) => {
+        if (url.endsWith('/apps')) {
+          spec = JSON.parse(options.body).spec;
+          return response({ app: { id: `app-${index}` } }, 201);
+        }
+        return response({ deployment: { id: `dep-${index}`, phase: 'PENDING' } }, 201);
+      },
+    });
+    assert.equal(spec.static_sites[0].output_dir, config.outputDirectory);
+    assert.equal(spec.static_sites[0].build_command, config.buildCommand);
+  }
+});
+
+test('rejects unsafe DigitalOcean static output directories before creating an app', async () => {
+  await assert.rejects(createDigitalOceanDeployment({
+    accessToken: 'do-token', repositoryUrl: 'https://github.com/acme/demo',
+    commitSha: 'a'.repeat(40), profile: { isStatic: true, outputDirectory: '../outside' },
+  }, { fetchImpl: async () => assert.fail('DigitalOcean API must not be called') }), /Invalid DigitalOcean static output directory/);
+});
+
 test('rejects malformed GitHub URLs and invalid commit SHAs before calling providers', async () => {
   const noNetwork = async () => assert.fail('Provider API must not be called');
   await assert.rejects(createRenderDeployment({
