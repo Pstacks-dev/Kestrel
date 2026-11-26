@@ -82,9 +82,14 @@ test('inspects private repository source using the short-lived installation toke
   const calls = [];
   const fetchImpl = async (url, options) => {
     calls.push({ url, authorization: options.headers.Authorization });
+    if (url.includes('/contents/?')) {
+      return { ok: true, json: async () => [{ name: 'package.json', type: 'file' }] };
+    }
     return {
       ok: true,
-      json: async () => [{ name: 'index.html', type: 'file' }],
+      json: async () => ({ content: Buffer.from(JSON.stringify({
+        dependencies: { vite: '^6.0.0' },
+      })).toString('base64') }),
     };
   };
   const profile = await inspectGitHubSource(
@@ -93,8 +98,8 @@ test('inspects private repository source using the short-lived installation toke
     fetchImpl,
     token,
   );
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].authorization, `Bearer ${token}`);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((call) => call.authorization === `Bearer ${token}`));
   assert.equal(profile.isStatic, true);
 });
 
