@@ -551,7 +551,7 @@ async function executeManagedImageBuild(build) {
     if (checkout.exitCode !== 0) throw new Error('Could not check out the exact pipeline commit for OCI build');
     const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {});
     if (tree.exitCode !== 0) throw new Error('Could not inspect tracked files at the exact pipeline commit');
-    const buildContext = await resolveOciBuildContext(workspace, tree.stdout.split(/\r?\n/).filter(Boolean));
+    const buildContext = await resolveOciBuildContext(workspace, tree.stdout.split(/\r?\n/).filter(Boolean), build.buildContext);
     console.log('[oci] Using build context ' + buildContext.relativeContext + ' and Dockerfile ' + buildContext.dockerfile);
     if (leaseLost) throw new Error('Managed OCI build lease was lost before the build started');
     const result = await buildAndPublishOciImage({
