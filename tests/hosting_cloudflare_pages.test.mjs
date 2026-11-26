@@ -108,7 +108,7 @@ test('rejects invalid repositories, commit SHAs and build paths', async () => {
   await assert.rejects(createCloudflarePagesDeployment({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'demo',
     repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'b'.repeat(40),
-  }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /public GitHub repository/);
+  }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /valid GitHub repository/);
   await assert.rejects(deployCloudflarePagesProject({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'demo', commitSha: 'bad',
   }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /verified Git commit SHA/);
