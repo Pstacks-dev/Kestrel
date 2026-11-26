@@ -229,6 +229,9 @@ test('inspects a configured nested monorepo build context at the immutable pipel
   assert.equal(profile.framework, 'nextjs');
   assert.equal(profile.needsContainer, true);
   assert.equal(profile.needsPersistentProcess, true);
+  assert.equal(profile.rootDir, 'apps/api');
+  assert.equal(profile.dockerfilePath, './Dockerfile');
+  assert.equal(profile.dockerContext, '.');
   assert.equal(calls.length, 2);
   assert.ok(calls.every((call) => call.url.includes(commitSha)));
   assert.ok(calls[0].url.includes('/contents/apps/api?ref='));
