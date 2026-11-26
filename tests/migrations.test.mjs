@@ -209,7 +209,7 @@ test('pipeline job working directories are stored, validated and executed within
   assert.match(control, /working_directory/);
   assert.match(control, /workingDirectory: project\.oci_build_context \|\| '\.'/);
   assert.match(worker, /resolveJobWorkingDirectory\(workspace, job\.workingDirectory/);
-  assert.match(worker, /collectArtifacts\(job, workspace, workingDirectory\)/);
+  assert.match(worker, /collectArtifacts\(job, workspace, workingDirectory, abortController\.signal\)/);
   assert.match(resolver, /realpath/);
   assert.match(resolver, /escapes the repository workspace/);
 });
