@@ -533,13 +533,13 @@ async function executeManagedImageBuild(build) {
   const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
   let leaseLost = false;
   const heartbeat = setInterval(async () => {
-    managedImageBuildActive = true;
-  try {
+    try {
       await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/lease', { leaseToken: build.leaseToken });
     } catch (error) {
       if (error.message.includes('409') || error.message.includes('expired')) leaseLost = true;
     }
   }, 10000);
+  managedImageBuildActive = true;
   try {
     const repository = new URL(build.repositoryUrl);
     if (repository.protocol !== 'https:' || repository.hostname !== 'github.com' || repository.username || repository.password) {
