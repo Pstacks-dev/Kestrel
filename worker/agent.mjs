@@ -421,7 +421,12 @@ async function execute(job) {
   const abortController = new AbortController();
   activeJobs.set(job.id, { abortController });
   const workspace = path.join(ROOT, String(job.runId), String(job.id));
-  await fs.mkdir(workspace, { recursive: true });
+  try {
+    await fs.mkdir(workspace, { recursive: true });
+  } catch (error) {
+    activeJobs.delete(job.id);
+    throw error;
+  }
 
   const logBuffer = [];
   let logFlushActive = false;
