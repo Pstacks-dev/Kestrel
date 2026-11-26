@@ -54,10 +54,11 @@ async function api(endpoint, body) {
   return r.json();
 }
 
-async function apiGet(endpoint) {
+async function apiGet(endpoint, signal) {
   const response = await fetch(`${API}${endpoint}`, {
     method: 'GET',
     headers,
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -66,11 +67,13 @@ async function apiGet(endpoint) {
   return response.json();
 }
 
-async function downloadUploadedSource(job, workspace) {
-  const result = await apiGet(`/api/workers/projects/${encodeURIComponent(job.projectId)}/source-files`);
+async function downloadUploadedSource(job, workspace, abortSignal) {
+  if (abortSignal?.aborted) throw new Error('Worker is draining; uploaded-source download was canceled');
+  const result = await apiGet(`/api/workers/projects/${encodeURIComponent(job.projectId)}/source-files`, abortSignal);
   const files = Array.isArray(result.files) ? result.files : [];
   let totalBytes = 0;
   for (const file of files) {
+    if (abortSignal?.aborted) throw new Error('Worker is draining; uploaded-source download was canceled');
     const relative = String(file.path || '').replace(/\\\\/g, '/');
     const segments = relative.split('/');
     if (!relative || relative.startsWith('/') || segments.some((part) => !part || part === '.' || part === '..')) {
@@ -80,7 +83,7 @@ async function downloadUploadedSource(job, workspace) {
     if (destination !== workspace && !destination.startsWith(workspace + path.sep)) {
       throw new Error('Uploaded source path escaped the job workspace');
     }
-    const response = await fetch(file.url);
+    const response = await fetch(file.url, abortSignal ? { signal: abortSignal } : {});
     if (!response.ok) throw new Error(`Could not download uploaded source file: ${relative}`);
     const bytes = Buffer.from(await response.arrayBuffer());
     if (bytes.length > 20 * 1024 * 1024) throw new Error(`Uploaded source file exceeds 20 MiB: ${relative}`);
@@ -350,7 +353,7 @@ async function runGit(args, cwd, onLine, extraEnv = {}, abortSignal) {
 }
 
 // Upload real artifact bytes to private object storage through the authenticated control plane.
-async function collectArtifacts(job, workspace, workingDirectory = workspace) {
+async function collectArtifacts(job, workspace, workingDirectory = workspace, abortSignal) {
   const roots = ['dist', 'build', 'artifacts'];
   const maxFiles = 5000;
   const maxTotal = 250 * 1024 * 1024;
@@ -362,6 +365,7 @@ async function collectArtifacts(job, workspace, workingDirectory = workspace) {
     if (uploaded >= maxFiles || total >= maxTotal) return;
     const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
+      if (abortSignal?.aborted) throw new Error('Worker is draining; artifact collection was canceled');
       if (uploaded >= maxFiles || total >= maxTotal) break;
       const absolute = path.join(directory, entry.name);
       const relative = path.posix.join(relativeRoot, entry.name);
@@ -383,6 +387,7 @@ async function collectArtifacts(job, workspace, workingDirectory = workspace) {
         method: 'PUT',
         headers: { 'content-type': 'application/octet-stream', 'x-upsert': 'false' },
         body: bytes,
+        ...(abortSignal ? { signal: abortSignal } : {}),
       });
       if (!response.ok) throw new Error(`Artifact object upload failed for ${relative}: ${response.status}`);
       await api(`/api/workers/jobs/${encodeURIComponent(job.id)}/artifacts/finalize`, {
