@@ -3,9 +3,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 type ProviderField = { key: string; label: string; optional?: boolean; multiline?: boolean };
 type ProviderConnection = { providerId: string; accountLabel?: string | null; status: string; lastError?: string | null };
 type Provider = { id: string; name: string; category: string; connected: boolean; connection?: ProviderConnection | null };
+type HerokuPricing = { catalogVersion: string; plans: Record<string, { label: string; monthlyUsd: number }> };
 type Deployment = {
   id: string; provider: string; status: string; branch: string; commitSha: string;
   providerUrl?: string | null; createdAt?: string;
+  herokuDynoSize?: string | null; herokuDynoQuantity?: number | null; estimatedMonthlyCostUsd?: number | null;
 };
 
 const fields: Record<string, ProviderField[]> = {
@@ -61,8 +63,13 @@ export default function ManagedHostingPanel({
   const [deploying, setDeploying] = useState(false);
   const [message, setMessage] = useState('');
   const [logs, setLogs] = useState<string | null>(null);
+  const [selectedProviderId, setSelectedProviderId] = useState('auto');
+  const [herokuPricing, setHerokuPricing] = useState<HerokuPricing | null>(null);
+  const [herokuDynoSize, setHerokuDynoSize] = useState('basic');
+  const [herokuDynoQuantity, setHerokuDynoQuantity] = useState(1);
+  const [herokuCostApproved, setHerokuCostApproved] = useState(false);
 
-  const canDeploy = providers.some((provider) => provider.connection?.status === 'verified' && ['render', 'railway', 'digitalocean-app-platform', 'vercel', 'netlify', 'cloudflare-pages'].includes(provider.id));
+  const canDeploy = providers.some((provider) => provider.connection?.status === 'verified' && ['render', 'railway', 'digitalocean-app-platform', 'heroku', 'vercel', 'netlify', 'cloudflare-pages'].includes(provider.id));
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${accessToken}`,
@@ -77,6 +84,10 @@ export default function ManagedHostingPanel({
     if (response.ok) {
       const data = await response.json();
       setProviders(data.providers || []);
+      try {
+        const pricing = await fetch(`${apiBase}/heroku/dyno-pricing`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (pricing.ok) setHerokuPricing(await pricing.json());
+      } catch { setHerokuPricing(null); }
     }
   }, [apiBase, accessToken, organizationId]);
 
@@ -152,8 +163,22 @@ export default function ManagedHostingPanel({
     setDeploying(true);
     setMessage('');
     try {
+      const body: Record<string, any> = {
+        branch: defaultBranch,
+        ...(selectedProviderId !== 'auto' ? { providerId: selectedProviderId } : {}),
+      };
+      if (selectedProviderId === 'heroku') {
+        if (!herokuCostApproved || !herokuPricing) throw new Error('Approve the current Heroku cost estimate before deploying.');
+        const plan = herokuPricing.plans[herokuDynoSize];
+        if (!plan) throw new Error('Select a valid Heroku dyno plan.');
+        body.herokuCostApproval = {
+          approved: true, dynoSize: herokuDynoSize, dynoQuantity: herokuDynoQuantity,
+          monthlyCostUsd: Number((plan.monthlyUsd * herokuDynoQuantity).toFixed(2)),
+          pricingCatalogVersion: herokuPricing.catalogVersion,
+        };
+      }
       const response = await fetch(`${apiBase}/projects/${projectId}/managed-deployments`, {
-        method: 'POST', headers, body: JSON.stringify({ branch: defaultBranch }),
+        method: 'POST', headers, body: JSON.stringify(body),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Could not start managed deployment');
@@ -206,9 +231,35 @@ export default function ManagedHostingPanel({
           <h3>Managed hosting providers</h3>
           <p>Connect your provider accounts once. Kestrel selects a compatible host and manages deployment history.</p>
         </div>
-        <button className="btn btn-dark" onClick={startDeployment} disabled={!projectId || !canDeploy || deploying}>
-          {deploying ? 'Starting deployment…' : 'Deploy latest successful build'}
-        </button>
+        <div className="flex flex-col gap-2 min-w-64">
+          <label className="text-xs font-medium">Hosting provider
+            <select className="mt-1 w-full rounded border p-2" value={selectedProviderId} onChange={(e) => { setSelectedProviderId(e.target.value); setHerokuCostApproved(false); }}>
+              <option value="auto">Automatic — best compatible verified provider</option>
+              {providers.filter((provider) => provider.connection?.status === 'verified').map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+            </select>
+          </label>
+          {selectedProviderId === 'heroku' && (
+            <div className="rounded border p-3 text-xs space-y-2">
+              <label>Heroku dyno plan
+                <select className="mt-1 w-full rounded border p-2" value={herokuDynoSize} onChange={(e) => { setHerokuDynoSize(e.target.value); if (e.target.value === 'basic') setHerokuDynoQuantity(1); setHerokuCostApproved(false); }}>
+                  {Object.entries(herokuPricing?.plans || {}).map(([size, plan]) => <option key={size} value={size}>{plan.label} — ${plan.monthlyUsd.toFixed(2)}/month</option>)}
+                </select>
+              </label>
+              <label>Web dyno quantity
+                <input className="mt-1 w-full rounded border p-2" type="number" min={1} max={herokuDynoSize === 'basic' ? 1 : 10} value={herokuDynoQuantity} onChange={(e) => { setHerokuDynoQuantity(herokuDynoSize === 'basic' ? 1 : Math.max(1, Math.min(10, Number(e.target.value) || 1))); setHerokuCostApproved(false); }} />
+              </label>
+              <p>Estimated maximum: <b>${((herokuPricing?.plans[herokuDynoSize]?.monthlyUsd || 0) * herokuDynoQuantity).toFixed(2)} USD/month</b>, assuming 24/7 use. Add-ons and taxes are excluded.</p>
+              <label className="flex items-start gap-2">
+                <input type="checkbox" checked={herokuCostApproved} onChange={(e) => setHerokuCostApproved(e.target.checked)} />
+                <span>I approve this plan, quantity and recurring cost for this workspace. Only an owner/admin can submit the approval.</span>
+              </label>
+              <small>Catalog {herokuPricing?.catalogVersion || 'loading'}; Kestrel verifies the estimate server-side.</small>
+            </div>
+          )}
+          <button className="btn btn-dark" onClick={startDeployment} disabled={!projectId || !canDeploy || deploying || (selectedProviderId === 'heroku' && (!herokuCostApproved || !herokuPricing))}>
+            {deploying ? 'Starting deployment…' : selectedProviderId === 'auto' ? 'Deploy with best compatible provider' : `Deploy with ${providers.find((p) => p.id === selectedProviderId)?.name || selectedProviderId}`}
+          </button>
+        </div>
       </div>
 
       {message && <div className="notice mb-4" role="status">{message}</div>}
@@ -287,6 +338,7 @@ export default function ManagedHostingPanel({
                     <span className="pill pill-muted">{deployment.status}</span>
                   </div>
                   <p className="mt-1 text-xs text-neutral-500">{deployment.branch} · {deployment.commitSha?.slice(0, 10)}</p>
+                  {deployment.provider === 'heroku' && deployment.estimatedMonthlyCostUsd != null && <p className="mt-1 text-xs text-neutral-600">Approved: {deployment.herokuDynoQuantity} × {deployment.herokuDynoSize} · up to ${deployment.estimatedMonthlyCostUsd.toFixed(2)}/month</p>}
                   {deployment.providerUrl && <a className="text-xs text-blue-700 underline" href={deployment.providerUrl} target="_blank" rel="noreferrer">{deployment.providerUrl}</a>}
                 </div>
                 <div className="flex gap-2">
