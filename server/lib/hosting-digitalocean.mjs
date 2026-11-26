@@ -51,7 +51,34 @@ function safeName(value) {
   return result || 'kestrel-app';
 }
 
-export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir }, { fetchImpl = fetch } = {}) {
+function normalizeDigitalOceanSourceDir(value) {
+  if (value === undefined) return undefined;
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '.' || raw === '/') return '/';
+  const path = raw.replace(/^\.\//, '').replace(/^\/+|\/+$/g, '');
+  if (!path || path.includes('\\') || path.includes('\0') || /^[A-Za-z]:/.test(path) ||
+      path.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('Invalid DigitalOcean source directory');
+  }
+  return path;
+}
+
+function normalizeDigitalOceanRelativePath(value, label) {
+  const path = String(value || '').trim().replace(/^\.\//, '');
+  if (!path || path.length > 500 || path.startsWith('/') || path.includes('\\') || path.includes('\0') ||
+      /^[A-Za-z]:/.test(path) || path.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error(`Invalid DigitalOcean ${label}`);
+  }
+  return path;
+}
+
+function digitalOceanDockerfilePath(profile = {}, sourceDir = '/') {
+  const dockerfile = normalizeDigitalOceanRelativePath(profile.dockerfilePath || 'Dockerfile', 'Dockerfile path');
+  if (sourceDir !== '/' && dockerfile.startsWith(`${sourceDir}/`)) return dockerfile;
+  return sourceDir === '/' ? dockerfile : `${sourceDir}/${dockerfile}`;
+}
+
+export async function createDigitalOceanDeployment({ accessToken, region = 'nyc', repositoryUrl, branch = 'main', commitSha, projectName, profile = {}, env = {}, buildCommand, destinationDir, rootDir }, { fetchImpl = fetch } = {}) {
   if (!accessToken) throw new Error('DigitalOcean access token is required');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.includes('//')) throw new Error('Invalid deployment branch');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
@@ -63,19 +90,19 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   if (!outputDirectory || outputDirectory.length > 500 || outputDirectory.startsWith('/') || outputDirectory.includes('\\') || outputDirectory.includes('\0') || outputDirectory.split('/').some((part) => !part || part === '.' || part === '..')) {
     throw new Error('Invalid DigitalOcean static output directory');
   }
-  const buildContext = profile.rootDir && profile.rootDir !== '.' ? String(profile.rootDir).replace(/\/$/, '') : '';
+  const sourceDir = normalizeDigitalOceanSourceDir(rootDir !== undefined ? rootDir : profile.rootDir);
+  const buildContext = sourceDir && sourceDir !== '/' ? sourceDir : '';
   const component = {
     name: safeName(projectName),
     envs: digitalOceanEnv(env, isStatic ? 'BUILD_TIME' : 'RUN_AND_BUILD_TIME'),
     github: { repo, branch, deploy_on_push: false },
-    source_dir: buildContext || '/',
+    source_dir: sourceDir || '/',
   };
   if (isStatic) {
     component.build_command = resolvedBuildCommand;
     component.output_dir = outputDirectory;
   } else if (profile.needsContainer) {
-    const dockerfile = String(profile.dockerfilePath || './Dockerfile').replace(/^\.\//, '');
-    component.dockerfile_path = buildContext ? `${buildContext}/${dockerfile}` : dockerfile;
+    component.dockerfile_path = digitalOceanDockerfilePath(profile, sourceDir || '/');
     component.routes = [{ path: '/' }];
     component.instance_size_slug = 'apps-s-1vcpu-0.5gb';
     component.instance_count = 1;
@@ -102,19 +129,59 @@ export async function createDigitalOceanDeployment({ accessToken, region = 'nyc'
   return { provider: 'digitalocean-app-platform', projectId: app.id, serviceId: component.name, environmentId: null, deploymentId, status: status(deployment.phase || deployment.status), providerUrl: app.live_url || null };
 }
 
-export async function deployDigitalOceanApp({ accessToken, appId, commitSha, env = {} }, { fetchImpl = fetch } = {}) {
+export async function deployDigitalOceanApp({ accessToken, appId, commitSha, env = {}, profile = {}, buildCommand, destinationDir, rootDir }, { fetchImpl = fetch } = {}) {
   if (!appId) throw new Error('DigitalOcean app identifier is required');
   if (!/^[a-fA-F0-9]{7,64}$/.test(commitSha || '')) throw new Error('A verified Git commit SHA is required');
+  const sourceDir = normalizeDigitalOceanSourceDir(rootDir !== undefined ? rootDir : profile.rootDir);
+  const hasProfile = profile && Object.keys(profile).length > 0;
+  const resolvedBuildCommand = String(buildCommand || profile.buildCommand || 'npm install && npm run build').trim();
+  if (hasProfile && (!resolvedBuildCommand || resolvedBuildCommand.length > 2000)) throw new Error('Invalid DigitalOcean build command');
+  const outputDirectory = profile.isStatic === true
+    ? normalizeDigitalOceanRelativePath(destinationDir || profile.outputDirectory || 'dist', 'static output directory')
+    : null;
+  const startCommand = String(profile.startCommand || 'npm start').trim();
+  if (hasProfile && !profile.isStatic && !profile.needsContainer && (!startCommand || startCommand.length > 2000)) throw new Error('Invalid DigitalOcean start command');
+  const serviceEnvs = digitalOceanEnv(env, 'RUN_AND_BUILD_TIME');
+  const staticEnvs = digitalOceanEnv(env, 'BUILD_TIME');
+  const workerEnvs = digitalOceanEnv(env, 'RUN_TIME');
   const currentResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}`, { fetchImpl });
   const currentApp = currentResult.app || currentResult;
   if (!currentApp.spec) throw new Error('DigitalOcean app did not return its current spec');
   const spec = structuredClone(currentApp.spec);
   // Kestrel owns the environment set for managed App Platform components.
   // Always send an explicit array so deleting the final Kestrel secret clears it.
-  const updateComponent = (component, scope) => ({ ...component, envs: digitalOceanEnv(env, scope) });
-  spec.services = (spec.services || []).map((component) => updateComponent(component, 'RUN_AND_BUILD_TIME'));
-  spec.static_sites = (spec.static_sites || []).map((component) => updateComponent(component, 'BUILD_TIME'));
-  spec.workers = (spec.workers || []).map((component) => updateComponent(component, 'RUN_TIME'));
+  const applySourceDir = (component) => sourceDir === undefined ? component : { ...component, source_dir: sourceDir };
+  const updateService = (component) => {
+    let updated = { ...component, envs: serviceEnvs };
+    updated = applySourceDir(updated);
+    if (hasProfile) {
+      if (profile.needsContainer) updated.dockerfile_path = digitalOceanDockerfilePath(profile, sourceDir || '/');
+      else {
+        updated.build_command = resolvedBuildCommand;
+        updated.run_command = startCommand;
+      }
+    }
+    return updated;
+  };
+  const updateStaticSite = (component) => ({
+    ...applySourceDir({ ...component, envs: staticEnvs }),
+    ...(hasProfile ? { build_command: resolvedBuildCommand, output_dir: outputDirectory } : {}),
+  });
+  const updateWorker = (component) => {
+    let updated = { ...component, envs: workerEnvs };
+    updated = applySourceDir(updated);
+    if (hasProfile) {
+      if (profile.needsContainer) updated.dockerfile_path = digitalOceanDockerfilePath(profile, sourceDir || '/');
+      else {
+        updated.build_command = resolvedBuildCommand;
+        updated.run_command = startCommand;
+      }
+    }
+    return updated;
+  };
+  spec.services = (spec.services || []).map(updateService);
+  spec.static_sites = (spec.static_sites || []).map(updateStaticSite);
+  spec.workers = (spec.workers || []).map(updateWorker);
   const updatedResult = await request(accessToken, `/apps/${encodeURIComponent(appId)}`, { method: 'PUT', fetchImpl, body: { spec } });
   let updatedApp = updatedResult.app || updatedResult;
   let deployment = updatedApp.in_progress_deployment || updatedApp.pending_deployment || null;
