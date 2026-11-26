@@ -73,7 +73,10 @@ function normalizeRenderRelativePath(value, label) {
 }
 
 function renderPathRelativeToRoot(value, rootDir, label) {
-  const path = normalizeRenderRelativePath(value, label);
+  const raw = String(value || '').trim();
+  if (raw === '.' || raw === './') return '.';
+  const path = normalizeRenderRelativePath(raw, label);
+  if (rootDir && path === rootDir) return '.';
   return rootDir && path.startsWith(`${rootDir}/`) ? path.slice(rootDir.length + 1) : path;
 }
 
