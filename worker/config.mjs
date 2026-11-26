@@ -38,12 +38,12 @@ export function resolveWorkerConnection({
   }
 
   const resolvedWorkerId = String(workerId || (production ? '' : `${hostname}-${randomUUID().slice(0, 5)}`)).trim();
-  if (!resolvedWorkerId || resolvedWorkerId.length > 120 || /[\\s/?#]/.test(resolvedWorkerId)) {
+  if (!resolvedWorkerId || resolvedWorkerId.length > 120 || /[\s/?#]/.test(resolvedWorkerId)) {
     throw new Error('A valid KESTREL_WORKER_ID is required');
   }
   if (production && !/^wrk_[A-Za-z0-9_-]{8,100}$/.test(resolvedWorkerId)) {
     throw new Error('Production workers require the provisioned KESTREL_WORKER_ID from the admin provisioning flow');
   }
 
-  return { api: parsed.toString().replace(/\\/+$/, ''), workerId: resolvedWorkerId };
+  return { api: parsed.toString().replace(/\/+$/, ''), workerId: resolvedWorkerId };
 }
