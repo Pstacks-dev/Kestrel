@@ -38,6 +38,43 @@ test('creates a Render web service with autodeploy disabled and deploys the veri
   assert.equal(result.deploymentId, 'dep-1');
 });
 
+test('uses framework-specific static output directories and build commands on Render', async () => {
+  for (const [index, config] of [
+    { outputDirectory: 'public', buildCommand: 'npm run build:docs' },
+    { outputDirectory: 'build', buildCommand: 'npm run build' },
+    { outputDirectory: 'dist/site/browser', buildCommand: 'npm ci && npm run build' },
+  ].entries()) {
+    let serviceBody;
+    await createRenderDeployment({
+      apiKey: 'render-token', ownerId: 'owner-123',
+      repositoryUrl: 'https://github.com/acme/demo',
+      commitSha: String(index + 1).repeat(40), projectName: 'Static Demo',
+      profile: { runtime: 'node', isStatic: true, outputDirectory: config.outputDirectory, buildCommand: config.buildCommand },
+    }, {
+      fetchImpl: async (url, options) => {
+        if (url.endsWith('/services')) {
+          serviceBody = JSON.parse(options.body);
+          return response({ service: { id: `static-${index}` } }, 201);
+        }
+        return response({ id: `deployment-${index}`, status: 'created' }, 201);
+      },
+    });
+    assert.equal(serviceBody.serviceDetails.publishPath, config.outputDirectory);
+    assert.equal(serviceBody.serviceDetails.buildCommand, config.buildCommand);
+  }
+});
+
+test('rejects unsafe Render static publish directories before making provider requests', async () => {
+  const noNetwork = async () => assert.fail('Render API must not be called');
+  for (const outputDirectory of ['../outside', '/etc/www', 'C:/build', 'apps\\\\..\\\\secret', 'dist//site', '.']) {
+    await assert.rejects(createRenderDeployment({
+      apiKey: 'render-token', ownerId: 'owner-123',
+      repositoryUrl: 'https://github.com/acme/demo', commitSha: 'a'.repeat(40),
+      profile: { isStatic: true, outputDirectory },
+    }, { fetchImpl: noNetwork }), /Invalid Render static publish directory/);
+  }
+});
+
 test('deploys, polls and rolls back a Render service', async () => {
   const deployed = await deployRenderService({ apiKey: 'x', serviceId: 'srv-1', commitSha: 'b'.repeat(40) }, {
     fetchImpl: async () => response({ id: 'dep-2', status: 'queued' }, 201),
