@@ -655,6 +655,23 @@ app.get('/api/projects/:projectId/webhook-config', userAuth, async (req, res) =>
 });
 
 // Project-level OCI build settings. The worker validates the selected path against the pinned commit.
+app.get('/api/projects/:projectId/build-settings', userAuth, async (req, res) => {
+  try {
+    const result = await query(
+      `select p.oci_build_context as "ociBuildContext"
+       from public.projects p
+       join public.organization_members m on m.organization_id = p.organization_id
+       where p.id = $1 and m.user_id = $2`,
+      [req.params.projectId, req.user.id],
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Project not found' });
+    return res.json({ ociBuildContext: result.rows[0].ociBuildContext || null });
+  } catch (error) {
+    console.error('Project build settings lookup failed:', error.message);
+    return res.status(500).json({ error: 'Could not load project build settings' });
+  }
+});
+
 app.patch('/api/projects/:projectId/build-settings', userAuth, async (req, res) => {
   const rawContext = req.body?.ociBuildContext;
   const buildContext = rawContext === null || rawContext === '' ? null : rawContext;
