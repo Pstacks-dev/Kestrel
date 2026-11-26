@@ -958,7 +958,7 @@ app.get('/api/runs/:runId', userAuth, async (req, res) => {
     if (!r.rowCount) return res.status(404).json({ error: 'Run not found or access denied' });
 
     const jobs = await query(
-      'select * from public.jobs where run_id = $1 order by created_at',
+      'select j.*, j.working_directory as "workingDirectory" from public.jobs j where j.run_id = $1 order by j.created_at',
       [runId]
     );
     const artifacts = await query(
