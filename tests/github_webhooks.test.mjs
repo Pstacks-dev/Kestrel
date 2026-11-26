@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush,
-  isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId,
+  isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId, claimGitHubProjectWebhookDelivery,
 } from '../server/lib/github-webhooks.mjs';
 
 test('accepts only push and pull request webhook event types', () => {
@@ -43,4 +43,31 @@ test('validates positive bounded GitHub App installation IDs', () => {
   for (const value of ['', '0', '00', '12x', '-12', '12.4', ' 12', '12 ', '9223372036854775808', null, 12]) {
     assert.equal(isValidGitHubInstallationId(value), false, String(value));
   }
+});
+
+
+test('push delivery retry is rejected by the durable delivery claim before a second pipeline run', async () => {
+  let claimed = false;
+  const client = {
+    calls: 0,
+    async query(sql, params) {
+      this.calls += 1;
+      assert.match(sql, /on conflict \(delivery_id\) do nothing returning id/i);
+      assert.deepEqual(params, ['project-1', 'push-delivery-1', 'push', 'main', 'a'.repeat(40)]);
+      if (claimed) return { rowCount: 0, rows: [] };
+      claimed = true;
+      return { rowCount: 1, rows: [{ id: 'delivery-row-1' }] };
+    },
+  };
+  const delivery = { projectId: 'project-1', deliveryId: 'push-delivery-1', eventName: 'push', branch: 'main', commitSha: 'a'.repeat(40) };
+  assert.deepEqual(await claimGitHubProjectWebhookDelivery(client, delivery), { id: 'delivery-row-1' });
+  assert.equal(await claimGitHubProjectWebhookDelivery(client, delivery), null);
+  assert.equal(client.calls, 2);
+});
+
+test('project webhook delivery claim rejects malformed data before touching the database', async () => {
+  const client = { query: async () => { throw new Error('database should not be called'); } };
+  await assert.rejects(() => claimGitHubProjectWebhookDelivery(client, {
+    projectId: 'project-1', deliveryId: '../bad', eventName: 'push', branch: 'main', commitSha: 'a'.repeat(40),
+  }), /Invalid GitHub project webhook delivery/);
 });
