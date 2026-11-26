@@ -14,7 +14,7 @@ function response(payload, status = 200) {
 test('creates a Render web service with autodeploy disabled and deploys the verified commit', async () => {
   const calls = [];
   const result = await createRenderDeployment({
-    apiKey: 'render-token', ownerId: 'owner-123', repositoryUrl: 'https://github.com/acme/demo.git',
+    apiKey: 'render-token', ownerId: 'owner-123', repositoryUrl: 'https://github.com/acme/private-demo.git',
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node', isStatic: false }, env: { DATABASE_URL: 'postgres://secret' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
@@ -25,7 +25,7 @@ test('creates a Render web service with autodeploy disabled and deploys the veri
   assert.equal(calls.length, 3);
   const service = JSON.parse(calls[0].options.body);
   assert.equal(service.autoDeployTrigger, 'off');
-  assert.equal(service.repo, 'https://github.com/acme/demo');
+  assert.equal(service.repo, 'https://github.com/acme/private-demo');
   assert.equal(service.serviceDetails.runtime, 'node');
   assert.deepEqual(service.serviceDetails.envSpecificDetails, {
     buildCommand: 'npm install && npm run build',
@@ -48,7 +48,7 @@ test('uses framework-specific static output directories and configured build com
     let serviceBody;
     await createRenderDeployment({
       apiKey: 'render-token', ownerId: 'owner-123',
-      repositoryUrl: 'https://github.com/acme/demo',
+      repositoryUrl: 'https://github.com/acme/private-demo',
       commitSha: String(index + 1).repeat(40), projectName: 'Static Demo',
       profile: { runtime: 'node', isStatic: true, outputDirectory: config.outputDirectory },
       buildCommand: config.buildCommand,
@@ -184,7 +184,7 @@ test('rejects malformed GitHub URLs and invalid commit SHAs before calling provi
   const noNetwork = async () => assert.fail('Provider API must not be called');
   await assert.rejects(createRenderDeployment({
     apiKey: 'x', ownerId: 'owner-123', repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'a'.repeat(40),
-  }, { fetchImpl: noNetwork }), /public GitHub repository/);
+  }, { fetchImpl: noNetwork }), /GitHub repository/);
   await assert.rejects(createDigitalOceanDeployment({
     accessToken: 'x', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
