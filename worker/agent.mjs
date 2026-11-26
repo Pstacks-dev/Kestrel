@@ -634,6 +634,10 @@ async function managedImageBuildLoop() {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         continue;
       }
+      if (isDraining) {
+        await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/release', { leaseToken: build.leaseToken }).catch(() => {});
+        break;
+      }
       console.log('[oci] Claimed managed image build ' + build.id + ' for ' + build.commitSha);
       await executeManagedImageBuild(build);
     } catch (error) {
@@ -667,34 +671,33 @@ const heartbeatInterval = setInterval(() => {
   }).catch((e) => console.error('heartbeat error:', e.message));
 }, 10000);
 
-// Graceful shutdown handling
+// Graceful shutdown stops claims, lets current work finish, then uses a bounded
+// cancellation window so the control plane can recover leases after a forced exit.
+const drainTimeoutMs = Math.max(5000, Math.min(600000, Number(process.env.KESTREL_WORKER_DRAIN_TIMEOUT_MS || 60000)));
+const drainController = createDrainController({
+  activeJobs,
+  isManagedImageBuildActive: () => managedImageBuildActive,
+  abortManagedImageBuild: () => managedImageBuildAbortController?.abort(),
+  timeoutMs: drainTimeoutMs,
+  stopContainer: (name) => spawn(DOCKER, ['stop', '--time', '2', name], { stdio: 'ignore' }),
+  killChild: (child) => child.kill('SIGTERM'),
+  forceExit: () => process.exit(1),
+  logger: console,
+});
+
 function handleShutdown(signal) {
+  if (isDraining) return;
   console.log(`Received ${signal}, draining worker...`);
   isDraining = true;
   api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
-
-  if (activeJobs.size === 0) {
-    clearInterval(heartbeatInterval);
-    process.exit(0);
-  }
-
-  const drainTimer = setTimeout(() => {
-    console.log('Drain timeout exceeded; aborting remaining containers.');
-    for (const [jobId, { abortSignal, containerName }] of activeJobs.entries()) {
-      abortSignal?.abort();
-      if (EXECUTOR === 'docker') {
-        spawn(DOCKER, ['stop', '--time', '2', containerName], { stdio: 'ignore' });
-      }
-    }
-    process.exit(0);
-  }, 15000);
-  drainTimer.unref();
+  drainController.begin(signal);
 }
 
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
-// Managed OCI builds share the registered worker pool and have a separate durable lease queue.\nif (EXECUTOR === 'docker') void managedImageBuildLoop();\n\n// Polling loop for job claims
+// Managed OCI builds share the registered worker pool and have a separate durable lease queue.
+const managedImageBuildTask = EXECUTOR === 'docker' ? managedImageBuildLoop() : Promise.resolve();
 async function pollLoop(slot) {
   while (!isDraining) {
     try {
@@ -702,6 +705,10 @@ async function pollLoop(slot) {
       if (!job) {
         await new Promise((r) => setTimeout(r, 600));
         continue;
+      }
+      if (isDraining) {
+        await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
+        break;
       }
 
       console.log(`[Slot ${slot}] Claimed job "${job.name}" (${job.id}) for run ${job.runId}`);
@@ -723,3 +730,7 @@ async function pollLoop(slot) {
 }
 
 await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => pollLoop(i + 1)));
+await managedImageBuildTask;
+drainController.complete();
+clearInterval(heartbeatInterval);
+await api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
