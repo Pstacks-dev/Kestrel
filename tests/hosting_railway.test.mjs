@@ -36,9 +36,32 @@ test('creates a Railway project, GitHub service and deployment for the exact com
   assert.equal(calls[3].query.includes('variableCollectionUpsert'), true);
   assert.equal(calls[3].variables.input.variables.DATABASE_URL, 'postgres://secret');
   assert.equal(calls[3].variables.input.skipDeploys, true);
+  assert.equal(calls[3].variables.input.replace, true);
   assert.equal(calls[4].variables.commitSha, 'a'.repeat(40));
   assert.equal(result.deploymentId, 'deployment-1');
   assert.equal(result.status, 'queued');
+});
+
+test('replaces Railway variables with an empty set to remove deleted secrets', async () => {
+  const calls = [];
+  const result = await deployRailwayService({
+    token: 'railway-token', projectId: 'project-1', serviceId: 'service-1',
+    environmentId: 'env-1', commitSha: 'e'.repeat(40), env: {},
+  }, {
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push(body);
+      return response(body.query.includes('variableCollectionUpsert')
+        ? { variableCollectionUpsert: true }
+        : { serviceInstanceDeployV2: 'deployment-empty-env' });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].query.includes('variableCollectionUpsert'), true);
+  assert.deepEqual(calls[0].variables.input.variables, {});
+  assert.equal(calls[0].variables.input.replace, true);
+  assert.equal(calls[0].variables.input.skipDeploys, true);
+  assert.equal(result.deploymentId, 'deployment-empty-env');
 });
 
 test('rejects invalid repository URLs, branch names and commit SHAs before network access', async () => {
@@ -109,6 +132,7 @@ test('deploys new commits to an existing Railway service without creating duplic
   assert.equal(requests.length, 2);
   assert.equal(requests[0].query.includes('variableCollectionUpsert'), true);
   assert.equal(requests[0].variables.input.variables.API_KEY, 'secret');
+  assert.equal(requests[0].variables.input.replace, true);
   assert.equal(requests[1].query.includes('serviceInstanceDeployV2'), true);
   assert.equal(requests[1].variables.serviceId, 'service-1');
   assert.equal(requests[1].variables.environmentId, 'env-1');
@@ -123,6 +147,7 @@ test('configures a Railway service root directory before deploying a nested mono
     { project: { id: 'project-2', environments: { edges: [{ node: { id: 'env-2', name: 'production' } }] } } },
     { serviceCreate: { id: 'service-2', name: 'API' } },
     { serviceInstanceUpdate: true },
+    { variableCollectionUpsert: true },
     { serviceInstanceDeployV2: 'deployment-2' },
   ];
   const result = await createRailwayDeployment({
@@ -141,10 +166,12 @@ test('configures a Railway service root directory before deploying a nested mono
       return response(responses[calls.length - 1]);
     },
   });
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.equal(calls[3].query.includes('serviceInstanceUpdate'), true);
   assert.deepEqual(calls[3].variables.input, { rootDirectory: '/apps/api' });
-  assert.equal(calls[4].query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(calls[4].query.includes('variableCollectionUpsert'), true);
+  assert.equal(calls[4].variables.input.replace, true);
+  assert.equal(calls[5].query.includes('serviceInstanceDeployV2'), true);
   assert.equal(result.deploymentId, 'deployment-2');
 });
 
@@ -162,13 +189,15 @@ test('updates an existing Railway service root directory before deploying', asyn
     fetchImpl: async (_url, options) => {
       const request = JSON.parse(options.body);
       calls.push(request);
-      return response(request.query.includes('serviceInstanceUpdate')
-        ? { serviceInstanceUpdate: true }
-        : { serviceInstanceDeployV2: 'deployment-3' });
+      if (request.query.includes('serviceInstanceUpdate')) return response({ serviceInstanceUpdate: true });
+      if (request.query.includes('variableCollectionUpsert')) return response({ variableCollectionUpsert: true });
+      return response({ serviceInstanceDeployV2: 'deployment-3' });
     },
   });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.deepEqual(calls[0].variables.input, { rootDirectory: null });
-  assert.equal(calls[1].query.includes('serviceInstanceDeployV2'), true);
+  assert.equal(calls[1].query.includes('variableCollectionUpsert'), true);
+  assert.equal(calls[1].variables.input.replace, true);
+  assert.equal(calls[2].query.includes('serviceInstanceDeployV2'), true);
   assert.equal(result.deploymentId, 'deployment-3');
 });
