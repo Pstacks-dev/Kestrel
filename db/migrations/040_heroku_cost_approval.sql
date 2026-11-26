@@ -5,9 +5,11 @@ alter table public.managed_hosting_deployments
   add column if not exists heroku_dyno_size text,
   add column if not exists heroku_dyno_quantity integer,
   add column if not exists estimated_monthly_cost_usd numeric(12,2),
-  add column if not exists cost_approved_by uuid references auth.users(id),
+  add column if not exists cost_approved_by uuid,
   add column if not exists cost_approved_at timestamptz,
   add column if not exists pricing_catalog_version text;
+
+comment on column public.managed_hosting_deployments.cost_approved_by is 'Immutable approver user ID snapshot retained for cost audit history.';
 
 alter table public.managed_hosting_deployments
   drop constraint if exists managed_hosting_deployments_heroku_cost_approval_check;
