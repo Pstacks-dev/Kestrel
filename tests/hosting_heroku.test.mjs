@@ -111,7 +111,7 @@ test('rejects invalid source URLs and commit SHAs before creating Heroku resourc
   const noNetwork = async () => assert.fail('Heroku API must not be called');
   await assert.rejects(createHerokuDeployment({
     apiKey: 'x', repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'a'.repeat(40),
-  }, { fetchImpl: noNetwork }), /public GitHub repository/);
+  }, { fetchImpl: noNetwork }), /GitHub repository URL/);
   await assert.rejects(deployHerokuApp({
     apiKey: 'x', appId: 'app-1', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
@@ -160,4 +160,22 @@ test('rejects untrusted or mismatched private source archive redirects', async (
     installationToken: 'token',
     fetchImpl: async () => new Response(null, { status: 302, headers: { location: 'https://attacker.example/archive.tar.gz' } }),
   }), /invalid signed source archive URL/i);
+});
+
+
+test('passes a signed private-repository archive URL to the Heroku build API', async () => {
+  const sourceArchiveUrl = `https://codeload.github.com/acme/private-app/legacy.tar.gz/${'d'.repeat(40)}?token=signed-temporary-token`;
+  await deployHerokuApp({
+    apiKey: 'heroku-token', appId: 'app-1',
+    repositoryUrl: 'https://github.com/acme/private-app',
+    commitSha: 'd'.repeat(40), sourceArchiveUrl,
+  }, {
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(url, 'https://api.heroku.com/apps/app-1/builds');
+      assert.equal(body.source_blob.url, sourceArchiveUrl);
+      assert.equal(body.source_blob.version, 'd'.repeat(40));
+      return response({ id: 'build-private-1', status: 'pending' }, 201);
+    },
+  });
 });
