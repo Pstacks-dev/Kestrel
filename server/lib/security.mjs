@@ -1,9 +1,13 @@
 import crypto from 'node:crypto';
 
-// Encryption key derivation: uses KESTREL_ENCRYPTION_KEY or a SHA-256 derived from server secret
+// Provider credentials, project secrets and registry credentials must never be
+// encrypted with a public Supabase key or a predictable development fallback.
 function getEncryptionKey() {
-  const secret = process.env.KESTREL_ENCRYPTION_KEY || process.env.SUPABASE_ANON_KEY || 'kestrel-default-dev-encryption-key-32';
-  return crypto.createHash('sha256').update(secret).digest();
+  const secret = process.env.KESTREL_ENCRYPTION_KEY;
+  if (typeof secret !== 'string' || secret.length < 32) {
+    throw new Error('KESTREL_ENCRYPTION_KEY must be configured with at least 32 characters');
+  }
+  return crypto.createHash('sha256').update(secret, 'utf8').digest();
 }
 
 /**
