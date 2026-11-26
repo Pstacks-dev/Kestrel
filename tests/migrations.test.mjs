@@ -214,3 +214,15 @@ test('pipeline job working directories are stored, validated and executed within
   assert.match(resolver, /escapes the repository workspace/);
 });
 
+
+
+test('Heroku cost approval migration requires an explicit supported plan, quantity and approver', async () => {
+  const sql = await readFile(new URL('../db/migrations/040_heroku_cost_approval.sql', import.meta.url), 'utf8');
+  assert.match(sql, /heroku_dyno_size/);
+  assert.match(sql, /heroku_dyno_quantity between 1 and 10/i);
+  assert.match(sql, /cost_approved_by is not null/i);
+  assert.match(sql, /cost_approved_at is not null/i);
+  assert.match(sql, /pricing_catalog_version is not null/i);
+  assert.match(sql, /provider_id <> 'heroku'/i);
+  assert.match(sql, /not valid/i);
+});
