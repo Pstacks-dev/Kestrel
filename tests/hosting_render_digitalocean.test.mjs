@@ -14,7 +14,7 @@ function response(payload, status = 200) {
 test('creates a Render web service with autodeploy disabled and deploys the verified commit', async () => {
   const calls = [];
   const result = await createRenderDeployment({
-    apiKey: 'render-token', ownerId: 'owner-123', repositoryUrl: 'https://github.com/acme/private-demo.git',
+    apiKey: 'render-token', ownerId: 'owner-123', repositoryUrl: 'https://github.com/acme/demo.git',
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node', isStatic: false }, env: { DATABASE_URL: 'postgres://secret' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
@@ -25,7 +25,7 @@ test('creates a Render web service with autodeploy disabled and deploys the veri
   assert.equal(calls.length, 3);
   const service = JSON.parse(calls[0].options.body);
   assert.equal(service.autoDeployTrigger, 'off');
-  assert.equal(service.repo, 'https://github.com/acme/private-demo');
+  assert.equal(service.repo, 'https://github.com/acme/demo');
   assert.equal(service.serviceDetails.runtime, 'node');
   assert.deepEqual(service.serviceDetails.envSpecificDetails, {
     buildCommand: 'npm install && npm run build',
@@ -48,7 +48,7 @@ test('uses framework-specific static output directories and configured build com
     let serviceBody;
     await createRenderDeployment({
       apiKey: 'render-token', ownerId: 'owner-123',
-      repositoryUrl: 'https://github.com/acme/private-demo',
+      repositoryUrl: 'https://github.com/acme/demo',
       commitSha: String(index + 1).repeat(40), projectName: 'Static Demo',
       profile: { runtime: 'node', isStatic: true, outputDirectory: config.outputDirectory },
       buildCommand: config.buildCommand,
@@ -71,7 +71,7 @@ test('rejects unsafe Render static publish paths before creating a service', asy
   const noNetwork = async () => assert.fail('Render API must not be called');
   await assert.rejects(createRenderDeployment({
     apiKey: 'render-token', ownerId: 'owner-123',
-    repositoryUrl: 'https://github.com/acme/private-demo', commitSha: 'a'.repeat(40),
+    repositoryUrl: 'https://github.com/acme/demo', commitSha: 'a'.repeat(40),
     profile: { isStatic: true, outputDirectory: '../outside' },
   }, { fetchImpl: noNetwork }), /Invalid Render static publish directory/);
 });
@@ -134,7 +134,7 @@ test('deploys, polls and rolls back a Render service', async () => {
 test('creates a DigitalOcean App Platform app and starts its first deployment', async () => {
   const calls = [];
   const result = await createDigitalOceanDeployment({
-    accessToken: 'do-token', region: 'nyc', repositoryUrl: 'https://github.com/acme/private-demo',
+    accessToken: 'do-token', region: 'nyc', repositoryUrl: 'https://github.com/acme/demo',
     branch: 'main', commitSha: 'c'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node' }, env: { NODE_ENV: 'production' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
@@ -143,7 +143,7 @@ test('creates a DigitalOcean App Platform app and starts its first deployment', 
   } });
   assert.equal(calls.length, 2);
   const spec = JSON.parse(calls[0].options.body).spec;
-  assert.equal(spec.services[0].github.repo, 'acme/private-demo');
+  assert.equal(spec.services[0].github.repo, 'acme/demo');
   assert.equal(spec.services[0].github.deploy_on_push, false);
   assert.equal(spec.services[0].envs[0].key, 'NODE_ENV');
   assert.equal(spec.services[0].envs[0].type, 'SECRET');
@@ -215,7 +215,7 @@ test('uses detected framework output directories and custom build commands on Di
   for (const [index, config] of cases.entries()) {
     let spec;
     await createDigitalOceanDeployment({
-      accessToken: 'do-token', repositoryUrl: 'https://github.com/acme/private-demo',
+      accessToken: 'do-token', repositoryUrl: 'https://github.com/acme/demo',
       commitSha: String(index + 1).repeat(40), projectName: 'Static Demo',
       profile: { runtime: 'node', isStatic: true, outputDirectory: config.outputDirectory },
       buildCommand: config.buildCommand,
@@ -235,7 +235,7 @@ test('uses detected framework output directories and custom build commands on Di
 
 test('rejects unsafe DigitalOcean static output directories before creating an app', async () => {
   await assert.rejects(createDigitalOceanDeployment({
-    accessToken: 'do-token', repositoryUrl: 'https://github.com/acme/private-demo',
+    accessToken: 'do-token', repositoryUrl: 'https://github.com/acme/demo',
     commitSha: 'a'.repeat(40), profile: { isStatic: true, outputDirectory: '../outside' },
   }, { fetchImpl: async () => assert.fail('DigitalOcean API must not be called') }), /Invalid DigitalOcean static output directory/);
 });
@@ -244,9 +244,9 @@ test('rejects malformed GitHub URLs and invalid commit SHAs before calling provi
   const noNetwork = async () => assert.fail('Provider API must not be called');
   await assert.rejects(createRenderDeployment({
     apiKey: 'x', ownerId: 'owner-123', repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'a'.repeat(40),
-  }, { fetchImpl: noNetwork }), /GitHub repository/);
+  }, { fetchImpl: noNetwork }), /public GitHub repository/);
   await assert.rejects(createDigitalOceanDeployment({
-    accessToken: 'x', repositoryUrl: 'https://github.com/acme/private-demo', commitSha: 'bad',
+    accessToken: 'x', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
 });
 
