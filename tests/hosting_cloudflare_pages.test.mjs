@@ -132,6 +132,16 @@ test('rolls back a Pages production deployment through the rollback endpoint', a
   assert.equal(result.deploymentId, 'deploy-rollback');
 });
 
+test('rejects unsafe Cloudflare Pages output directories before API calls', async () => {
+  for (const destinationDir of ['/var/www', 'C:/site', '../outside', 'dist//site', 'dist\\\\assets', 'dist\\0evil']) {
+    await assert.rejects(createCloudflarePagesDeployment({
+      apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'demo',
+      repositoryUrl: 'https://github.com/acme/demo', commitSha: 'a'.repeat(40),
+      destinationDir,
+    }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /Invalid Cloudflare Pages build directory/);
+  }
+});
+
 test('rejects invalid repositories, commit SHAs and build paths', async () => {
   await assert.rejects(createCloudflarePagesDeployment({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'demo',
