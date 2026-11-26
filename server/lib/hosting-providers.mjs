@@ -40,6 +40,13 @@ export function rankHostingProviders(profileInput, env = process.env) {
   const compatible = catalog.map((provider) => {
     const reasons = [];
     let score = 0;
+    const runtime = ['javascript', 'typescript'].includes(profile.runtime) ? 'node' : profile.runtime;
+    const supportsRuntime = provider.runtimes.includes(runtime) ||
+      (provider.id === 'cloudflare-pages' && profile.isStatic && runtime === 'node');
+    // Do not recommend a source-build provider for a language it cannot build.
+    // A Dockerfile is an explicit user-supplied runtime contract, so compatible
+    // container providers may build languages absent from their native runtimes.
+    if (!profile.needsContainer && (runtime === 'unknown' || !supportsRuntime)) return null;
     if (profile.isStatic && !provider.static) return null;
     if (profile.isStatic && provider.static) { score += 30; reasons.push('Supports static site hosting'); }
     if (!profile.isStatic && provider.fullStack) { score += 20; reasons.push('Supports application backends'); }
