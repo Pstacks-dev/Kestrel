@@ -230,7 +230,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       containerImage = imageBuild.image_digest_ref;
     }
     const files = selected.id === 'netlify'
-      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, '', run.commit_sha)
+      ? await loadStaticArtifactFiles(query, run.project_id, artifacts.rows.map((row) => row.id), fetchImpl, profile.outputDirectory || '', run.commit_sha)
       : undefined;
     const existingResult = await query(
       `select * from public.managed_hosting_resources
