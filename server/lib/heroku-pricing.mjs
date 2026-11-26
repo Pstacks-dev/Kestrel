@@ -1,6 +1,6 @@
 // Heroku Common Runtime pricing catalog. Values are the published maximum monthly
-// charges for a dyno running 24/7, sourced from Heroku Usage & Billing (updated
-// 2026-09-09). Actual usage is prorated; add-ons, taxes and account-level plans
+// charges for a dyno running 24/7, sourced from https://devcenter.heroku.com/articles/usage-and-billing
+// (updated 2026-09-09). Actual usage is prorated; add-ons, taxes and account-level plans
 // are not included. Refresh this catalog when Heroku publishes a pricing change.
 export const HEROKU_PRICING_CATALOG_VERSION = '2026-09-09';
 
@@ -10,7 +10,7 @@ export const HEROKU_DYNO_PLANS = Object.freeze({
   'standard-2x': Object.freeze({ label: 'Standard-2X', monthlyUsd: 50 }),
   'performance-m': Object.freeze({ label: 'Performance-M', monthlyUsd: 250 }),
   'performance-l': Object.freeze({ label: 'Performance-L', monthlyUsd: 500 }),
-  'performance-l-ram': Object.freeze({ label: 'Performance-L-RAM', monthlyUsd: 500 }),
+  'performance-l-ram': Object.freeze({ label: 'Performance-L (memory-optimized)', monthlyUsd: 500 }),
   'performance-xl': Object.freeze({ label: 'Performance-XL', monthlyUsd: 750 }),
   'performance-2xl': Object.freeze({ label: 'Performance-2XL', monthlyUsd: 1500 }),
 });
