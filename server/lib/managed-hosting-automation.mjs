@@ -247,7 +247,7 @@ async function processQueueItem(item, { query, transaction, fetchImpl, createIns
       containerImage,
       env,
       files,
-      buildCommand: 'npm run build',
+      buildCommand: profile.buildCommand || 'npm run build',
       destinationDir: profile.outputDirectory || 'dist',
       rootDir: profile.rootDir && profile.rootDir !== '.' ? profile.rootDir : '/',
       managedEnvKeys: Array.isArray(resource?.metadata?.managedEnvKeys) ? resource.metadata.managedEnvKeys : [],
