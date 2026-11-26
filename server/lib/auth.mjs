@@ -1,12 +1,15 @@
 import crypto from 'node:crypto';
 
 function getJwtSecret() {
-  return (
-    process.env.JWT_SECRET ||
-    process.env.KESTREL_ENCRYPTION_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    'kestrel-builtin-jwt-secret-minimum-32-chars-long'
-  );
+  const secret = process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    if (typeof secret !== 'string' || secret.length < 32) {
+      throw new Error('JWT_SECRET must be configured with at least 32 characters in production');
+    }
+    return secret;
+  }
+  return secret || process.env.KESTREL_ENCRYPTION_KEY || process.env.SUPABASE_ANON_KEY ||
+    'kestrel-development-only-jwt-secret';
 }
 
 /**
