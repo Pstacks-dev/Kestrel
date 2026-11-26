@@ -60,7 +60,9 @@ jobs:
           KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY: ${{ secrets.KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY }}
           KESTREL_BACKUP_ENCRYPTION_KEY: ${{ secrets.KESTREL_BACKUP_ENCRYPTION_KEY }}
           KESTREL_BACKUP_BUCKET: ${{ vars.KESTREL_BACKUP_BUCKET }}
+          KESTREL_BACKUP_RETENTION_DAYS: ${{ vars.KESTREL_BACKUP_RETENTION_DAYS || '90' }}
           KESTREL_BACKUP_OBJECT_KEY: ${{ steps.backup.outputs.object_key }}
+          KESTREL_BACKUP_EXPECTED_SHA256: ${{ steps.backup.outputs.sha256 }}
           KESTREL_BACKUP_EXPECTED_SHA256: ${{ steps.backup.outputs.sha256 }}
         run: npm run backup:verify
 
@@ -72,7 +74,9 @@ jobs:
           KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY: ${{ secrets.KESTREL_BACKUP_STORAGE_SERVICE_ROLE_KEY }}
           KESTREL_BACKUP_ENCRYPTION_KEY: ${{ secrets.KESTREL_BACKUP_ENCRYPTION_KEY }}
           KESTREL_BACKUP_BUCKET: ${{ vars.KESTREL_BACKUP_BUCKET }}
+          KESTREL_BACKUP_RETENTION_DAYS: ${{ vars.KESTREL_BACKUP_RETENTION_DAYS || '90' }}
           KESTREL_BACKUP_OBJECT_KEY: ${{ steps.backup.outputs.object_key }}
+          KESTREL_BACKUP_EXPECTED_SHA256: ${{ steps.backup.outputs.sha256 }}
           KESTREL_RESTORE_DATABASE_URL: ${{ secrets.KESTREL_RESTORE_DATABASE_URL }}
           KESTREL_RESTORE_CONFIRM: RESTORE_TO_STAGING_DATABASE
         run: |
