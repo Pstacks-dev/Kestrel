@@ -58,7 +58,7 @@ function container({ image, port, env }) {
     return { name, value };
   });
   if (environment.length > 100) throw new Error('ECS Express container supports at most 100 environment variables');
-  return { image, containerPort, ...(environment.length ? { environment } : {}) };
+  return { image, containerPort, environment };
 }
 
 function revisionId(service) {
