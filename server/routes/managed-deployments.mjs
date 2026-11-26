@@ -390,7 +390,7 @@ export function registerManagedDeploymentRoutes(app, {
   async function loadAuthorizedDeployment(deploymentId, userId) {
     const result = await query(
       `select d.*, c.credentials_ciphertext, c.credentials_iv, c.credentials_auth_tag,
-              r.provider_project_id, r.provider_service_id, r.provider_environment_id
+              r.provider_project_id, r.provider_service_id, r.provider_environment_id, r.metadata
        from public.managed_hosting_deployments d
        join public.managed_hosting_resources r on r.id = d.resource_id
        join public.hosting_provider_connections c
