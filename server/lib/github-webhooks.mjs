@@ -28,3 +28,27 @@ export function isValidGitHubInstallationId(value) {
   // GitHub installation IDs are positive integer identifiers stored as bigint.
   return typeof value === 'string' && /^[1-9][0-9]{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n;
 }
+
+/**
+ * Claim a project webhook delivery inside the same transaction that creates
+ * its pipeline run. The unique delivery ID makes provider retries idempotent.
+ */
+export async function claimGitHubProjectWebhookDelivery(client, {
+  projectId,
+  deliveryId,
+  eventName,
+  branch,
+  commitSha,
+}) {
+  if (!projectId || !isValidGitHubDeliveryId(deliveryId) ||
+      !isSupportedGitHubWebhookEvent(eventName) ||
+      !isValidGitBranch(branch) || !isValidGitCommitSha(commitSha)) {
+    throw new TypeError('Invalid GitHub project webhook delivery');
+  }
+  const accepted = await client.query(
+    `insert into public.github_webhook_deliveries(project_id, delivery_id, event_name, branch, commit_sha)
+     values($1,$2,$3,$4,$5) on conflict (delivery_id) do nothing returning id`,
+    [projectId, deliveryId, eventName, branch, commitSha],
+  );
+  return accepted.rowCount > 0 ? accepted.rows[0] : null;
+}
