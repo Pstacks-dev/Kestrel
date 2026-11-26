@@ -537,11 +537,21 @@ async function execute(job) {
       if (logBuffer.length || logFlushActive) await new Promise((r) => setTimeout(r, 50));
     }
 
+    if (abortController.signal.aborted) {
+      await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
+      return;
+    }
     await api(`/api/workers/jobs/${job.id}/complete`, {
       leaseToken: job.leaseToken,
-      status: abortController.signal.aborted ? 'canceled' : undefined,
       ...result,
     });
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
+      console.log(`[worker] Released job ${job.id} after execution was aborted`);
+      return;
+    }
+    throw error;
   } finally {
     clearInterval(logTimer);
     clearInterval(leaseHeartbeat);
