@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush,
-  isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha,
+  isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId,
 } from '../server/lib/github-webhooks.mjs';
 
 test('accepts only push and pull request webhook event types', () => {
@@ -35,4 +35,12 @@ test('validates branch names and full commit SHAs', () => {
   assert.equal(isValidGitBranch('main//other'), false);
   assert.equal(isValidGitCommitSha('a'.repeat(40)), true);
   assert.equal(isValidGitCommitSha('not-a-sha'), false);
+});
+
+test('validates numeric GitHub App installation event IDs', () => {
+  assert.equal(isValidGitHubInstallationId('123456789'), true);
+  assert.equal(isValidGitHubInstallationId('0'), true);
+  for (const value of ['', '12x', '-12', '12.4', ' 12', '12 ', null, 12]) {
+    assert.equal(isValidGitHubInstallationId(value), false, String(value));
+  }
 });
