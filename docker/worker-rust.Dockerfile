@@ -5,6 +5,7 @@ COPY runtime/rust/src runtime/rust/src
 RUN cargo build --release --manifest-path runtime/rust/Cargo.toml
 
 FROM debian:bookworm-slim
+ENV NODE_ENV=production
 ENV KESTREL_WORKER_WORKDIR=/var/lib/kestrel/work \
     KESTREL_DOCKER_BIN=docker
 RUN apt-get update \
