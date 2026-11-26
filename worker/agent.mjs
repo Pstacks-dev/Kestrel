@@ -551,9 +551,18 @@ async function execute(job) {
 }
 
 async function executeManagedImageBuild(build) {
+  managedImageBuildActive = true;
+  managedImageBuildAbortController = new AbortController();
   const startedAt = Date.now();
-  await fs.mkdir(ROOT, { recursive: true });
-  const workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
+  let workspace;
+  try {
+    await fs.mkdir(ROOT, { recursive: true });
+    workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
+  } catch (error) {
+    managedImageBuildActive = false;
+    managedImageBuildAbortController = null;
+    throw error;
+  }
   const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
   let leaseLost = false;
   const heartbeat = setInterval(async () => {
@@ -574,15 +583,15 @@ async function executeManagedImageBuild(build) {
       GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic ' + Buffer.from('x-access-token:' + build.sourceToken).toString('base64'),
     } : {};
     const clone = await runGit(['clone', '--no-checkout', '--filter=blob:none', '--', build.repositoryUrl, workspace], workspace,
-      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+      (_stream, message) => console.log('[oci:clone] ' + redactSecrets(message, secretValues)), gitAuthEnv, managedImageBuildAbortController.signal);
     if (clone.exitCode !== 0) throw new Error('Could not clone source repository for OCI build; verify the connected GitHub App has repository access');
     const fetch = await runGit(['fetch', '--depth=1', 'origin', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv);
+      (_stream, message) => console.log('[oci:fetch] ' + redactSecrets(message, secretValues)), gitAuthEnv, managedImageBuildAbortController.signal);
     if (fetch.exitCode !== 0) throw new Error('Could not fetch the exact pipeline commit for OCI build');
     const checkout = await runGit(['checkout', '--detach', build.commitSha], workspace,
-      (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)));
+      (_stream, message) => console.log('[oci:checkout] ' + redactSecrets(message, secretValues)), {}, managedImageBuildAbortController.signal);
     if (checkout.exitCode !== 0) throw new Error('Could not check out the exact pipeline commit for OCI build');
-    const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {});
+    const tree = await runGit(['ls-tree', '-r', '--name-only', build.commitSha], workspace, () => {}, {}, managedImageBuildAbortController.signal);
     if (tree.exitCode !== 0) throw new Error('Could not inspect tracked files at the exact pipeline commit');
     const buildContext = await resolveOciBuildContext(workspace, tree.stdout.split(/\r?\n/).filter(Boolean), build.buildContext);
     console.log('[oci] Using build context ' + buildContext.relativeContext + ' and Dockerfile ' + buildContext.dockerfile);
@@ -595,7 +604,7 @@ async function executeManagedImageBuild(build) {
       registry: build.registry,
       registryUsername: build.registryUsername,
       registryPassword: build.registryPassword,
-    }, { dockerBin: DOCKER, timeoutMs: 30 * 60 * 1000 });
+    }, { dockerBin: DOCKER, timeoutMs: 30 * 60 * 1000, abortSignal: managedImageBuildAbortController.signal });
     if (leaseLost) throw new Error('Managed OCI build lease was lost before publishing could be confirmed');
     await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
       leaseToken: build.leaseToken, status: 'succeeded',
@@ -610,6 +619,8 @@ async function executeManagedImageBuild(build) {
     }).catch(() => {});
   } finally {
     clearInterval(heartbeat);
+    managedImageBuildActive = false;
+    managedImageBuildAbortController = null;
     await fs.rm(workspace, { recursive: true, force: true }).catch(() => {});
     console.log('[oci] Worker build duration: ' + (Date.now() - startedAt) + 'ms');
   }
