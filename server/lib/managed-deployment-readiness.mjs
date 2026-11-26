@@ -102,6 +102,7 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
   let healthy = 0;
   let unhealthy = 0;
   let pendingCount = 0;
+  let rollbackQueued = 0;
   for (const row of pending.rows) {
     const secrets = [];
     try {
@@ -142,18 +143,48 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
       } else {
         healthStatus = 'checking';
       }
-      await query(
-        `update public.managed_hosting_deployments
-         set status = case when $4 = 'unhealthy' then 'failed' else $2 end,
-             provider_url = coalesce($3, provider_url),
-             health_status = $4, health_checked_at = case when $5 then now() else health_checked_at end,
-             health_attempt_count = $6, health_claimed_at = null,
-             error_message = case when $4 in ('healthy','unhealthy') then $8 else error_message end,
-             updated_at = now()
-         where id = $1 and health_claimed_at = $9`,
-        [row.id, status, current.providerUrl || null, healthStatus, checkedAt, attemptCount,
-          healthStatus === 'unhealthy', healthError, row.health_claimed_at],
-      );
+      const updateParams = [row.id, status, current.providerUrl || null, healthStatus, checkedAt, attemptCount,
+        healthStatus === 'unhealthy', healthError, row.health_claimed_at];
+      if (status === 'live' && healthStatus === 'unhealthy') {
+        const updateResult = await query(
+          `with updated as (
+             update public.managed_hosting_deployments
+             set status = 'failed', provider_url = coalesce($3, provider_url),
+                 health_status = $4, health_checked_at = case when $5 then now() else health_checked_at end,
+                 health_attempt_count = $6, health_claimed_at = null,
+                 error_message = $8, updated_at = now()
+             where id = $1 and health_claimed_at = $9
+             returning id
+           ), queued as (
+             insert into public.managed_hosting_rollback_queue(deployment_id)
+             select updated.id
+             from updated
+             where not exists (
+               select 1 from public.managed_hosting_deployments prior_rollback
+               where prior_rollback.rollback_of = updated.id
+                 and prior_rollback.status in ('queued','deploying','live','rolling_back','unknown')
+             )
+             on conflict (deployment_id) do nothing
+             returning id
+           )
+           select (select count(*)::int from updated) as updated_count,
+                  (select count(*)::int from queued) as queued_count`,
+          updateParams,
+        );
+        rollbackQueued += Number(updateResult.rows?.[0]?.queued_count || 0);
+      } else {
+        await query(
+          `update public.managed_hosting_deployments
+           set status = case when $4 = 'unhealthy' then 'failed' else $2 end,
+               provider_url = coalesce($3, provider_url),
+               health_status = $4, health_checked_at = case when $5 then now() else health_checked_at end,
+               health_attempt_count = $6, health_claimed_at = null,
+               error_message = case when $4 in ('healthy','unhealthy') then $8 else error_message end,
+               updated_at = now()
+           where id = $1 and health_claimed_at = $9`,
+          updateParams,
+        );
+      }
       if (healthStatus === 'healthy') healthy += 1;
       else if (healthStatus === 'unhealthy') unhealthy += 1;
       else pendingCount += 1;
@@ -172,5 +203,7 @@ export async function reconcileManagedDeploymentReadiness({ query, fetchImpl = f
       pendingCount += 1;
     }
   }
-  return { checked: pending.rowCount, healthy, unhealthy, pending: pendingCount };
+  const result = { checked: pending.rowCount, healthy, unhealthy, pending: pendingCount };
+  if (rollbackQueued > 0) result.rollbackQueued = rollbackQueued;
+  return result;
 }
