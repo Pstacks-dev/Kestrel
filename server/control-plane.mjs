@@ -1501,6 +1501,24 @@ app.post('/api/workers/managed-image-builds/claim', workerAuth, async (req, res)
   }
 });
 
+app.post('/api/workers/managed-image-builds/:buildId/release', workerAuth, async (req, res) => {
+  const leaseToken = String(req.body?.leaseToken || '');
+  if (!leaseToken) return res.status(400).json({ error: 'Lease token is required' });
+  const released = await query(
+    `update public.managed_hosting_image_builds
+     set status = 'queued', worker_id = null, lease_token = null,
+         lease_expires_at = null, attempt_count = greatest(attempt_count - 1, 0),
+         started_at = null, finished_at = null, last_error = null,
+         available_at = now(), updated_at = now()
+     where id = $1 and worker_id = $2 and lease_token = $3
+       and status = 'running' and lease_expires_at > now()
+     returning id`,
+    [req.params.buildId, req.worker.id, leaseToken],
+  );
+  if (!released.rowCount) return res.status(409).json({ error: 'Managed image build lease is invalid or expired' });
+  res.json({ released: true });
+});
+
 app.post('/api/workers/managed-image-builds/:buildId/lease', workerAuth, async (req, res) => {
   const leaseToken = String(req.body?.leaseToken || '');
   const result = await query(
@@ -1593,6 +1611,49 @@ app.get('/api/workers/jobs/:jobId/status', workerAuth, async (req, res) => {
   );
   if (!result.rowCount) return res.status(404).json({ error: 'Job lease not found' });
   res.json({ status: result.rows[0].status });
+});
+
+// Release a just-claimed job when a worker begins draining before execution starts.
+app.post('/api/workers/jobs/:jobId/release', workerAuth, async (req, res) => {
+  const leaseToken = String(req.body?.leaseToken || '');
+  if (!leaseToken) return res.status(400).json({ error: 'Lease token is required' });
+  const released = await transaction(async (client) => {
+    const selected = await client.query(
+      `select id, deployment_release_id from public.jobs
+       where id = $1 and worker_id = $2 and lease_token = $3
+         and status = 'running' and lease_expires_at > now()
+       for update`,
+      [req.params.jobId, req.worker.id, leaseToken],
+    );
+    if (!selected.rowCount) return false;
+    await client.query(
+      `update public.jobs
+       set status = 'queued', worker_id = null, lease_token = null,
+           lease_expires_at = null, started_at = null, finished_at = null,
+           exit_code = null, duration_ms = 0, attempt = greatest(attempt - 1, 0),
+           available_at = now()
+       where id = $1`,
+      [req.params.jobId],
+    );
+    if (selected.rows[0].deployment_release_id) {
+      await client.query(
+        `update public.deployment_releases set status = 'queued', health_checked_at = null
+         where id = $1 and status = 'deploying'`,
+        [selected.rows[0].deployment_release_id],
+      );
+    }
+    await client.query(
+      `update public.workers
+       set state = case when state in ('draining','offline') then state
+         when exists (select 1 from public.jobs where worker_id = $1 and status = 'running') then 'busy'
+         else 'online' end
+       where id = $1`,
+      [req.worker.id],
+    );
+    return true;
+  });
+  if (!released) return res.status(409).json({ error: 'Job lease is invalid or expired' });
+  res.json({ released: true });
 });
 
 // Job Completion
