@@ -76,7 +76,7 @@ test('refuses to restore a production backup over the source database', () => {
   assert.throws(() => assertDistinctRestoreDatabase(source, source), /separate staging host/);
   assert.throws(() => assertDistinctRestoreDatabase(source, 'postgresql://postgres:secret@db.example.test:5432/staging?sslmode=require'), /separate staging host/);
   assert.throws(() => assertDistinctRestoreDatabase(
-    'postgresql://postgres.projectref:secret@db.projectref.supabase.co:5432/postgres',
+    'postgresql://postgres:secret@db.projectref.supabase.co:5432/postgres',
     'postgresql://postgres.projectref:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
   ), /separate staging host/);
   assert.doesNotThrow(() => assertDistinctRestoreDatabase(
