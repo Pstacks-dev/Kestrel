@@ -54,27 +54,39 @@ function validateInput(input) {
   return { ...input, registry, dockerfile, platforms, buildArgs };
 }
 
-function runProcess(command, args, { env, input, timeoutMs = 30 * 60 * 1000 } = {}) {
+function runProcess(command, args, { env, input, timeoutMs = 30 * 60 * 1000, abortSignal } = {}) {
   return new Promise((resolve, reject) => {
+    if (abortSignal?.aborted) {
+      reject(new OciBuildError('OCI builder command was aborted', 'oci_build_aborted', 503));
+      return;
+    }
     const child = spawn(command, args, { env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let settled = false;
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    const abortHandler = () => child.kill('SIGTERM');
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', abortHandler);
+    };
+    abortSignal?.addEventListener('abort', abortHandler, { once: true });
     const append = (current, chunk) => (current + chunk.toString()).slice(-128 * 1024);
     child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk); });
     child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk); });
     child.on('error', (error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       reject(new OciBuildError(error.message, 'oci_builder_unavailable', 503));
     });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      if (code !== 0) {
+      cleanup();
+      if (abortSignal?.aborted) {
+        reject(new OciBuildError('OCI builder command was aborted', 'oci_build_aborted', 503));
+      } else if (code !== 0) {
         reject(new OciBuildError(`OCI builder command failed (exit ${code}): ${stderr.slice(-4000)}`));
       } else resolve({ stdout, stderr });
     });
@@ -93,6 +105,7 @@ export async function buildAndPublishOciImage(rawInput, {
   dockerBin = process.env.KESTREL_DOCKER_BIN || 'docker',
   tempRoot = os.tmpdir(),
   timeoutMs = 30 * 60 * 1000,
+  abortSignal,
 } = {}) {
   const input = validateInput(rawInput);
   const context = path.resolve(input.contextDir);
@@ -108,7 +121,7 @@ export async function buildAndPublishOciImage(rawInput, {
   await mkdir(dockerConfig, { recursive: true });
   const metadataPath = path.join(dockerConfig, 'build-metadata.json');
   const env = { ...process.env, DOCKER_CONFIG: dockerConfig };
-  const runOptions = { env, timeoutMs };
+  const runOptions = { env, timeoutMs, abortSignal };
   try {
     await run(dockerBin, ['login', input.registry, '--username', input.registryUsername, '--password-stdin'], {
       ...runOptions, input: input.registryPassword,
@@ -144,7 +157,7 @@ export async function buildAndPublishOciImage(rawInput, {
     if (error instanceof OciBuildError) throw error;
     throw new OciBuildError(error.message || 'OCI image build failed');
   } finally {
-    await run(dockerBin, ['buildx', 'rm', builderName], runOptions).catch(() => {});
+    await run(dockerBin, ['buildx', 'rm', builderName], { env, timeoutMs }).catch(() => {});
     await rm(dockerConfig, { recursive: true, force: true });
   }
 }
