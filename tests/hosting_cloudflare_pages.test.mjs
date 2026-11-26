@@ -50,9 +50,17 @@ test('reuses a matching Cloudflare Pages project for subsequent commits', async 
     apiToken: 'cf-token', accountId: 'a'.repeat(32), projectName: 'kestrel-demo',
     branch: 'main', commitSha: 'c'.repeat(40), env: { API_KEY: 'secret' },
   }, { fetchImpl: async (url, options) => {
-    if (url.endsWith('/pages/projects/kestrel-demo')) {
-      assert.equal(options.method, 'PATCH');
-      assert.equal(JSON.parse(options.body).deployment_configs.production.env_vars.API_KEY.type, 'secret_text');
+    if (url.endsWith('/pages/projects/kestrel-demo') && options.method !== 'PATCH') {
+      return response({
+        name: 'kestrel-demo',
+        build_config: { root_dir: '/', build_command: 'npm run build', destination_dir: 'dist' },
+        deployment_configs: { production: { env_vars: {} }, preview: { env_vars: {} } },
+      });
+    }
+    if (url.endsWith('/pages/projects/kestrel-demo') && options.method === 'PATCH') {
+      const body = JSON.parse(options.body);
+      assert.equal(body.deployment_configs.production.env_vars.API_KEY.type, 'secret_text');
+      assert.equal(body.build_config.root_dir, '/');
       return response({ name: 'kestrel-demo' });
     }
     assert.equal(url.endsWith('/pages/projects/kestrel-demo/deployments'), true);
@@ -104,4 +112,70 @@ test('rejects invalid repositories, commit SHAs and build paths', async () => {
   await assert.rejects(deployCloudflarePagesProject({
     apiToken: 'x', accountId: 'a'.repeat(32), projectName: 'demo', commitSha: 'bad',
   }, { fetchImpl: async () => assert.fail('Cloudflare API must not be called') }), /verified Git commit SHA/);
+});
+
+
+test('updates Cloudflare Pages monorepo settings and removes deleted secrets', async () => {
+  const calls = [];
+  await deployCloudflarePagesProject({
+    apiToken: 'cf-token',
+    accountId: 'a'.repeat(32),
+    projectName: 'kestrel-demo',
+    branch: 'main',
+    commitSha: 'f'.repeat(40),
+    env: { DATABASE_URL: 'postgres://new-secret' },
+    rootDir: 'apps/web',
+    buildCommand: 'npm run build',
+    destinationDir: 'dist',
+  }, { fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    if (options.method === 'GET') return response({
+      name: 'kestrel-demo',
+      build_config: { root_dir: '/', build_command: 'old build', destination_dir: 'old-dist', build_caching: true },
+      deployment_configs: {
+        production: { env_vars: { OLD_SECRET: { type: 'secret_text' }, SHARED_SECRET: { type: 'secret_text' } } },
+        preview: { env_vars: { OLD_SECRET: { type: 'secret_text' }, SHARED_SECRET: { type: 'secret_text' } } },
+      },
+    });
+    if (options.method === 'PATCH') return response({ name: 'kestrel-demo' });
+    return response({ id: 'deploy-mono', latest_stage: { name: 'deploy', status: 'active' } });
+  } });
+  assert.equal(calls.length, 3);
+  const patch = JSON.parse(calls[1].options.body);
+  assert.equal(patch.build_config.root_dir, 'apps/web');
+  assert.equal(patch.build_config.destination_dir, 'dist');
+  assert.equal(patch.build_config.build_command, 'npm run build');
+  assert.equal(patch.build_config.build_caching, true);
+  assert.equal(patch.deployment_configs.production.env_vars.OLD_SECRET, null);
+  assert.equal(patch.deployment_configs.preview.env_vars.OLD_SECRET, null);
+  assert.equal(patch.deployment_configs.production.env_vars.SHARED_SECRET, null);
+  assert.equal(patch.deployment_configs.production.env_vars.DATABASE_URL.type, 'secret_text');
+});
+
+test('clears Cloudflare Pages secrets when the Kestrel project secret set becomes empty', async () => {
+  let patchBody;
+  await deployCloudflarePagesProject({
+    apiToken: 'cf-token',
+    accountId: 'a'.repeat(32),
+    projectName: 'kestrel-demo',
+    branch: 'main',
+    commitSha: '1'.repeat(40),
+    env: {},
+    rootDir: '/',
+  }, { fetchImpl: async (_url, options) => {
+    if (options.method === 'GET') return response({
+      name: 'kestrel-demo',
+      deployment_configs: {
+        production: { env_vars: { DATABASE_URL: { type: 'secret_text' } } },
+        preview: { env_vars: { DATABASE_URL: { type: 'secret_text' } } },
+      },
+    });
+    if (options.method === 'PATCH') {
+      patchBody = JSON.parse(options.body);
+      return response({ name: 'kestrel-demo' });
+    }
+    return response({ id: 'deploy-empty', latest_stage: { name: 'deploy', status: 'active' } });
+  } });
+  assert.equal(patchBody.deployment_configs.production.env_vars.DATABASE_URL, null);
+  assert.equal(patchBody.deployment_configs.preview.env_vars.DATABASE_URL, null);
 });
