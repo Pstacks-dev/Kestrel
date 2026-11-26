@@ -132,12 +132,14 @@ export function detectProjectProfile({ files = [], packageJson = null } = {}) {
   const runtime = primaryOrder.find((candidate) => detectedRuntimes.includes(candidate)) || 'unknown';
   const hasDocker = languages.has('docker');
   const isStatic = Boolean(framework && staticOutputs[framework] && !hasDocker);
-  const kind = isStatic ? 'static' : 'web';
   const needsBackgroundWorker = Boolean(scripts.worker || scripts['start:worker']);
-  const needsPersistentProcess = hasDocker || (!isStatic && (
-    Boolean(scripts.start) || serverFrameworks.has(framework) ||
-    ['python', 'go', 'rust', 'php', 'ruby', 'java', 'dotnet', 'swift', 'dart'].some((language) => languages.has(language))
-  ));
+  // A language manifest or source file alone does not prove that a repository
+  // is an HTTP service. Require an entry point, recognized app framework or
+  // container contract before marking a project deployable as a web service.
+  const hasWebEntryPoint = hasDocker || Boolean(framework) || Boolean(scripts.start) ||
+    has('manage.py', 'wsgi.py', 'asgi.py', 'procfile', 'artisan', 'config.ru');
+  const kind = isStatic ? 'static' : hasWebEntryPoint ? 'web' : 'unknown';
+  const needsPersistentProcess = hasDocker || (!isStatic && hasWebEntryPoint);
   const packageManagerName = String(pkg.packageManager || '').split('@')[0].toLowerCase();
   const packageManager = ['npm', 'pnpm', 'yarn', 'bun'].includes(packageManagerName)
     ? packageManagerName
