@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { signJwt } from '../server/lib/auth.mjs';
 process.env.KESTREL_ENCRYPTION_KEY ||= 'kestrel-test-encryption-key-32-characters-minimum';
+process.env.JWT_SECRET ||= 'kestrel-test-jwt-secret-32-characters-minimum';
 
 import {
   encryptSecret,
@@ -33,6 +35,25 @@ test('encryption refuses missing or weak dedicated keys instead of falling back 
   } finally {
     if (original === undefined) delete process.env.KESTREL_ENCRYPTION_KEY;
     else process.env.KESTREL_ENCRYPTION_KEY = original;
+  }
+});
+
+test('production JWT signing refuses missing or weak dedicated JWT secrets', () => {
+  const previousMode = process.env.NODE_ENV;
+  const previousSecret = process.env.JWT_SECRET;
+  try {
+    process.env.NODE_ENV = 'production';
+    delete process.env.JWT_SECRET;
+    assert.throws(() => signJwt({ sub: 'user-1' }), /JWT_SECRET/);
+    process.env.JWT_SECRET = 'short';
+    assert.throws(() => signJwt({ sub: 'user-1' }), /at least 32 characters/);
+    process.env.JWT_SECRET = 'kestrel-production-jwt-test-secret-32-characters';
+    assert.match(signJwt({ sub: 'user-1' }), /^eyJ/);
+  } finally {
+    if (previousMode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousMode;
+    if (previousSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
   }
 });
 
