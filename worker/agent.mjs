@@ -38,6 +38,7 @@ const headers = {
 
 let isDraining = false;
 let managedImageBuildActive = false;
+let managedImageBuildAbortController = null;
 const activeJobs = new Map(); // jobId -> { abortController, containerName?, child? }
 
 async function api(endpoint, body) {
@@ -528,6 +529,7 @@ async function execute(job) {
 
 async function executeManagedImageBuild(build) {
   managedImageBuildActive = true;
+  managedImageBuildAbortController = new AbortController();
   const startedAt = Date.now();
   let workspace;
   try {
@@ -535,6 +537,7 @@ async function executeManagedImageBuild(build) {
     workspace = await fs.mkdtemp(path.join(ROOT, 'managed-oci-'));
   } catch (error) {
     managedImageBuildActive = false;
+    managedImageBuildAbortController = null;
     throw error;
   }
   const secretValues = [build.registryUsername, build.registryPassword, build.sourceToken].filter(Boolean);
@@ -578,7 +581,7 @@ async function executeManagedImageBuild(build) {
       registry: build.registry,
       registryUsername: build.registryUsername,
       registryPassword: build.registryPassword,
-    }, { dockerBin: DOCKER, timeoutMs: 30 * 60 * 1000 });
+    }, { dockerBin: DOCKER, timeoutMs: 30 * 60 * 1000, abortSignal: managedImageBuildAbortController.signal });
     if (leaseLost) throw new Error('Managed OCI build lease was lost before publishing could be confirmed');
     await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/complete', {
       leaseToken: build.leaseToken, status: 'succeeded',
@@ -594,6 +597,7 @@ async function executeManagedImageBuild(build) {
   } finally {
     clearInterval(heartbeat);
     managedImageBuildActive = false;
+    managedImageBuildAbortController = null;
     await fs.rm(workspace, { recursive: true, force: true }).catch(() => {});
     console.log('[oci] Worker build duration: ' + (Date.now() - startedAt) + 'ms');
   }
@@ -650,6 +654,7 @@ const drainTimeoutMs = Math.max(5000, Math.min(600000, Number(process.env.KESTRE
 const drainController = createDrainController({
   activeJobs,
   isManagedImageBuildActive: () => managedImageBuildActive,
+  abortManagedImageBuild: () => managedImageBuildAbortController?.abort(),
   timeoutMs: drainTimeoutMs,
   stopContainer: (name) => spawn(DOCKER, ['stop', '--time', '2', name], { stdio: 'ignore' }),
   killChild: (child) => child.kill('SIGTERM'),
