@@ -9,9 +9,10 @@ import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
 import { resolveJobWorkingDirectory } from './working-directory.mjs';
+import { resolveWorkerToken } from './config.mjs';
 
 const API = process.env.KESTREL_API_URL || 'http://127.0.0.1:4000';
-const TOKEN = process.env.KESTREL_WORKER_TOKEN || 'dev-worker-token-change-me';
+const TOKEN = resolveWorkerToken();
 const WORKER_ID = process.env.KESTREL_WORKER_ID || `${os.hostname()}-${crypto.randomUUID().slice(0, 5)}`;
 const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KESTREL_WORKDIR || '.kestrel-worker');
 // When the agent runs in a Compose container with the host Docker socket mounted,
@@ -602,8 +603,8 @@ async function managedImageBuildLoop() {
 }
 
 // Startup verification
-if (!TOKEN || TOKEN.length < 16) {
-  throw new Error('Valid KESTREL_WORKER_TOKEN is required');
+if (!TOKEN || TOKEN.length < 32) {
+  throw new Error('KESTREL_WORKER_TOKEN must be at least 32 characters');
 }
 
 await ensureJobImage();
