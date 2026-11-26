@@ -120,9 +120,37 @@ export async function getRenderDeployment({ apiKey, serviceId, deploymentId }, {
   return { provider: 'render', deploymentId: deploy.id, providerStatus: deploy.status, status: status(deploy.status), providerUrl: service.service?.serviceDetails?.url || service.serviceDetails?.url || service.url || null, canRollback: ['live', 'build_failed', 'update_failed'].includes(deploy.status) };
 }
 
-export async function getRenderDeploymentLogs({ apiKey, serviceId, deploymentId }, { fetchImpl = fetch } = {}) {
-  // Render's log search API requires a bounded time window and query syntax; deployment-specific logs are not exposed by this endpoint.
-  return { build: [], runtime: [], unavailable: true, message: 'Deployment-scoped log retrieval is not available through the current Render API adapter.' };
+export async function getRenderDeploymentLogs({ apiKey, ownerId, serviceId, startTime, endTime, limit = 100 }, { fetchImpl = fetch, now = Date.now() } = {}) {
+  if (!apiKey || !ownerId || !serviceId) throw new Error('Render API key, workspace owner ID and service ID are required');
+  const boundedLimit = Math.max(1, Math.min(Number(limit) || 100, 1000));
+  const from = startTime || new Date(now - 60 * 60 * 1000).toISOString();
+  const to = endTime || new Date(now).toISOString();
+  if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(from) >= Date.parse(to)) {
+    throw new Error('Render log time range must contain valid start and end timestamps');
+  }
+  const fetchType = async (types) => {
+    const params = new URLSearchParams({
+      ownerId, startTime: from, endTime: to, direction: 'backward', limit: String(boundedLimit),
+    });
+    params.append('resource', serviceId);
+    for (const type of types) params.append('type', type);
+    const result = await request(apiKey, `/logs?${params.toString()}`, { fetchImpl });
+    return (result.logs || []).map((entry) => ({
+      id: entry.id || null,
+      timestamp: entry.timestamp || null,
+      message: String(entry.message || ''),
+      level: entry.labels?.find((label) => label.name === 'level')?.value || null,
+      type: entry.labels?.find((label) => label.name === 'type')?.value || null,
+    }));
+  };
+  const [build, runtime] = await Promise.all([
+    fetchType(['build']),
+    fetchType(['app', 'request']),
+  ]);
+  return {
+    build, runtime, unavailable: false,
+    message: 'Render logs are service-scoped for the selected time range; the Render Logs API does not expose a deployment-ID filter.',
+  };
 }
 
 export async function rollbackRenderDeployment({ apiKey, serviceId, deploymentId }, { fetchImpl = fetch } = {}) {
