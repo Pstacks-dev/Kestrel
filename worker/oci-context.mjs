@@ -19,8 +19,8 @@ export async function resolveOciBuildContext(workspace, trackedPaths, configured
   if (!dockerfiles.length) throw new Error('No tracked Dockerfile was found at the pipeline commit');
   let selected;
   if (configuredContext !== null && configuredContext !== undefined && configuredContext !== '') {
-    if (typeof configuredContext !== 'string' || configuredContext.includes('\\\\') ||
-        configuredContext.includes('\\0') || configuredContext.startsWith('/') ||
+    if (typeof configuredContext !== 'string' || configuredContext.includes('\\') ||
+        configuredContext.includes('\0') || configuredContext.startsWith('/') ||
         /^[A-Za-z]:/.test(configuredContext)) {
       throw new Error('Configured Docker build context must be a safe repository-relative path');
     }
