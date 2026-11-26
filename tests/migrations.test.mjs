@@ -151,3 +151,22 @@ test('Supabase scheduler invokes existing GET cron handlers and replaces prior j
   assert.match(sql, /\/api\/cron\/recovery/);
   assert.match(sql, /vault\.decrypted_secrets/i);
 });
+
+
+test('GitHub App installation webhook delivery ledger is durable and service-role only', async () => {
+  const sql = await readFile(new URL('../db/migrations/035_github_app_webhook_delivery_deduplication.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create table if not exists public\.github_app_webhook_deliveries/i);
+  assert.match(sql, /delivery_id text primary key/i);
+  assert.match(sql, /installation_id bigint not null check \(installation_id > 0\)/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on public\.github_app_webhook_deliveries from anon, authenticated/i);
+  assert.match(sql, /grant all on public\.github_app_webhook_deliveries to service_role/i);
+});
+
+test('GitHub installation webhook validates delivery ID and applies state changes transactionally', async () => {
+  const routes = await readFile(new URL('../server/control-plane.mjs', import.meta.url), 'utf8');
+  assert.match(routes, /const deliveryId = String\(req\.headers\['x-github-delivery'\]/);
+  assert.match(routes, /if \(!isValidGitHubDeliveryId\(deliveryId\)\)/);
+  assert.match(routes, /await transaction\(async \(client\) =>/);
+  assert.match(routes, /processGitHubInstallationDelivery\(client, \{ deliveryId, action, installationId \}\)/);
+});
