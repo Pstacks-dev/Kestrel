@@ -17,7 +17,7 @@ test('development fallback is isolated to non-production mode', () => {
   assert.throws(() => resolveWorkerToken({ nodeEnv: 'production', token: undefined }), /provisioned KESTREL_WORKER_TOKEN/);
 });
 
-test('rejects whitespace-padded and weak worker tokens', () => {
+test('trims surrounding whitespace and rejects weak worker tokens', () => {
   assert.throws(() => resolveWorkerToken({ nodeEnv: 'production', token: ' '.repeat(40) }), /at least 32 characters/);
   assert.equal(resolveWorkerToken({ nodeEnv: 'production', token: '  ' + 'x'.repeat(32) + '  ' }), 'x'.repeat(32));
 });
