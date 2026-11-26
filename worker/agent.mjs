@@ -302,9 +302,13 @@ async function ensureJobImage() {
   });
 }
 
-async function runGit(args, cwd, onLine, extraEnv = {}) {
+async function runGit(args, cwd, onLine, extraEnv = {}, abortSignal) {
   return new Promise((resolve) => {
     const start = Date.now();
+    if (abortSignal?.aborted) {
+      resolve({ exitCode: 130, durationMs: Date.now() - start, stdout: '' });
+      return;
+    }
     const child = spawn('git', args, {
       cwd,
       shell: false,
@@ -313,6 +317,12 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
     });
     let stdout = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), Number(process.env.KESTREL_GIT_TIMEOUT_MS || 300000));
+    const abortHandler = () => child.kill('SIGTERM');
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', abortHandler);
+    };
+    abortSignal?.addEventListener('abort', abortHandler, { once: true });
 
     for (const [stream, pipe] of [
       ['stdout', child.stdout],
@@ -328,11 +338,11 @@ async function runGit(args, cwd, onLine, extraEnv = {}) {
     }
 
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, durationMs: Date.now() - start, stdout });
+      cleanup();
+      resolve({ exitCode: abortSignal?.aborted ? 130 : code ?? 1, durationMs: Date.now() - start, stdout });
     });
     child.on('error', (e) => {
-      clearTimeout(timer);
+      cleanup();
       onLine('stderr', e.message);
       resolve({ exitCode: 1, durationMs: Date.now() - start, stdout });
     });
