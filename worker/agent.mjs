@@ -423,14 +423,20 @@ async function makeWorkspaceWritable(directory) {
 }
 
 async function execute(job) {
+  const abortController = new AbortController();
+  activeJobs.set(job.id, { abortController });
   const workspace = path.join(ROOT, String(job.runId), String(job.id));
-  await fs.mkdir(workspace, { recursive: true });
+  try {
+    await fs.mkdir(workspace, { recursive: true });
+  } catch (error) {
+    activeJobs.delete(job.id);
+    throw error;
+  }
 
   const logBuffer = [];
   let logFlushActive = false;
   let logBytes = 0;
   let logTruncated = false;
-  const abortController = new AbortController();
 
   const secretValues = Object.values(job.secrets || {}).filter(Boolean);
   if (job.sourceToken) secretValues.push(job.sourceToken);
@@ -478,7 +484,7 @@ async function execute(job) {
 
   try {
     if (job.sourceType === 'upload' && EXECUTOR !== 'mock') {
-      await downloadUploadedSource(job, workspace);
+      await downloadUploadedSource(job, workspace, abortController.signal);
     } else {
       const repository = /^https:\/\//.test(job.repositoryUrl || '') ? job.repositoryUrl : REPO_URL || '';
       if (repository && EXECUTOR !== 'mock') {
@@ -486,7 +492,8 @@ async function execute(job) {
         ['clone', '--depth', '1', '--branch', String(job.branch || 'main'), '--', repository, '.'],
         workspace,
         (s, m) => console.log(`[clone:${s}] ${redactSecrets(m, secretValues)}`),
-        gitAuthEnv
+        gitAuthEnv,
+        abortController.signal
       );
         if (clone.exitCode !== 0) throw new Error('Repository clone failed; check repository URL and accessibility');
       }
@@ -494,7 +501,7 @@ async function execute(job) {
 
     if (job.commitSha && EXECUTOR !== 'mock' && job.sourceType !== 'upload') {
       if (!/^[a-f0-9]{7,64}$/i.test(job.commitSha)) throw new Error('Invalid commit SHA format');
-      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv);
+      const checkout = await runGit(['checkout', '--detach', job.commitSha], workspace, (s, m) => console.log(`[checkout:${s}] ${redactSecrets(m, secretValues)}`), gitAuthEnv, abortController.signal);
       if (checkout.exitCode !== 0) throw new Error('Requested commit could not be checked out');
     }
 
@@ -517,12 +524,12 @@ async function execute(job) {
       },
       job,
       secretValues,
-      abortController.signal
+      abortController
     );
 
     // Collect any generated artifacts
     if (result.exitCode === 0) {
-      await collectArtifacts(job, workspace, workingDirectory);
+      await collectArtifacts(job, workspace, workingDirectory, abortController.signal);
     }
 
     while (logBuffer.length || logFlushActive) {
@@ -539,6 +546,7 @@ async function execute(job) {
     clearInterval(logTimer);
     clearInterval(leaseHeartbeat);
     await fs.rm(workspace, { recursive: true, force: true }).catch((e) => console.error('workspace cleanup:', e.message));
+    activeJobs.delete(job.id);
   }
 }
 
