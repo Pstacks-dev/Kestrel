@@ -36,9 +36,32 @@ test('creates a Railway project, GitHub service and deployment for the exact com
   assert.equal(calls[3].query.includes('variableCollectionUpsert'), true);
   assert.equal(calls[3].variables.input.variables.DATABASE_URL, 'postgres://secret');
   assert.equal(calls[3].variables.input.skipDeploys, true);
+  assert.equal(calls[3].variables.input.replace, true);
   assert.equal(calls[4].variables.commitSha, 'a'.repeat(40));
   assert.equal(result.deploymentId, 'deployment-1');
   assert.equal(result.status, 'queued');
+});
+
+test('replaces Railway variables with an empty set to remove deleted secrets', async () => {
+  const calls = [];
+  const result = await deployRailwayService({
+    token: 'railway-token', projectId: 'project-1', serviceId: 'service-1',
+    environmentId: 'env-1', commitSha: 'e'.repeat(40), env: {},
+  }, {
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push(body);
+      return response(body.query.includes('variableCollectionUpsert')
+        ? { variableCollectionUpsert: true }
+        : { serviceInstanceDeployV2: 'deployment-empty-env' });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].query.includes('variableCollectionUpsert'), true);
+  assert.deepEqual(calls[0].variables.input.variables, {});
+  assert.equal(calls[0].variables.input.replace, true);
+  assert.equal(calls[0].variables.input.skipDeploys, true);
+  assert.equal(result.deploymentId, 'deployment-empty-env');
 });
 
 test('rejects invalid repository URLs, branch names and commit SHAs before network access', async () => {
@@ -109,6 +132,7 @@ test('deploys new commits to an existing Railway service without creating duplic
   assert.equal(requests.length, 2);
   assert.equal(requests[0].query.includes('variableCollectionUpsert'), true);
   assert.equal(requests[0].variables.input.variables.API_KEY, 'secret');
+  assert.equal(requests[0].variables.input.replace, true);
   assert.equal(requests[1].query.includes('serviceInstanceDeployV2'), true);
   assert.equal(requests[1].variables.serviceId, 'service-1');
   assert.equal(requests[1].variables.environmentId, 'env-1');
