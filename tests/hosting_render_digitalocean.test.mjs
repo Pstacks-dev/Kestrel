@@ -76,6 +76,40 @@ test('rejects unsafe Render static publish paths before creating a service', asy
   }, { fetchImpl: noNetwork }), /Invalid Render static publish directory/);
 });
 
+test('retrieves bounded Render build and runtime logs for the connected workspace service', async () => {
+  const calls = [];
+  const logs = await getRenderDeploymentLogs({
+    apiKey: 'render-token', ownerId: 'owner-123', serviceId: 'srv-logs',
+  }, {
+    now: Date.parse('2026-11-26T12:00:00.000Z'),
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      const parsed = new URL(url);
+      assert.equal(parsed.searchParams.get('ownerId'), 'owner-123');
+      assert.equal(parsed.searchParams.get('resource'), 'srv-logs');
+      assert.equal(parsed.searchParams.get('startTime'), '2026-11-26T11:00:00.000Z');
+      assert.equal(parsed.searchParams.get('endTime'), '2026-11-26T12:00:00.000Z');
+      assert.equal(parsed.searchParams.get('limit'), '100');
+      const types = parsed.searchParams.getAll('type');
+      return response({ logs: types.includes('build')
+        ? [{ id: 'build-1', timestamp: '2026-11-26T11:30:00.000Z', message: 'Build completed', labels: [{ name: 'level', value: 'info' }, { name: 'type', value: 'build' }] }]
+        : [{ id: 'runtime-1', timestamp: '2026-11-26T11:31:00.000Z', message: 'Server ready', labels: [{ name: 'level', value: 'info' }, { name: 'type', value: 'app' }] }] });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(logs.build[0].message, 'Build completed');
+  assert.equal(logs.runtime[0].message, 'Server ready');
+  assert.equal(logs.unavailable, false);
+  assert.match(logs.message, /service-scoped/);
+});
+
+test('rejects invalid Render log time ranges before making requests', async () => {
+  await assert.rejects(getRenderDeploymentLogs({
+    apiKey: 'render-token', ownerId: 'owner-123', serviceId: 'srv-logs',
+    startTime: '2026-11-27T12:00:00.000Z', endTime: '2026-11-26T12:00:00.000Z',
+  }, { fetchImpl: async () => assert.fail('Render API must not be called') }), /valid start and end timestamps/);
+});
+
 test('deploys, polls and rolls back a Render service', async () => {
   const deployed = await deployRenderService({ apiKey: 'x', serviceId: 'srv-1', commitSha: 'b'.repeat(40) }, {
     fetchImpl: async () => response({ id: 'dep-2', status: 'queued' }, 201),
