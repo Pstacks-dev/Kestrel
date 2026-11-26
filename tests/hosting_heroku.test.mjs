@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createHerokuDeployment, deployHerokuApp, getHerokuDeployment,
-  getHerokuDeploymentLogs, rollbackHerokuDeployment,
+  getHerokuDeploymentLogs, rollbackHerokuDeployment, configureHerokuFormation,
 } from '../server/lib/hosting-heroku.mjs';
 
 function response(payload, status = 200) {
@@ -44,12 +44,47 @@ test('reports live only when the successful build has an active web formation', 
   const result = await getHerokuDeployment({ apiKey: 'x', appId: 'app-1', deploymentId: 'build-1' }, {
     fetchImpl: async (url) => {
       if (url.endsWith('/builds/build-1')) return response({ id: 'build-1', status: 'succeeded', release: { id: 'release-1' } });
-      if (url.endsWith('/formation')) return response([{ type: 'web', quantity: 1 }]);
+      if (url.endsWith('/formation')) return response([{ type: 'web', quantity: 1, dyno_size: { name: 'basic' } }]);
       return response({ id: 'app-1', status: 'active', web_url: 'https://demo.herokuapp.com' });
     },
   });
   assert.equal(result.status, 'live');
   assert.equal(result.providerUrl, 'https://demo.herokuapp.com');
+});
+
+test('applies an approved Heroku dyno size and quantity through the formation API', async () => {
+  const calls = [];
+  const result = await configureHerokuFormation({
+    apiKey: 'heroku-token', appId: 'app-1', dynoSize: 'standard-1x', dynoQuantity: 2,
+  }, {
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      if (options.method === 'PATCH') return response([{ type: 'web', quantity: 2, dyno_size: { name: 'standard-1x' } }]);
+      return response([{ type: 'web', quantity: 1, dyno_size: { name: 'basic' } }]);
+    },
+  });
+  assert.equal(result.configured, true);
+  assert.equal(result.changed, true);
+  assert.equal(calls[0].url, 'https://api.heroku.com/apps/app-1/formation');
+  assert.equal(calls[1].url, 'https://api.heroku.com/apps/app-1/formation/web');
+  assert.equal(calls[1].options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    dyno_size: { name: 'standard-1x' }, quantity: 2,
+  });
+});
+
+test('does not claim a Heroku deployment is live when the approved formation is not applied', async () => {
+  const result = await getHerokuDeployment({
+    apiKey: 'x', appId: 'app-1', deploymentId: 'build-1',
+    dynoSize: 'standard-1x', dynoQuantity: 2,
+  }, {
+    fetchImpl: async (url) => {
+      if (url.endsWith('/builds/build-1')) return response({ id: 'build-1', status: 'succeeded', release: { id: 'release-1' } });
+      if (url.endsWith('/formation')) return response([{ type: 'web', quantity: 1, dyno_size: { name: 'basic' } }]);
+      return response({ id: 'app-1', status: 'active', web_url: 'https://demo.herokuapp.com' });
+    },
+  });
+  assert.equal(result.status, 'deploying');
 });
 
 test('retrieves Heroku build output and rolls back to a previous release', async () => {
