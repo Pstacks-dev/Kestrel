@@ -320,3 +320,107 @@ test('sends an empty Render environment set to remove deleted Kestrel secrets', 
   assert.equal(calls.length, 2);
   assert.equal(result.deploymentId, 'dep-empty-env');
 });
+
+
+test('updates Render root directory and build commands before redeploying an existing service', async () => {
+  const calls = [];
+  const result = await deployRenderService({
+    apiKey: 'render-token',
+    serviceId: 'srv-existing',
+    commitSha: 'c'.repeat(40),
+    env: {},
+    profile: { runtime: 'node', isStatic: false, rootDir: 'apps/api', startCommand: 'node server.js' },
+    rootDir: 'apps/api',
+    buildCommand: 'npm run build:api',
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/services/srv-existing')) return response({ id: 'srv-existing' });
+      if (url.endsWith('/env-vars')) return response([]);
+      return response({ id: 'dep-existing', status: 'created' }, 201);
+    },
+  });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    rootDir: 'apps/api',
+    serviceDetails: { envSpecificDetails: { buildCommand: 'npm run build:api', startCommand: 'node server.js' } },
+  });
+  assert.equal(calls[1].url.endsWith('/env-vars'), true);
+  assert.equal(result.deploymentId, 'dep-existing');
+});
+
+test('clears the Render root directory when an existing service returns to repository root', async () => {
+  let patchBody;
+  await deployRenderService({
+    apiKey: 'render-token',
+    serviceId: 'srv-root',
+    commitSha: 'd'.repeat(40),
+    rootDir: '/',
+    profile: {},
+    env: {},
+  }, {
+    fetchImpl: async (url, options) => {
+      if (url.endsWith('/services/srv-root')) {
+        patchBody = JSON.parse(options.body);
+        return response({ id: 'srv-root' });
+      }
+      if (url.endsWith('/env-vars')) return response([]);
+      return response({ id: 'dep-root', status: 'created' }, 201);
+    },
+  });
+  assert.deepEqual(patchBody, { rootDir: null });
+});
+
+test('updates DigitalOcean static-site source directory and build output on redeploy', async () => {
+  const calls = [];
+  const commitSha = 'e'.repeat(40);
+  await deployDigitalOceanApp({
+    accessToken: 'do-token',
+    appId: 'app-existing',
+    commitSha,
+    env: {},
+    rootDir: 'apps/web',
+    profile: { isStatic: true, rootDir: 'apps/web', outputDirectory: 'public' },
+    buildCommand: 'npm run build:web',
+    destinationDir: 'public',
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (options.method === 'PUT') {
+        const spec = JSON.parse(options.body).spec;
+        assert.equal(spec.static_sites[0].source_dir, 'apps/web');
+        assert.equal(spec.static_sites[0].build_command, 'npm run build:web');
+        assert.equal(spec.static_sites[0].output_dir, 'public');
+        return response({ app: { in_progress_deployment: { id: 'dep-web', phase: 'PENDING', services: [{ source_commit_hash: commitSha }] } } });
+      }
+      return response({ app: { spec: { name: 'demo', region: 'nyc', static_sites: [{ name: 'web', source_dir: '/', envs: [] }] } } });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].options.method, 'PUT');
+});
+
+test('updates DigitalOcean Dockerfile paths with the monorepo source directory on redeploy', async () => {
+  const commitSha = 'f'.repeat(40);
+  let updatedSpec;
+  await deployDigitalOceanApp({
+    accessToken: 'do-token',
+    appId: 'app-docker',
+    commitSha,
+    env: {},
+    rootDir: 'services/api',
+    profile: { needsContainer: true, rootDir: 'services/api', dockerfilePath: 'Dockerfile' },
+  }, {
+    fetchImpl: async (_url, options) => {
+      if (options.method === 'PUT') {
+        updatedSpec = JSON.parse(options.body).spec;
+        return response({ app: { in_progress_deployment: { id: 'dep-docker', phase: 'PENDING', services: [{ source_commit_hash: commitSha }] } } });
+      }
+      return response({ app: { spec: { name: 'demo', region: 'nyc', services: [{ name: 'api', source_dir: '/', dockerfile_path: 'Dockerfile', envs: [] }] } } });
+    },
+  });
+  assert.equal(updatedSpec.services[0].source_dir, 'services/api');
+  assert.equal(updatedSpec.services[0].dockerfile_path, 'services/api/Dockerfile');
+});
+
