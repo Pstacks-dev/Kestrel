@@ -75,7 +75,11 @@ fn validate_worker_connection(node_env: &str, api: &str, worker_id: &str, explic
         anyhow::ensure!(parsed.scheme() == "https" && parsed.username().is_empty() && parsed.password().is_none()
             && parsed.query().is_none() && parsed.fragment().is_none(),
             "production workers require a credential-free HTTPS KESTREL_API_URL");
-        anyhow::ensure!(explicit_worker_id && worker_id.starts_with("wrk_") && worker_id.len() <= 120,
+        let valid_worker_id = worker_id.strip_prefix("wrk_").is_some_and(|suffix| {
+            (8..=100).contains(&suffix.len())
+                && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        });
+        anyhow::ensure!(explicit_worker_id && valid_worker_id,
             "production workers require the provisioned KESTREL_WORKER_ID from the admin provisioning flow");
     }
     Ok(())
@@ -757,6 +761,8 @@ mod tests {
         assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_12345678", false).is_err());
         assert!(validate_worker_connection("production", "https://user:secret@kestrel.example", "wrk_12345678", true).is_err());
         assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_12345678", true).is_ok());
+        assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_bad/id", true).is_err());
+        assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_short", true).is_err());
     }
 
     #[test]
