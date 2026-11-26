@@ -324,7 +324,7 @@ export async function verifyEncryptedDatabaseBackup({
 }
 
 async function runPgRestoreList(pgRestoreBin, dumpPath) {
-  return runUtility(pgRestoreBin, ['--list', dumpPath], {});
+  return runUtility(pgRestoreBin, ['--list', dumpPath], process.env);
 }
 
 async function runPgRestore(pgRestoreBin, dumpPath, connection) {
