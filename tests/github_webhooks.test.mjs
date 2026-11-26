@@ -1,7 +1,16 @@
+test('only workspace owners, admins and developers can view GitHub webhook signing credentials', () => {
+  for (const role of ['owner', 'admin', 'developer']) {
+    assert.equal(isGitHubWebhookSecretReadableRole(role), true, role);
+  }
+  for (const role of ['viewer', 'member', 'billing', null, undefined, '']) {
+    assert.equal(isGitHubWebhookSecretReadableRole(role), false, String(role));
+  }
+});
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush,
+  isGitHubWebhookSecretReadableRole, isSupportedGitHubWebhookEvent, shouldQueuePullRequestAction, shouldIgnoreGitHubPush,
   isValidGitHubDeliveryId, isValidGitBranch, isValidGitCommitSha, isValidGitHubInstallationId, claimGitHubProjectWebhookDelivery,
 } from '../server/lib/github-webhooks.mjs';
 
