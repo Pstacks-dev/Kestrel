@@ -23,3 +23,7 @@ export function isValidGitBranch(value) {
 export function isValidGitCommitSha(value) {
   return typeof value === 'string' && /^[a-fA-F0-9]{40}$/.test(value);
 }
+
+export function isValidGitHubInstallationId(value) {
+  return typeof value === 'string' && /^\\d+$/.test(value);
+}
