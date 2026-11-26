@@ -25,5 +25,5 @@ export function isValidGitCommitSha(value) {
 }
 
 export function isValidGitHubInstallationId(value) {
-  return typeof value === 'string' && /^\\d+$/.test(value);
+  return typeof value === 'string' && /^\d+$/.test(value);
 }
