@@ -44,6 +44,18 @@ test('loads only project-owned artifacts and verifies downloaded bytes', async (
   assert.deepEqual(files[0].content, bytes);
 }));
 
+test('strips a configured nested framework output directory for Netlify uploads', async () => withStorageEnv(async () => {
+  const nestedArtifact = { ...artifact, name: 'apps/site/build/index.html' };
+  const files = await loadStaticArtifactFiles(
+    async () => ({ rowCount: 1, rows: [nestedArtifact] }),
+    'project-1', [artifact.id],
+    async () => new Response(bytes, { status: 200 }),
+    'apps/site/build',
+    'a'.repeat(40),
+  );
+  assert.equal(files[0].path, 'index.html');
+}));
+
 test('rejects artifact IDs that are not UUIDs before querying', async () => {
   let queried = false;
   await assert.rejects(
