@@ -14,7 +14,7 @@ function response(payload, status = 200) {
 test('creates a Render web service with autodeploy disabled and deploys the verified commit', async () => {
   const calls = [];
   const result = await createRenderDeployment({
-    apiKey: 'render-token', ownerId: 'owner-123', repositoryUrl: 'https://github.com/acme/demo.git',
+    apiKey: 'render-token', ownerId: 'owner-123', repositoryUrl: 'https://github.com/acme/private-demo.git',
     branch: 'main', commitSha: 'a'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node', isStatic: false }, env: { DATABASE_URL: 'postgres://secret' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
@@ -62,7 +62,7 @@ test('deploys, polls and rolls back a Render service', async () => {
 test('creates a DigitalOcean App Platform app and starts its first deployment', async () => {
   const calls = [];
   const result = await createDigitalOceanDeployment({
-    accessToken: 'do-token', region: 'nyc', repositoryUrl: 'https://github.com/acme/demo',
+    accessToken: 'do-token', region: 'nyc', repositoryUrl: 'https://github.com/acme/private-demo',
     branch: 'main', commitSha: 'c'.repeat(40), projectName: 'Demo App', profile: { runtime: 'node' }, env: { NODE_ENV: 'production' },
   }, { fetchImpl: async (url, options) => {
     calls.push({ url, options });
@@ -112,7 +112,7 @@ test('rejects malformed GitHub URLs and invalid commit SHAs before calling provi
   const noNetwork = async () => assert.fail('Provider API must not be called');
   await assert.rejects(createRenderDeployment({
     apiKey: 'x', ownerId: 'owner-123', repositoryUrl: 'https://gitlab.com/acme/demo', commitSha: 'a'.repeat(40),
-  }, { fetchImpl: noNetwork }), /public GitHub repository/);
+  }, { fetchImpl: noNetwork }), /GitHub repository/);
   await assert.rejects(createDigitalOceanDeployment({
     accessToken: 'x', repositoryUrl: 'https://github.com/acme/demo', commitSha: 'bad',
   }, { fetchImpl: noNetwork }), /verified Git commit SHA/);
