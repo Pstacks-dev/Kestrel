@@ -179,6 +179,8 @@ test('claims image-waiting jobs and reclaims expired running leases safely', asy
   assert.match(claimSql, /'queued','failed','waiting_for_image'/i);
   assert.match(claimSql, /q\.status = 'running'.*q\.locked_at is null or q\.locked_at < now\(\) - interval '10 minutes'/is);
   assert.match(claimSql, /running\.id <> q\.id/i);
+  assert.match(claimSql, /running\.status = 'waiting_for_image'/i);
+  assert.match(claimSql, /running\.status = 'running'.*running\.locked_at >= now\(\) - interval '10 minutes'/is);
   assert.match(claimSql, /case when q\.status = 'waiting_for_image' then 0 else 1 end/i);
   assert.match(claimSql, /Worker lease expired after retry budget was exhausted[\s\S]*q\.attempt_count >= 6/i);
 });
