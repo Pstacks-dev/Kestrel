@@ -196,3 +196,21 @@ test('managed hosting queue migration supports image waits and expired lease rec
   assert.match(automation, /running\.id <> q\.id/i);
   assert.match(automation, /locked_at = \$6::timestamptz/i);
 });
+
+test('pipeline job working directories are stored, validated and executed within the repository', async () => {
+  const sql = await readFile(new URL('../db/migrations/038_pipeline_job_working_directories.sql', import.meta.url), 'utf8');
+  const pipeline = await readFile(new URL('../server/lib/pipeline.mjs', import.meta.url), 'utf8');
+  const control = await readFile(new URL('../server/control-plane.mjs', import.meta.url), 'utf8');
+  const worker = await readFile(new URL('../worker/agent.mjs', import.meta.url), 'utf8');
+  const resolver = await readFile(new URL('../worker/working-directory.mjs', import.meta.url), 'utf8');
+  assert.match(sql, /add column if not exists working_directory text not null default '\.'/i);
+  assert.match(sql, /jobs_working_directory_safe/);
+  assert.match(pipeline, /safeWorkingDirectory/);
+  assert.match(control, /working_directory/);
+  assert.match(control, /workingDirectory: project\.oci_build_context \|\| '\.'/);
+  assert.match(worker, /resolveJobWorkingDirectory\(workspace, job\.workingDirectory/);
+  assert.match(worker, /collectArtifacts\(job, workspace, workingDirectory\)/);
+  assert.match(resolver, /realpath/);
+  assert.match(resolver, /escapes the repository workspace/);
+});
+
