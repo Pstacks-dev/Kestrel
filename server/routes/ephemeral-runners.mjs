@@ -25,6 +25,16 @@ export function registerEphemeralRunnerRoutes(app, { query, transaction }) {
 
     try {
       const provisioned = await transaction(async (client) => {
+        const runId = String(req.body?.workflowRunId || '');
+        const workflowRunId = /^\\d{1,24}$/.test(runId) ? runId : null;
+        await client.query(
+          `insert into public.execution_backend_heartbeats(backend, last_seen_at, last_result, workflow_run_id, updated_at)
+           values ('github-actions', now(), 'polling', $1, now())
+           on conflict (backend) do update set
+             last_seen_at = now(), last_result = 'polling',
+             workflow_run_id = excluded.workflow_run_id, updated_at = now()`,
+          [workflowRunId],
+        );
         // Expire old ephemeral workers and revoke their credentials before creating another.
         await client.query(
           `update public.workers
@@ -55,7 +65,10 @@ export function registerEphemeralRunnerRoutes(app, { query, transaction }) {
            limit 1
            for update of j skip locked`,
         );
-        if (!queued.rowCount) return null;
+        if (!queued.rowCount) {
+          await client.query("update public.execution_backend_heartbeats set last_result = 'queue_empty', updated_at = now() where backend = 'github-actions'");
+          return null;
+        }
 
         const workerId = 'wrk_' + crypto.randomBytes(18).toString('base64url');
         const token = crypto.randomBytes(32).toString('base64url');
@@ -71,6 +84,7 @@ export function registerEphemeralRunnerRoutes(app, { query, transaction }) {
           'insert into public.worker_credentials(worker_id, token_hash) values($1,$2)',
           [workerId, sha(token)],
         );
+        await client.query("update public.execution_backend_heartbeats set last_result = 'worker_provisioned', updated_at = now() where backend = 'github-actions'");
         return { workerId, token };
       });
 
