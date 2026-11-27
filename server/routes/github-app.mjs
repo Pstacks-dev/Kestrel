@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { createGitHubInstallationToken, getGitHubInstallation, getGitHubAppConfig } from '../lib/github-app.mjs';
+import { isValidGitHubInstallationId } from '../lib/github-webhooks.mjs';
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
@@ -54,7 +55,7 @@ export function registerGitHubAppRoutes(app, { userAuth, query, transaction }) {
     const state = verifyInstallationState(String(req.query.state || ''));
     const installationId = String(req.query.installation_id || '');
     if (!state || state.purpose !== 'github_app_install' || !state.organizationId || !state.userId ||
-        !/^\d+$/.test(installationId)) {
+        !isValidGitHubInstallationId(installationId)) {
       return res.status(400).json({ error: 'GitHub installation callback is invalid or expired. Start again from Kestrel.' });
     }
     try {

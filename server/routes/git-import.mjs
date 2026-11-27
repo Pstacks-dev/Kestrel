@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
 import { fetchGitHubRepositoryWithInstallation } from './github-app.mjs';
+import { isValidGitHubInstallationId } from '../lib/github-webhooks.mjs';
+
+export { isValidGitHubInstallationId };
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
@@ -14,10 +17,6 @@ export function parseGitHubRepository(input) {
         parts[0] === '.' || parts[1] === '.' || parts[0] === '..' || parts[1] === '..') return null;
     return { owner: parts[0], repo: parts[1] };
   } catch { return null; }
-}
-
-export function isValidGitHubInstallationId(value) {
-  return typeof value === 'string' && /^\d+$/.test(value);
 }
 
 export function registerGitImportRoutes(app, { userAuth, query, transaction, fetchImpl = fetch }) {
@@ -48,7 +47,11 @@ export function registerGitImportRoutes(app, { userAuth, query, transaction, fet
         );
         if (!linked.rowCount) return res.status(403).json({ error: 'Connect this GitHub App installation to the workspace before importing from it' });
         try {
-          remote = await fetchGitHubRepositoryWithInstallation(installationId, `${repository.owner}/${repository.repo}`, fetchImpl);
+          remote = await fetchGitHubRepositoryWithInstallation(
+            installationId,
+            `${repository.owner}/${repository.repo}`,
+            { fetchImpl },
+          );
         } catch (error) {
           if (error.status === 404) return res.status(404).json({ error: 'Repository is not accessible to the selected GitHub App installation' });
           return res.status(502).json({ error: 'GitHub could not verify this repository. Try again shortly.' });
