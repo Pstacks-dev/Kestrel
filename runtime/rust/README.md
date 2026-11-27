@@ -9,7 +9,7 @@ This crate is the native Rust worker process for Kestrel's execution plane. It s
 - `KESTREL_WORKER_TOKEN`: one-time worker credential (keep secret).
 - `KESTREL_JOB_IMAGE`: immutable, digest-pinned job image in production.
 - Optional: `KESTREL_WORKER_WORKDIR`, `KESTREL_WORKER_HOST_WORKDIR`, `KESTREL_CONCURRENCY`, `KESTREL_REGION`, `KESTREL_JOB_NETWORK`, `KESTREL_DOCKER_BIN`.
-- `KESTREL_JOB_NETWORK` defaults to `none` in production and `bridge` in development. Production bridge mode requires the Docker egress firewall and `KESTREL_EGRESS_HARDENED=true`; the Rust installer sets this only after the firewall service starts successfully.
+- `KESTREL_JOB_NETWORK` defaults to `none` in production and `bridge` in development. Every production Rust worker requires the Docker egress firewall and `KESTREL_EGRESS_HARDENED=true`, because managed deployment containers use Docker bridge networking even when build jobs use `none`. The Rust installer sets this only after the firewall service starts successfully.
 
 ## Build and run
 
@@ -68,7 +68,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now kestrel-worker-egress.service
 ```
 
-The firewall places rules in Docker's `DOCKER-USER` chain to block container access to host-local addresses, private networks, loopback, link-local and cloud metadata ranges while allowing established replies and public internet egress. The production runtime refuses bridge networking unless `KESTREL_EGRESS_HARDENED=true` is set in the root-owned worker environment file. Verify the rules after every Docker/OS upgrade and persist them through the systemd unit. This is an additional network boundary, not a substitute for dedicated worker hosts and stronger sandboxing such as gVisor, Kata Containers or Firecracker.
+The firewall places rules in Docker's `DOCKER-USER` chain to block container access to host-local addresses, private networks, loopback, link-local and cloud metadata ranges while allowing established replies and public internet egress. The production runtime refuses to start unless `KESTREL_EGRESS_HARDENED=true` is set in the root-owned worker environment file, regardless of the build-job network setting. Verify the rules after every Docker/OS upgrade and persist them through the systemd unit. This is an additional network boundary, not a substitute for dedicated worker hosts and stronger sandboxing such as gVisor, Kata Containers or Firecracker.
 
 
 ## Database migrations for the current execution/deployment features
