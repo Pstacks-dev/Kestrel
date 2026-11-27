@@ -139,7 +139,7 @@ test('workflow keeps one-time worker tokens out of global GitHub Actions environ
   const provision = await readFile(new URL('../scripts/provision-ephemeral-runner.mjs', import.meta.url), 'utf8');
   const workflow = await readFile(new URL('../.github/workflows/ephemeral-runners.yml', import.meta.url), 'utf8');
   assert.match(provision, /mode: 0o600/);
-  assert.match(provision, /kestrel-worker\\.env/);
+  assert.ok(provision.includes('kestrel-worker.env'));
   assert.doesNotMatch(provision, /GITHUB_ENV/);
   assert.match(workflow, /source "\$RUNNER_TEMP\\/kestrel-worker\\.env"/);
   assert.match(workflow, /rm -f "\$RUNNER_TEMP\\/kestrel-worker\\.env"/);
