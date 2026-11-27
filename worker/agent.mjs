@@ -23,6 +23,7 @@ const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KEST
 const HOST_ROOT = path.resolve(process.env.KESTREL_WORKER_HOST_WORKDIR || ROOT);
 const REPO_URL = process.env.KESTREL_REPOSITORY_URL;
 const CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.KESTREL_CONCURRENCY || 1)));
+const MAX_JOBS = Math.max(0, Math.min(100, Number(process.env.KESTREL_WORKER_MAX_JOBS || 0)));
 const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = resolveWorkerJobNetwork();
@@ -714,8 +715,9 @@ process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
 // Managed OCI builds share the registered worker pool and have a separate durable lease queue.
-const managedImageBuildTask = EXECUTOR === 'docker' ? managedImageBuildLoop() : Promise.resolve();
+const managedImageBuildTask = EXECUTOR === 'docker' && process.env.KESTREL_WORKER_DISABLE_MANAGED_IMAGE_BUILDS !== 'true' ? managedImageBuildLoop() : Promise.resolve();
 async function pollLoop(slot) {
+  let completedJobs = 0;
   while (!isDraining) {
     try {
       const { job } = await api('/api/workers/claim', { workerId: WORKER_ID });
@@ -738,6 +740,12 @@ async function pollLoop(slot) {
           exitCode: 1,
           durationMs: 0,
         }).catch(() => {});
+      }
+      completedJobs += 1;
+      if (MAX_JOBS > 0 && completedJobs >= MAX_JOBS) {
+        isDraining = true;
+        await api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
+        break;
       }
     } catch (e) {
       console.error(`[Slot ${slot}] Poll loop error:`, e.message);
