@@ -50,3 +50,17 @@ export function resolveWorkerConnection({
 
   return { api: parsed.toString().replace(/\/+$/, ''), workerId: resolvedWorkerId };
 }
+
+
+// Docker-backed production workers can execute untrusted builds and BuildKit
+// containers. Require an explicit host-firewall attestation before starting.
+export function resolveWorkerEgress({
+  nodeEnv = process.env.NODE_ENV,
+  executor = process.env.KESTREL_WORKER_EXECUTOR || 'docker',
+  egressHardened = process.env.KESTREL_EGRESS_HARDENED,
+} = {}) {
+  if (nodeEnv === 'production' && executor === 'docker' && egressHardened !== 'true') {
+    throw new Error('Production Docker workers require the host Docker egress firewall and KESTREL_EGRESS_HARDENED=true');
+  }
+  return true;
+}
