@@ -29,18 +29,20 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install Kestrel runtime dependencies
-        run: npm ci
-
-      - name: Harden Docker job egress
-        run: sudo bash deploy/harden-worker-egress.sh
-
       - name: Provision one-time worker credentials
         id: provision
         env:
           KESTREL_API_URL: ${{ vars.KESTREL_API_URL }}
           KESTREL_EPHEMERAL_RUNNER_SECRET: ${{ secrets.KESTREL_EPHEMERAL_RUNNER_SECRET }}
         run: node scripts/provision-ephemeral-runner.mjs
+
+      - name: Install Kestrel runtime dependencies
+        if: steps.provision.outputs.has_work == 'true'
+        run: npm ci
+
+      - name: Harden Docker job egress
+        if: steps.provision.outputs.has_work == 'true'
+        run: sudo bash deploy/harden-worker-egress.sh
 
       - name: Execute one queued build
         if: steps.provision.outputs.has_work == 'true'
