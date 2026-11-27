@@ -115,3 +115,25 @@ test('Heroku is manually available only and never part of automatic provider sel
   assert.ok(!AUTOMATIC_MANAGED_PROVIDERS.includes('heroku'));
   assert.deepEqual(AUTOMATIC_MANAGED_PROVIDERS, ACTIVE_MANAGED_PROVIDERS.filter((provider) => provider !== 'heroku'));
 });
+
+
+test('signs AWS ECS verification requests with temporary session credentials', async () => {
+  const sessionToken = 'session-token-with-special/+characters';
+  let request;
+  const result = await verifyHostingProvider('aws-ecs-express', {
+    accessKeyId: 'ASIATESTKEY',
+    secretAccessKey: 'temporary-secret',
+    sessionToken,
+    region: 'eu-west-1',
+  }, {
+    now: Date.parse('2026-11-24T00:00:00.000Z'),
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return new Response('{}', { status: 200 });
+    },
+  });
+  assert.equal(request.url, 'https://ecs.eu-west-1.amazonaws.com/');
+  assert.equal(request.options.headers['x-amz-security-token'], sessionToken);
+  assert.match(request.options.headers.Authorization, /SignedHeaders=content-type;host;x-amz-date;x-amz-target;x-amz-security-token/);
+  assert.equal(result.verified, true);
+});
