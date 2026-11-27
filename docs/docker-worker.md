@@ -6,7 +6,8 @@ does not need to connect inbound to your PC.
 
 ## Requirements
 
-- Docker Desktop with the Linux container engine running, or a Linux Docker host.
+- Development: Docker Desktop with the Linux container engine running.
+- Production: a dedicated Linux Docker host with Docker's `DOCKER-USER` chain and `iptables`. Docker Desktop is not a supported production host for the supplied firewall installer unless equivalent egress controls are configured inside its Linux VM.
 - A deployed Kestrel control-plane API reachable over HTTPS.
 - The worker database migrations and worker protocol endpoints deployed.
 - An administrator account with permission to provision workers.
