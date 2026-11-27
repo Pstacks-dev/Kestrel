@@ -17,6 +17,7 @@ test('production Rust worker installer fails closed without egress protections',
   assert.ok(workerStart > firewallInstall, 'worker must start only after the firewall is active');
   assert.match(installer, /Requires=docker\.service kestrel-worker-egress\.service/);
   assert.match(installer, /NODE_ENV=production/);
+  assert.match(installer, /KESTREL_EGRESS_HARDENED=true/);
   assert.match(installer, /KESTREL_JOB_IMAGE=docker\.io\/library\/node:22-bookworm-slim@sha256:[a-f0-9]{64}/);
   assert.match(installer, /Pstacks-dev\/Kestrel\.git/);
   assert.match(installer, /\^wrk_\[A-Za-z0-9_-\]\{8,100\}\$/);
@@ -27,6 +28,7 @@ test('manual Docker worker example pins the job image and documents network prer
   const envExample = await readFile(envExampleUrl, 'utf8');
   const workerUnit = await readFile(workerUnitUrl, 'utf8');
   assert.match(envExample, /KESTREL_JOB_IMAGE=docker\.io\/library\/node:22-bookworm-slim@sha256:[a-f0-9]{64}/);
+  assert.match(envExample, /KESTREL_JOB_NETWORK=none/);
   assert.match(envExample, /install and enable/);
   assert.match(workerUnit, /ExecStart=\/usr\/local\/sbin\/kestrel-harden-worker-egress/);
 });
