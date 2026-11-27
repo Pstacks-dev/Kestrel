@@ -16,7 +16,7 @@ This crate is the native Rust worker process for Kestrel's execution plane. It s
 ```sh
 cargo test --manifest-path runtime/rust/Cargo.toml
 cargo build --release --manifest-path runtime/rust/Cargo.toml
-KESTREL_API_URL=https://your-kestrel-api.example KESTREL_WORKER_ID=wrk_x KESTREL_WORKER_TOKEN=... runtime/rust/target/release/kestrel-runtime
+NODE_ENV=development KESTREL_API_URL=http://127.0.0.1:4000 KESTREL_WORKER_ID=dev-worker KESTREL_WORKER_TOKEN=... runtime/rust/target/release/kestrel-runtime
 ```
 
 The runtime supports Git-backed and uploaded-source projects, worker registration/heartbeat/claim, bounded concurrent execution, streamed logs, cancellation polling, timeouts, artifact uploads and Docker-based job isolation. It does not expose the Docker socket to job containers.
