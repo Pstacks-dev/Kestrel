@@ -43,7 +43,7 @@ dependencies. Before starting a worker with bridge networking, install the
 host egress firewall on the dedicated Linux Docker host:
 
 ```sh
-sudo chmod 0755 deploy/harden-worker-egress.sh
+sudo install -m 0755 deploy/harden-worker-egress.sh /usr/local/sbin/kestrel-harden-worker-egress
 sudo install -m 0644 deploy/kestrel-worker-egress.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now kestrel-worker-egress.service
