@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 const MEMBER_ROLES = ['owner', 'admin', 'developer'];
-const IMAGE_RE = /^(?=.{1,255}$)(?:[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\\/)?[a-zA-Z0-9._-]+(?:\\/[a-zA-Z0-9._-]+)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-fA-F0-9]{64})?$/;
+const IMAGE_RE = /^(?=.{1,255}$)(?:[a-zA-Z0-9.-]+(?::[0-9]{1,5})?\/)?[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-fA-F0-9]{64})?$/;
 
 function fail(res, status, error) {
   return res.status(status).json({ error });
@@ -17,18 +17,18 @@ export function validPublicUrl(value) {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
-    return url.toString().replace(/\\/$/, '');
+    return url.toString().replace(/\/$/, '');
   } catch { return null; }
 }
 
 export function validHealthPath(value) {
   return typeof value === 'string' && value.startsWith('/') &&
     value.length <= 256 && !value.includes('..') &&
-    /^\\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$/.test(value);
+    /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$/.test(value);
 }
 
 export function validImage(value) {
-  return typeof value === 'string' && IMAGE_RE.test(value) && !value.includes('..') && !value.includes('\\\\');
+  return typeof value === 'string' && IMAGE_RE.test(value) && !value.includes('..') && !value.includes('\\');
 }
 
 export function workerCanAcceptDeployments(state, lastSeenAt, now = Date.now()) {
