@@ -133,3 +133,17 @@ test('retirement disables an ephemeral worker and revokes its credential', async
     else process.env.KESTREL_EPHEMERAL_RUNNER_SECRET = previous;
   }
 });
+
+test('ephemeral runner entrypoints and control-plane modules pass Node syntax checks', async () => {
+  const { spawnSync } = await import('node:child_process');
+  for (const file of [
+    'scripts/provision-ephemeral-runner.mjs',
+    'scripts/retire-ephemeral-runner.mjs',
+    'server/routes/ephemeral-runners.mjs',
+    'server/control-plane.mjs',
+    'worker/agent.mjs',
+  ]) {
+    const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+    assert.equal(checked.status, 0, checked.stderr || file + ' syntax check failed');
+  }
+});
