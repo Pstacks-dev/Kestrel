@@ -85,6 +85,15 @@ fn validate_worker_connection(node_env: &str, api: &str, worker_id: &str, explic
     Ok(())
 }
 
+fn resolve_job_network(node_env: &str, requested: &str, egress_hardened: &str) -> Result<String> {
+    anyhow::ensure!(matches!(requested, "bridge" | "none"), "KESTREL_JOB_NETWORK must be either bridge or none");
+    if node_env == "production" && requested == "bridge" {
+        anyhow::ensure!(egress_hardened == "true",
+            "production bridge networking requires the Docker egress firewall and KESTREL_EGRESS_HARDENED=true");
+    }
+    Ok(requested.to_string())
+}
+
 fn config() -> Result<Config> {
     let get = |key: &str, default: &str| env::var(key).unwrap_or_else(|_| default.into());
     let explicit_worker_id = env::var("KESTREL_WORKER_ID").ok();
@@ -93,6 +102,12 @@ fn config() -> Result<Config> {
     let token = get("KESTREL_WORKER_TOKEN", "");
     let image = get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim");
     let node_env = get("NODE_ENV", "development");
+    let default_network = if node_env == "production" { "none" } else { "bridge" };
+    let network = resolve_job_network(
+        &node_env,
+        &get("KESTREL_JOB_NETWORK", default_network),
+        &get("KESTREL_EGRESS_HARDENED", ""),
+    )?;
     anyhow::ensure!(!api.is_empty() && token.len() >= 32, "KESTREL_API_URL and a provisioned KESTREL_WORKER_TOKEN of at least 32 characters are required");
     validate_worker_connection(&node_env, &api, &worker_id, explicit_worker_id.is_some())?;
     if node_env == "production" {
@@ -106,7 +121,7 @@ fn config() -> Result<Config> {
         workdir: PathBuf::from(get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work")),
         host_workdir: PathBuf::from(get("KESTREL_WORKER_HOST_WORKDIR", &get("KESTREL_WORKER_WORKDIR", "/var/lib/kestrel/work"))),
         image,
-        network: if get("KESTREL_JOB_NETWORK", "bridge") == "none" { "none".into() } else { "bridge".into() }, docker: get("KESTREL_DOCKER_BIN", "docker"),
+        network, docker: get("KESTREL_DOCKER_BIN", "docker"),
     })
 }
 
@@ -753,7 +768,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{docker_host_workspace_path, safe_relative_path, validate_worker_connection};
+    use super::{docker_host_workspace_path, resolve_job_network, safe_relative_path, validate_worker_connection};
 
     #[test]
     fn production_workers_require_https_and_provisioned_identity() {
@@ -763,6 +778,19 @@ mod tests {
         assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_12345678", true).is_ok());
         assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_bad/id", true).is_err());
         assert!(validate_worker_connection("production", "https://kestrel.example", "wrk_short", true).is_err());
+    }
+
+    #[test]
+    fn production_job_network_requires_egress_hardening() {
+        assert_eq!(resolve_job_network("production", "none", "").unwrap(), "none");
+        assert!(resolve_job_network("production", "bridge", "").is_err());
+        assert_eq!(resolve_job_network("production", "bridge", "true").unwrap(), "bridge");
+        assert!(resolve_job_network("production", "host", "true").is_err());
+    }
+
+    #[test]
+    fn development_job_network_keeps_bridge_as_the_default() {
+        assert_eq!(resolve_job_network("development", "bridge", "").unwrap(), "bridge");
     }
 
     #[test]
