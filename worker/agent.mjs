@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { redactSecrets } from '../server/lib/security.mjs';
+import { buildDockerEnvironment } from './docker-environment.mjs';
 import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
@@ -232,20 +233,16 @@ async function runCommand(command, cwd, onLine, job, secretValues, abortControll
       'KESTREL=true',
     ];
 
-    // Inject decrypted secrets into container environment safely
-    if (job.secrets && typeof job.secrets === 'object') {
-      for (const [key, val] of Object.entries(job.secrets)) {
-        if (/^[A-Za-z0-9_]+$/.test(key)) {
-          args.push('--env', `${key}=${String(val)}`);
-        }
-      }
-    }
+    // Pass secret values through the Docker CLI child environment. Only variable
+    // names are included in argv, preventing values from appearing in process listings.
+    const dockerEnvironment = buildDockerEnvironment(job.secrets, process.env);
+    args.push(...dockerEnvironment.args);
 
     // The official Node image entrypoint expects an executable, not a shell command string.
     // Explicitly invoke a login shell so compound pipeline commands (&&, pipes, env expansion) run correctly.
     args.push(JOB_IMAGE, 'sh', '-lc', command);
 
-    const child = spawn(DOCKER, args, { cwd, shell: false, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(DOCKER, args, { cwd, shell: false, env: dockerEnvironment.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let timedOut = false;
 
     const timeout = setTimeout(() => {
