@@ -70,7 +70,7 @@ cargo build --release --manifest-path runtime/rust/Cargo.toml
 
 # Install and activate the Docker egress firewall before any customer job can run.
 # The worker service requires this unit, so a failed firewall setup is fail-closed.
-chmod 0755 /opt/kestrel/deploy/harden-worker-egress.sh
+install -m 0755 /opt/kestrel/deploy/harden-worker-egress.sh /usr/local/sbin/kestrel-harden-worker-egress
 install -m 0644 /opt/kestrel/deploy/kestrel-worker-egress.service /etc/systemd/system/kestrel-worker-egress.service
 systemctl daemon-reload
 systemctl enable --now kestrel-worker-egress.service
