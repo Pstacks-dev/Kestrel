@@ -159,10 +159,9 @@ test('ephemeral runner entrypoints and control-plane modules pass Node syntax ch
   }
 });
 
-
 test('ephemeral workflow pins third-party actions to verified immutable commits', async () => {
   const workflow = await readFile(new URL('../.github/workflows/ephemeral-runners.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /actions\\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683/);
-  assert.match(workflow, /actions\\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/);
-  assert.doesNotMatch(workflow, /uses: actions\\/(?:checkout|setup-node)@v[0-9]/);
+  assert.ok(workflow.includes('uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683'));
+  assert.ok(workflow.includes('uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'));
+  assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node)@v[0-9]/);
 });
