@@ -18,7 +18,7 @@ test('production Rust worker installer fails closed without egress protections',
   assert.match(installer, /KESTREL_JOB_IMAGE=docker\.io\/library\/node:22-bookworm-slim@sha256:[a-f0-9]{64}/);
   assert.match(installer, /Pstacks-dev\/Kestrel\.git/);
   assert.match(installer, /\^wrk_\[A-Za-z0-9_-\]\{8,100\}\$/);
-  assert.match(installer, /WORKER_TOKEN\} -lt 32/);
+  assert.match(installer, /WORKER_TOKEN" =~ \^\[a-f0-9\]\{64\}\$/);
 });
 
 test('manual Docker worker example pins the job image and documents network prerequisites', async () => {
