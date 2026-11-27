@@ -25,6 +25,26 @@ test('API Endpoints and Security Middleware', async (t) => {
     }
   });
 
+  await t.test('GET /api/ready exposes sanitized readiness without leaking credentials', async () => {
+    const res = await fetch(`${baseUrl}/api/ready`);
+    assert.ok(res.status === 200 || res.status === 503);
+    const data = await res.json();
+    assert.equal(data.service, 'kestrel-control-plane');
+    assert.equal(typeof data.ok, 'boolean');
+    assert.ok(['connected', 'unavailable'].includes(data.database));
+    assert.ok(['ready', 'incomplete', 'unknown'].includes(data.schema));
+    assert.ok(['configured', 'missing_configuration'].includes(data.artifactStorage));
+    assert.equal(typeof data.workers.minimum, 'number');
+    assert.doesNotMatch(JSON.stringify(data), /password|service_role|postgresql:\/\//i);
+    if (res.status === 200) {
+      assert.equal(data.ok, true);
+      assert.equal(data.schema, 'ready');
+      assert.equal(data.workers.status, 'ready');
+    } else {
+      assert.equal(data.ok, false);
+    }
+  });
+
   await t.test('POST /api/workspaces rejects unauthenticated requests', async () => {
     const res = await fetch(`${baseUrl}/api/workspaces`, {
       method: 'POST',
