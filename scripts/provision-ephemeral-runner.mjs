@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const api = String(process.env.KESTREL_API_URL || '').replace(/\\/+$/, '');
+const api = String(process.env.KESTREL_API_URL || '').replace(/\/+$/, '');
 const secret = process.env.KESTREL_EPHEMERAL_RUNNER_SECRET || '';
-if (!api || !/^https:\\/\\//i.test(api) || !secret || secret.length < 32) {
+if (!api || !/^https:\/\//i.test(api) || !secret || secret.length < 32) {
   throw new Error('KESTREL_API_URL (HTTPS) and KESTREL_EPHEMERAL_RUNNER_SECRET (32+ chars) are required');
 }
 
@@ -14,13 +14,13 @@ const response = await fetch(api + '/api/runners/provision', {
   signal: AbortSignal.timeout(15000),
 });
 if (response.status === 204) {
-  await fs.appendFile(process.env.GITHUB_OUTPUT, 'has_work=false\\n');
+  await fs.appendFile(process.env.GITHUB_OUTPUT, 'has_work=false\n');
   console.log('No queued build requires an ephemeral runner.');
   process.exit(0);
 }
 if (!response.ok) throw new Error('Kestrel runner provisioning failed: HTTP ' + response.status);
 const result = await response.json();
-if (!result.ok || !/^wrk_[A-Za-z0-9_-]{20,40}$/.test(result.workerId) || typeof result.token !== 'string' || result.token.length < 32 || /[\\r\\n]/.test(result.token)) {
+if (!result.ok || !/^wrk_[A-Za-z0-9_-]{20,40}$/.test(result.workerId) || typeof result.token !== 'string' || result.token.length < 32 || /[\r\n]/.test(result.token)) {
   throw new Error('Kestrel returned an invalid ephemeral worker credential');
 }
 
@@ -32,7 +32,7 @@ await fs.writeFile(credentialFile, [
   'KESTREL_WORKER_ID=' + result.workerId,
   'KESTREL_WORKER_TOKEN=' + result.token,
   '',
-].join('\\n'), { mode: 0o600, flag: 'wx' });
+].join('\n'), { mode: 0o600, flag: 'wx' });
 await fs.chmod(credentialFile, 0o600);
-await fs.appendFile(process.env.GITHUB_OUTPUT, 'has_work=true\\n');
+await fs.appendFile(process.env.GITHUB_OUTPUT, 'has_work=true\n');
 console.log('Provisioned one short-lived worker; credentials are isolated from later Actions steps.');
