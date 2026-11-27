@@ -38,9 +38,10 @@ Set `KESTREL_API_URL` to the public HTTPS base URL of the Kestrel API
 (no trailing slash), then enter the worker ID and one-time token. Keep the
 host-side worker workspace path consistent with the Compose bind mount.
 
-The example uses the `bridge` job network so normal build commands can download
-dependencies. Before starting a worker with bridge networking, install the
-host egress firewall on the dedicated Linux Docker host:
+The example defaults to `KESTREL_JOB_NETWORK=none` so job containers cannot
+reach the network until you deliberately enable it. If builds need to download
+dependencies, change the setting to `bridge` only after installing the host
+egress firewall on the dedicated Linux Docker host:
 
 ```sh
 sudo install -m 0755 deploy/harden-worker-egress.sh /usr/local/sbin/kestrel-harden-worker-egress
@@ -53,8 +54,7 @@ The firewall blocks job containers from reaching host-local services, private
 network ranges and cloud metadata endpoints while allowing public dependency
 downloads. Do not start a bridge-network worker if the firewall service fails.
 Jobs still run in separate containers with resource limits and reduced Linux
-capabilities. Use `KESTREL_JOB_NETWORK=none` for builds that must not access
-the network.
+capabilities.
 
 The Compose file bind-mounts the same host directory into the worker agent and
 passes its host-side path through `KESTREL_WORKER_HOST_WORKDIR`. This is
