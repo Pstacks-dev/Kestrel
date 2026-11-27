@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveWorkerToken } from '../worker/config.mjs';
+import { resolveWorkerToken, resolveWorkerEgress } from '../worker/config.mjs';
 
 test('production workers require a provisioned per-worker token', () => {
   assert.throws(() => resolveWorkerToken({ nodeEnv: 'production', token: undefined }), /provisioned KESTREL_WORKER_TOKEN/);
@@ -41,4 +41,23 @@ test('development worker connection retains the local default and generated iden
   const connection = resolveWorkerConnection({ nodeEnv: 'development', apiUrl: undefined, workerId: undefined, hostname: 'dev-worker' });
   assert.equal(connection.api, 'http://127.0.0.1:4000');
   assert.match(connection.workerId, /^dev-worker-[a-f0-9]{5}$/);
+});
+
+
+test('production Docker workers require explicit host egress hardening', () => {
+  assert.throws(() => resolveWorkerEgress({
+    nodeEnv: 'production', executor: 'docker', egressHardened: undefined,
+  }), /host Docker egress firewall/);
+  assert.equal(resolveWorkerEgress({
+    nodeEnv: 'production', executor: 'docker', egressHardened: 'true',
+  }), true);
+});
+
+test('development and non-Docker workers do not require production Docker egress attestation', () => {
+  assert.equal(resolveWorkerEgress({
+    nodeEnv: 'development', executor: 'docker', egressHardened: undefined,
+  }), true);
+  assert.equal(resolveWorkerEgress({
+    nodeEnv: 'production', executor: 'local', egressHardened: undefined,
+  }), true);
 });
