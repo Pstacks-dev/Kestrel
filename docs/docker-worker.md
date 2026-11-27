@@ -6,7 +6,8 @@ does not need to connect inbound to your PC.
 
 ## Requirements
 
-- Docker Desktop with the Linux container engine running, or a Linux Docker host.
+- Development: Docker Desktop with the Linux container engine running.
+- Production: a dedicated Linux Docker host with Docker's `DOCKER-USER` chain and `iptables`. Docker Desktop is not a supported production host for the supplied firewall installer unless equivalent egress controls are configured inside its Linux VM.
 - A deployed Kestrel control-plane API reachable over HTTPS.
 - The worker database migrations and worker protocol endpoints deployed.
 - An administrator account with permission to provision workers.
@@ -38,10 +39,25 @@ Set `KESTREL_API_URL` to the public HTTPS base URL of the Kestrel API
 (no trailing slash), then enter the worker ID and one-time token. Keep the
 host-side worker workspace path consistent with the Compose bind mount.
 
-The example uses the `bridge` job network so normal build commands can download
-dependencies. Jobs still run in separate containers with resource limits and
-reduced Linux capabilities. Use `KESTREL_JOB_NETWORK=none` for builds that
-must not access the network.
+The example defaults to `KESTREL_JOB_NETWORK=none` so job containers cannot
+reach the network until you deliberately enable it. Production Docker workers
+still require the host egress firewall because managed OCI builds use BuildKit
+containers. Install the firewall on a dedicated Linux Docker host before
+starting the worker:
+
+```sh
+sudo install -m 0755 deploy/harden-worker-egress.sh /usr/local/sbin/kestrel-harden-worker-egress
+sudo install -m 0644 deploy/kestrel-worker-egress.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now kestrel-worker-egress.service
+```
+
+The firewall blocks job containers and BuildKit containers from reaching
+host-local services, private network ranges and cloud metadata endpoints while
+allowing public dependency downloads. Do not start a production worker if the
+firewall service fails. After the service is active, uncomment
+`KESTREL_EGRESS_HARDENED=true` in `.env.worker`. Jobs still run in separate
+containers with resource limits and reduced Linux capabilities.
 
 The Compose file bind-mounts the same host directory into the worker agent and
 passes its host-side path through `KESTREL_WORKER_HOST_WORKDIR`. This is

@@ -6,7 +6,7 @@ PartOf=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/opt/kestrel/deploy/harden-worker-egress.sh
+ExecStart=/usr/local/sbin/kestrel-harden-worker-egress
 RemainAfterExit=yes
 
 [Install]

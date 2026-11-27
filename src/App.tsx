@@ -856,7 +856,7 @@ function AppShell({ page }: { page: Page }) {
           body: JSON.stringify({
             organizationId,
             name: 'kestrel-demo',
-            repo: 'https://github.com/peterakinwale326-code/Kestrel.git',
+            repo: 'https://github.com/Pstacks-dev/Kestrel.git',
             defaultBranch: 'main',
           }),
         });
@@ -2013,7 +2013,7 @@ function AppShell({ page }: { page: Page }) {
                           <li>Return here; once the worker heartbeat is online, create an environment.</li>
                         </ol>
                       </div>
-                      <div className="setup-command"><code>curl -fsSL https://raw.githubusercontent.com/peterakinwale326-code/Kestrel/main/deploy/install-rust-worker.sh | sudo bash</code><button type="button" onClick={() => navigator.clipboard?.writeText('curl -fsSL https://raw.githubusercontent.com/peterakinwale326-code/Kestrel/main/deploy/install-rust-worker.sh | sudo bash')}>Copy installer command</button></div>
+                      <div className="setup-command"><code>curl -fsSL https://raw.githubusercontent.com/Pstacks-dev/Kestrel/main/deploy/install-rust-worker.sh | sudo bash</code><button type="button" onClick={() => navigator.clipboard?.writeText('curl -fsSL https://raw.githubusercontent.com/Pstacks-dev/Kestrel/main/deploy/install-rust-worker.sh | sudo bash')}>Copy installer command</button></div>
                       <p className="deployment-muted">Use a dedicated host only. The worker controls Docker, which is effectively host-root access. Vercel sandboxes do not expose a Docker daemon, so they cannot host this container deployment worker.</p>
                     </div>
                   )}

@@ -9,14 +9,14 @@ This crate is the native Rust worker process for Kestrel's execution plane. It s
 - `KESTREL_WORKER_TOKEN`: one-time worker credential (keep secret).
 - `KESTREL_JOB_IMAGE`: immutable, digest-pinned job image in production.
 - Optional: `KESTREL_WORKER_WORKDIR`, `KESTREL_WORKER_HOST_WORKDIR`, `KESTREL_CONCURRENCY`, `KESTREL_REGION`, `KESTREL_JOB_NETWORK`, `KESTREL_DOCKER_BIN`.
-- `KESTREL_JOB_NETWORK` defaults to Docker `bridge` so normal builds can download dependencies. Use `none` for offline-only jobs. A production deployment still needs an egress policy that blocks private network ranges and cloud metadata endpoints.
+- `KESTREL_JOB_NETWORK` defaults to `none` in production and `bridge` in development. Every production Rust worker requires the Docker egress firewall and `KESTREL_EGRESS_HARDENED=true`, because managed deployment containers use Docker bridge networking even when build jobs use `none`. The Rust installer sets this only after the firewall service starts successfully.
 
 ## Build and run
 
 ```sh
 cargo test --manifest-path runtime/rust/Cargo.toml
 cargo build --release --manifest-path runtime/rust/Cargo.toml
-KESTREL_API_URL=https://your-kestrel-api.example KESTREL_WORKER_ID=wrk_x KESTREL_WORKER_TOKEN=... runtime/rust/target/release/kestrel-runtime
+NODE_ENV=development KESTREL_API_URL=http://127.0.0.1:4000 KESTREL_WORKER_ID=dev-worker KESTREL_WORKER_TOKEN=... runtime/rust/target/release/kestrel-runtime
 ```
 
 The runtime supports Git-backed and uploaded-source projects, worker registration/heartbeat/claim, bounded concurrent execution, streamed logs, cancellation polling, timeouts, artifact uploads and Docker-based job isolation. It does not expose the Docker socket to job containers.
@@ -35,10 +35,10 @@ Rust is the trusted host-side supervisor, not a substitute for an OS sandbox. Do
 Workspace members with developer access can provision a one-time worker credential from **Workspace → Deployments → Set up deployment worker**. Install the runtime on a dedicated Ubuntu/Debian Linux host that has Docker Engine available:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/peterakinwale326-code/Kestrel/main/deploy/install-rust-worker.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Pstacks-dev/Kestrel/main/deploy/install-rust-worker.sh | sudo bash
 ```
 
-The installer prompts for the worker ID, Kestrel API URL, region label, concurrency and one-time token, installs Docker and Rust, builds the runtime, writes a root-owned credential file, and configures a systemd service. Enter the same concurrency value selected when provisioning the credential. It does not place the token in the shell command or echo it while typing.
+The installer prompts for the worker ID, Kestrel API URL, hostname, region label, concurrency and one-time token. It validates the provisioned ID and token, installs Docker, iptables and Rust, builds the runtime, pins the Node.js job image by immutable multi-platform SHA-256 digest, writes a root-owned credential file with `NODE_ENV=production`, and configures systemd. It installs and enables the Docker egress firewall before starting the worker; the worker service requires that firewall unit and will not start if it fails. Enter the same concurrency value selected when provisioning the credential. The token is read without echo and is never placed in the shell command.
 
 After install, verify the worker from the dashboard or with:
 
@@ -59,16 +59,16 @@ Deployment environments can select only workers registered with `runtime=rust`. 
 
 ## Worker egress hardening
 
-For customer build jobs, use Docker `bridge` networking only after installing the host firewall. On a dedicated Linux worker, copy the repository to `/opt/kestrel`, then run:
+The Rust worker installer enables this firewall automatically before starting the worker. For manually configured Docker workers, use Docker `bridge` networking only after installing the host firewall. On a dedicated Linux worker, copy the repository to `/opt/kestrel`, then run:
 
 ```sh
-sudo chmod 0755 /opt/kestrel/deploy/harden-worker-egress.sh
+sudo install -m 0755 /opt/kestrel/deploy/harden-worker-egress.sh /usr/local/sbin/kestrel-harden-worker-egress
 sudo install -m 0644 /opt/kestrel/deploy/kestrel-worker-egress.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now kestrel-worker-egress.service
 ```
 
-The firewall places rules in Docker's `DOCKER-USER` chain to block container access to host-local addresses, private networks, loopback, link-local and cloud metadata ranges while allowing established replies and public internet egress. Verify the rules after every Docker/OS upgrade and persist them through the systemd unit. This is an additional network boundary, not a substitute for dedicated worker hosts and stronger sandboxing such as gVisor, Kata Containers or Firecracker.
+The firewall places rules in Docker's `DOCKER-USER` chain to block container access to host-local addresses, private networks, loopback, link-local and cloud metadata ranges while allowing established replies and public internet egress. The production runtime refuses to start unless `KESTREL_EGRESS_HARDENED=true` is set in the root-owned worker environment file, regardless of the build-job network setting. Verify the rules after every Docker/OS upgrade and persist them through the systemd unit. This is an additional network boundary, not a substitute for dedicated worker hosts and stronger sandboxing such as gVisor, Kata Containers or Firecracker.
 
 
 ## Database migrations for the current execution/deployment features

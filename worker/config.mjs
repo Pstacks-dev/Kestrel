@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 // Resolve the per-worker credential supplied once by the Kestrel admin provisioning flow.
 export function resolveWorkerToken({
-  nodeEnv = process.env.NODE_ENV,
+  nodeEnv = process.env.NODE_ENV || 'production',
   token = process.env.KESTREL_WORKER_TOKEN,
 } = {}) {
   const allowDevelopmentFallback = nodeEnv === 'development' || nodeEnv === 'test';
@@ -16,7 +16,7 @@ export function resolveWorkerToken({
 // Development may use a local control plane and an ephemeral identity. Production
 // workers must be explicitly bound to the provisioned worker record over HTTPS.
 export function resolveWorkerConnection({
-  nodeEnv = process.env.NODE_ENV,
+  nodeEnv = process.env.NODE_ENV || 'production',
   apiUrl = process.env.KESTREL_API_URL,
   workerId = process.env.KESTREL_WORKER_ID,
   hostname = process.env.HOSTNAME || 'worker',
@@ -49,4 +49,44 @@ export function resolveWorkerConnection({
   }
 
   return { api: parsed.toString().replace(/\/+$/, ''), workerId: resolvedWorkerId };
+}
+
+
+// Docker-backed production workers can execute untrusted builds and BuildKit
+// containers. Require an explicit host-firewall attestation before starting.
+export function resolveWorkerEgress({
+  nodeEnv = process.env.NODE_ENV || 'production',
+  executor = process.env.KESTREL_WORKER_EXECUTOR || 'docker',
+  egressHardened = process.env.KESTREL_EGRESS_HARDENED,
+} = {}) {
+  if (nodeEnv === 'production' && executor === 'docker' && egressHardened !== 'true') {
+    throw new Error('Production Docker workers require the host Docker egress firewall and KESTREL_EGRESS_HARDENED=true');
+  }
+  return true;
+}
+
+
+export function resolveWorkerExecutor({
+  nodeEnv = process.env.NODE_ENV || 'production',
+  executor = process.env.KESTREL_WORKER_EXECUTOR || 'docker',
+} = {}) {
+  if (!['docker', 'local', 'mock'].includes(executor)) {
+    throw new Error('KESTREL_WORKER_EXECUTOR must be docker, local or mock');
+  }
+  if (nodeEnv === 'production' && executor !== 'docker') {
+    throw new Error('Production workers must use the isolated Docker executor; local and mock executors are development/test only');
+  }
+  return executor;
+}
+
+
+export function resolveWorkerJobNetwork({
+  nodeEnv = process.env.NODE_ENV || 'production',
+  network = process.env.KESTREL_JOB_NETWORK,
+} = {}) {
+  const resolved = network || (nodeEnv === 'production' ? 'none' : 'bridge');
+  if (!['bridge', 'none'].includes(resolved)) {
+    throw new Error('KESTREL_JOB_NETWORK must be bridge or none');
+  }
+  return resolved;
 }
