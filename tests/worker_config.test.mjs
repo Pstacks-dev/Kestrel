@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveWorkerToken, resolveWorkerEgress } from '../worker/config.mjs';
+import { resolveWorkerToken, resolveWorkerEgress, resolveWorkerExecutor } from '../worker/config.mjs';
 
 test('production workers require a provisioned per-worker token', () => {
   assert.throws(() => resolveWorkerToken({ nodeEnv: 'production', token: undefined }), /provisioned KESTREL_WORKER_TOKEN/);
@@ -60,4 +60,15 @@ test('development and non-Docker workers do not require production Docker egress
   assert.equal(resolveWorkerEgress({
     nodeEnv: 'production', executor: 'local', egressHardened: undefined,
   }), true);
+});
+
+
+test('production workers cannot execute customer code in local or mock mode', () => {
+  assert.equal(resolveWorkerExecutor({ nodeEnv: 'production', executor: 'docker' }), 'docker');
+  assert.throws(() => resolveWorkerExecutor({ nodeEnv: 'production', executor: 'local' }), /isolated Docker executor/);
+  assert.throws(() => resolveWorkerExecutor({ nodeEnv: 'production', executor: 'mock' }), /isolated Docker executor/);
+});
+
+test('unknown worker executors are rejected', () => {
+  assert.throws(() => resolveWorkerExecutor({ nodeEnv: 'development', executor: 'shell' }), /must be docker, local or mock/);
 });
