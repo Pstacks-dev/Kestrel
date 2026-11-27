@@ -72,3 +72,19 @@ test('production workers cannot execute customer code in local or mock mode', ()
 test('unknown worker executors are rejected', () => {
   assert.throws(() => resolveWorkerExecutor({ nodeEnv: 'development', executor: 'shell' }), /must be docker, local or mock/);
 });
+
+
+test('missing NODE_ENV defaults to production safeguards', async () => {
+  const { resolveWorkerConnection } = await import('../worker/config.mjs');
+  assert.throws(() => resolveWorkerConnection({
+    nodeEnv: undefined,
+    apiUrl: 'http://127.0.0.1:4000',
+    workerId: 'dev-worker',
+  }), /HTTPS/);
+  assert.throws(() => resolveWorkerEgress({
+    nodeEnv: undefined, executor: 'docker', egressHardened: undefined,
+  }), /host Docker egress firewall/);
+  assert.throws(() => resolveWorkerExecutor({
+    nodeEnv: undefined, executor: 'local',
+  }), /isolated Docker executor/);
+});
