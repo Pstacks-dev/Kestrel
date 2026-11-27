@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
 import { fetchGitHubRepositoryWithInstallation } from './github-app.mjs';
+import { isValidGitHubInstallationId } from '../lib/github-webhooks.mjs';
+
+export { isValidGitHubInstallationId };
 
 const WRITE_ROLES = ['owner', 'admin', 'developer'];
 
@@ -14,12 +17,6 @@ export function parseGitHubRepository(input) {
         parts[0] === '.' || parts[1] === '.' || parts[0] === '..' || parts[1] === '..') return null;
     return { owner: parts[0], repo: parts[1] };
   } catch { return null; }
-}
-
-export function isValidGitHubInstallationId(value) {
-  return typeof value === 'string' &&
-    /^[1-9][0-9]{0,18}$/.test(value) &&
-    BigInt(value) <= 9223372036854775807n;
 }
 
 export function registerGitImportRoutes(app, { userAuth, query, transaction, fetchImpl = fetch }) {
