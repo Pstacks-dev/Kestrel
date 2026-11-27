@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isValidGitHubInstallationId } from './github-webhooks.mjs';
 
 const API = 'https://api.github.com';
 const API_VERSION = '2022-11-28';
@@ -33,7 +34,7 @@ export async function createGitHubInstallationToken(installationId, {
   repository, permissions, fetchImpl = fetch, config = getGitHubAppConfig(),
 } = {}) {
   if (!config) throw new Error('GitHub App is not configured');
-  if (!/^\d+$/.test(String(installationId))) throw new Error('Invalid GitHub installation ID');
+  if (!isValidGitHubInstallationId(String(installationId))) throw new Error('Invalid GitHub installation ID');
   const jwt = createGitHubAppJwt(config);
   const body = {};
   if (repository) {
@@ -63,6 +64,7 @@ export async function createGitHubInstallationToken(installationId, {
 }
 
 export async function getGitHubInstallation(installationId, { fetchImpl = fetch, config = getGitHubAppConfig() } = {}) {
+  if (!isValidGitHubInstallationId(String(installationId))) throw new Error('Invalid GitHub installation ID');
   if (!config) throw new Error('GitHub App is not configured');
   const jwt = createGitHubAppJwt(config);
   const response = await fetchImpl(`${API}/app/installations/${installationId}`, {
