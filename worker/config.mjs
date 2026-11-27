@@ -64,3 +64,17 @@ export function resolveWorkerEgress({
   }
   return true;
 }
+
+
+export function resolveWorkerExecutor({
+  nodeEnv = process.env.NODE_ENV,
+  executor = process.env.KESTREL_WORKER_EXECUTOR || 'docker',
+} = {}) {
+  if (!['docker', 'local', 'mock'].includes(executor)) {
+    throw new Error('KESTREL_WORKER_EXECUTOR must be docker, local or mock');
+  }
+  if (nodeEnv === 'production' && executor !== 'docker') {
+    throw new Error('Production workers must use the isolated Docker executor; local and mock executors are development/test only');
+  }
+  return executor;
+}
