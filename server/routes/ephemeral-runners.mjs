@@ -29,7 +29,7 @@ export function registerEphemeralRunnerRoutes(app, { query, transaction }) {
         await client.query(
           `update public.workers
            set state = 'offline', desired_state = 'offline'
-           where ephemeral = true and expires_at <= now() and state <> 'offline'`,
+           where ephemeral = true and expires_at <= now()`,
         );
         await client.query(
           `update public.worker_credentials wc set revoked_at = coalesce(wc.revoked_at, now())
