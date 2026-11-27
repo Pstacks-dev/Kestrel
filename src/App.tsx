@@ -1,6 +1,5 @@
 import Admin from './Admin';
 import { ProjectFiles } from './components/ProjectFiles';
-import ManagedHostingPanel from './components/ManagedHostingPanel';
 import { ManagedHosting } from './components/ManagedHosting';
 import { requireSupabase } from './lib-supabase';
 import { useEffect, useMemo, useState } from 'react';
@@ -1934,7 +1933,7 @@ function AppShell({ page }: { page: Page }) {
             <PageHeading
               eyebrow="WORKSPACE / DEPLOYMENTS"
               title="Deployment environments"
-              desc="Release container images to assigned Rust workers, verify health and roll back to the previous healthy release."
+              desc="Connect a hosting account once, then let Kestrel select a compatible provider and manage deployments. Direct worker-based container releases are a separate advanced option."
             />
             <div className="panel deployment-project-panel">
               <div className="panel-head">
@@ -1951,15 +1950,9 @@ function AppShell({ page }: { page: Page }) {
 
             <ManagedHosting apiBase={api} accessToken={accessToken} organizationId={organizationId} projectId={selectedProject} />
 
-            <ManagedHostingPanel
-              apiBase={api}
-              accessToken={accessToken}
-              organizationId={organizationId}
-              projectId={selectedProject}
-              defaultBranch={snapshot?.projects?.find((project: any) => project.id === selectedProject)?.defaultBranch || 'main'}
-            />
 
             <div className="panel deployment-worker-setup">
+              <div className="panel-head"><div><h3>Advanced: self-managed container workers</h3><p>Optional. Only needed when you want Kestrel to release containers directly onto a Linux host you control. Managed hosting above does not require this worker.</p></div></div>
               <div className="panel-head">
                 <div><h3>Deployment workers</h3><p>Connect a Linux host with Docker Engine to run container releases.</p></div>
                 <span className={snapshot?.workers?.some((w: any) => w.runtime === 'rust' && w.state === 'online') ? 'pill pill-green' : 'pill pill-muted'}>
