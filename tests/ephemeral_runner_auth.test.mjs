@@ -141,8 +141,8 @@ test('workflow keeps one-time worker tokens out of global GitHub Actions environ
   assert.match(provision, /mode: 0o600/);
   assert.ok(provision.includes('kestrel-worker.env'));
   assert.doesNotMatch(provision, /GITHUB_ENV/);
-  assert.match(workflow, /source "\$RUNNER_TEMP\\/kestrel-worker\\.env"/);
-  assert.match(workflow, /rm -f "\$RUNNER_TEMP\\/kestrel-worker\\.env"/);
+  assert.ok(workflow.includes('source "$RUNNER_TEMP/kestrel-worker.env"'));
+  assert.ok(workflow.includes('rm -f "$RUNNER_TEMP/kestrel-worker.env"'));
 });
 
 test('ephemeral runner entrypoints and control-plane modules pass Node syntax checks', async () => {
