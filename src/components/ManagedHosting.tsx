@@ -179,7 +179,7 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
 
   return <section className="managed-hosting">
     <div className="managed-hosting-heading">
-      <div><div className="eyebrow">MANAGED HOSTING</div><h3>Connect a hosting account</h3><p>Connect a provider once. Kestrel stores credentials encrypted and selects a compatible verified provider when you deploy.</p></div>
+      <div><div className="eyebrow">MANAGED HOSTING</div><h3>Choose where Kestrel should deploy</h3><p>Connect a hosting account once. Kestrel will verify access, build your project and manage releases. You should only need to authorize the account once.</p></div>
       <button className="btn btn-light" onClick={() => { refresh(); refreshDeployments(); }} disabled={loading}><RefreshCw size={14}/> Refresh</button>
     </div>
     {message && <div className="managed-hosting-notice success"><Check size={15}/>{message}</div>}
@@ -190,13 +190,18 @@ export function ManagedHosting({ apiBase, accessToken, organizationId, projectId
         <h4>{provider.name}</h4><p>{provider.category.replaceAll('-', ' ')}</p>
         {provider.connection?.lastError && <small className="managed-provider-error">{provider.connection.lastError}</small>}
         {editing === provider.id ? <div className="managed-provider-form">
-          {(PROVIDERS[provider.id] || []).map((field) => <label key={field.key}>{field.label}{field.optional && ' (optional)'}
-            {field.multiline ? <textarea rows={4} value={credentials[field.key] || ''} onChange={(e) => setCredentials((old) => ({ ...old, [field.key]: e.target.value }))} placeholder="Paste service-account JSON" /> :
-              <input type={field.key.toLowerCase().includes('secret') || field.key.toLowerCase().includes('token') || field.key === 'apiKey' ? 'password' : 'text'} value={credentials[field.key] || ''} onChange={(e) => setCredentials((old) => ({ ...old, [field.key]: e.target.value }))} placeholder={field.placeholder || field.label} />}
-          </label>)}
-          <div className="managed-provider-actions"><button className="btn btn-dark" disabled={saving} onClick={() => save(provider.id)}>{saving ? 'Saving…' : 'Save credentials'}</button><button className="btn btn-light" onClick={() => { setEditing(null); setCredentials({}); }}>Cancel</button></div>
+          <p className="provider-auth-explainer">This provider's OAuth connection is not configured in this Kestrel deployment yet. You can connect it using a provider-issued credential as an advanced fallback. Create the credential in the provider's own dashboard; never paste your account password here.</p>
+          <details className="provider-manual-credentials">
+            <summary>Use a provider credential instead</summary>
+            {(PROVIDERS[provider.id] || []).map((field) => <label key={field.key}>{field.label}{field.optional && ' (optional)'}
+              {field.multiline ? <textarea rows={4} value={credentials[field.key] || ''} onChange={(e) => setCredentials((old) => ({ ...old, [field.key]: e.target.value }))} placeholder="Paste service-account JSON" /> :
+                <input type={field.key.toLowerCase().includes('secret') || field.key.toLowerCase().includes('token') || field.key === 'apiKey' ? 'password' : 'text'} value={credentials[field.key] || ''} onChange={(e) => setCredentials((old) => ({ ...old, [field.key]: e.target.value }))} placeholder={field.placeholder || field.label} />}
+            </label>)}
+            <div className="managed-provider-actions"><button className="btn btn-dark" disabled={saving} onClick={() => save(provider.id)}>{saving ? 'Saving…' : 'Save and verify later'}</button></div>
+          </details>
+          <div className="managed-provider-actions"><button className="btn btn-light" onClick={() => { setEditing(null); setCredentials({}); }}>Close</button></div>
         </div> : <div className="managed-provider-actions">
-          <button className="btn btn-light" onClick={() => { setEditing(provider.id); setCredentials({}); }}><Plus size={14}/>{provider.connected ? 'Update credentials' : 'Connect'}</button>
+          <button className="btn btn-light" onClick={() => { setEditing(provider.id); setCredentials({}); }}><Plus size={14}/>{provider.connected ? 'Connection options' : 'Connection options'}</button>
           {provider.connected && <><button className="btn btn-light" disabled={verifying === provider.id} onClick={() => verify(provider.id)}>{verifying === provider.id ? <Loader2 className="spin" size={14}/> : <ShieldCheck size={14}/>}Verify</button><button className="btn btn-quiet" title="Disconnect" onClick={() => disconnect(provider.id)}><Trash2 size={14}/></button></>}
         </div>}
       </article>)}
