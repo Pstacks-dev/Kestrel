@@ -17,7 +17,9 @@ export function parseGitHubRepository(input) {
 }
 
 export function isValidGitHubInstallationId(value) {
-  return typeof value === 'string' && /^\d+$/.test(value);
+  return typeof value === 'string' &&
+    /^[1-9][0-9]{0,18}$/.test(value) &&
+    BigInt(value) <= 9223372036854775807n;
 }
 
 export function registerGitImportRoutes(app, { userAuth, query, transaction, fetchImpl = fetch }) {
@@ -48,7 +50,11 @@ export function registerGitImportRoutes(app, { userAuth, query, transaction, fet
         );
         if (!linked.rowCount) return res.status(403).json({ error: 'Connect this GitHub App installation to the workspace before importing from it' });
         try {
-          remote = await fetchGitHubRepositoryWithInstallation(installationId, `${repository.owner}/${repository.repo}`, fetchImpl);
+          remote = await fetchGitHubRepositoryWithInstallation(
+            installationId,
+            `${repository.owner}/${repository.repo}`,
+            { fetchImpl },
+          );
         } catch (error) {
           if (error.status === 404) return res.status(404).json({ error: 'Repository is not accessible to the selected GitHub App installation' });
           return res.status(502).json({ error: 'GitHub could not verify this repository. Try again shortly.' });
