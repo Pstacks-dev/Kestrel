@@ -18,6 +18,9 @@ export async function runProductionSmoke({
     const response = await fetchImpl(new URL(endpoint, base), {
       method: 'GET',
       headers: { accept: 'application/json' },
+      // Health probes must never follow a redirect to a different host or path.
+      // A redirect is a deployment/configuration error, not a healthy response.
+      redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
     });
     let payload;
