@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveWorkerToken, resolveWorkerEgress, resolveWorkerExecutor } from '../worker/config.mjs';
+import { resolveWorkerToken, resolveWorkerEgress, resolveWorkerExecutor, resolveWorkerJobNetwork } from '../worker/config.mjs';
 
 test('production workers require a provisioned per-worker token', () => {
   assert.throws(() => resolveWorkerToken({ nodeEnv: 'production', token: undefined }), /provisioned KESTREL_WORKER_TOKEN/);
@@ -87,4 +87,12 @@ test('missing NODE_ENV defaults to production safeguards', async () => {
   assert.throws(() => resolveWorkerExecutor({
     nodeEnv: undefined, executor: 'local',
   }), /isolated Docker executor/);
+});
+
+
+test('production job networking defaults to none and validates explicit modes', () => {
+  assert.equal(resolveWorkerJobNetwork({ nodeEnv: 'production', network: undefined }), 'none');
+  assert.equal(resolveWorkerJobNetwork({ nodeEnv: 'development', network: undefined }), 'bridge');
+  assert.equal(resolveWorkerJobNetwork({ nodeEnv: 'production', network: 'bridge' }), 'bridge');
+  assert.throws(() => resolveWorkerJobNetwork({ nodeEnv: 'production', network: 'host' }), /must be bridge or none/);
 });
