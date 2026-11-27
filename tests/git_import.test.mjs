@@ -25,8 +25,9 @@ test('rejects unsafe or unsupported repository URLs', () => {
 
 test('accepts numeric GitHub App installation IDs and rejects malformed values', () => {
   assert.equal(isValidGitHubInstallationId('123456789'), true);
-  assert.equal(isValidGitHubInstallationId('0'), true);
-  for (const value of ['', '12a34', '-123', '123.4', ' 123', '123 ', null, 123]) {
+  assert.equal(isValidGitHubInstallationId('0'), false);
+  assert.equal(isValidGitHubInstallationId('9223372036854775807'), true);
+  for (const value of ['', '00', '12a34', '-123', '123.4', ' 123', '123 ', '9223372036854775808', null, 123]) {
     assert.equal(isValidGitHubInstallationId(value), false, String(value));
   }
 });
