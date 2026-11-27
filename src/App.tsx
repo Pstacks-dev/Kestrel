@@ -152,16 +152,16 @@ function Landing() {
         <div className="hero-visual">
           <div className="visual-top">
             <span>
-              <i className="live-dot" /> LIVE PIPELINE
+              PIPELINE PREVIEW
             </span>
-            <span>run_8f21c6</span>
+            <span>EXAMPLE RUN · run_8f21c6</span>
           </div>
           <div className="visual-title">
             <div>
-              <small>storefront / production</small>
+              <small>example-storefront / production</small>
               <h3>Deploy pipeline</h3>
             </div>
-            <span className="pill pill-green">● Running</span>
+            <span className="pill pill-green">● Sample state</span>
           </div>
           <div className="pipeline-track">
             <div className="track-line" />
@@ -184,7 +184,7 @@ function Landing() {
                 <Radio />
               </span>
               <b>Test suite</b>
-              <small>Worker 02</small>
+              <small>Sample worker</small>
             </div>
             <div className="stage waiting">
               <span>4</span>
@@ -197,12 +197,12 @@ function Landing() {
             <div>
               <Server />
               <span>
-                <b>worker-eu-02</b>
+                <b>sample-worker-02</b>
                 <small>Linux · 4 vCPU</small>
               </span>
             </div>
             <div className="worker-state">
-              <i className="live-dot" /> EXECUTING
+              SAMPLE EXECUTION
             </div>
           </div>
           <div className="log-lines">
@@ -221,9 +221,9 @@ function Landing() {
           </div>
           <div className="visual-foot">
             <span>
-              CONTROL PLANE <b>CONNECTED</b>
+              CONTROL PLANE <b>ILLUSTRATIVE</b>
             </span>
-            <span>3 WORKERS ONLINE</span>
+            <span>WORKER POOL · CONFIGURABLE</span>
           </div>
         </div>
       </section>
@@ -284,8 +284,8 @@ function Landing() {
             <h3>Distributed workers</h3>
             <p>Connect independent execution nodes across machines and environments. Scale capacity without scaling the control plane.</p>
             <div className="feature-metric">
-              <b>03</b>
-              <span>workers connected</span>
+              <b>FLEET</b>
+              <span>capacity scales independently</span>
             </div>
           </article>
           <article className="feature">
@@ -295,8 +295,8 @@ function Landing() {
             <h3>Live execution logs</h3>
             <p>Follow stdout, stderr, job status and exit codes as work happens on the worker.</p>
             <div className="terminal-mini">
-              <span>$ npm run test</span>
-              <b>✓ 42 passed</b>
+              <span>EXAMPLE · npm run test</span>
+              <b>Sample result · 42 passed</b>
             </div>
           </article>
           <article className="feature">
