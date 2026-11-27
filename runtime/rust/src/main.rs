@@ -101,7 +101,7 @@ fn config() -> Result<Config> {
     let api = get("KESTREL_API_URL", "");
     let token = get("KESTREL_WORKER_TOKEN", "");
     let image = get("KESTREL_JOB_IMAGE", "node:22-bookworm-slim");
-    let node_env = get("NODE_ENV", "development");
+    let node_env = get("NODE_ENV", "production");
     let default_network = if node_env == "production" { "none" } else { "bridge" };
     let network = resolve_job_network(
         &node_env,
