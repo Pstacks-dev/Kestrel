@@ -60,11 +60,24 @@ jobs:
           KESTREL_WORKDIR: ${{ runner.temp }}/kestrel-work
           KESTREL_WORKER_WORKDIR: ${{ runner.temp }}/kestrel-work
           KESTREL_CONCURRENCY: '1'
-        run: npm run start:worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/kestrel-worker.env"
+          export KESTREL_WORKER_ID KESTREL_WORKER_TOKEN
+          npm run start:worker
 
       - name: Retire ephemeral worker and revoke its credential
         if: always() && steps.provision.outputs.has_work == 'true'
         env:
           KESTREL_API_URL: ${{ vars.KESTREL_API_URL }}
           KESTREL_EPHEMERAL_RUNNER_SECRET: ${{ secrets.KESTREL_EPHEMERAL_RUNNER_SECRET }}
-        run: node scripts/retire-ephemeral-runner.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$RUNNER_TEMP/kestrel-worker.env" ]]; then
+            source "$RUNNER_TEMP/kestrel-worker.env"
+            export KESTREL_WORKER_ID
+            node scripts/retire-ephemeral-runner.mjs
+            rm -f "$RUNNER_TEMP/kestrel-worker.env"
+          fi
