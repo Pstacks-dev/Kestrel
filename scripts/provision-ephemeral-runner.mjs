@@ -9,7 +9,7 @@ if (!api || !/^https:\/\//i.test(api) || !secret || secret.length < 32) {
 const response = await fetch(api + '/api/runners/provision', {
   method: 'POST',
   headers: { authorization: 'Bearer ' + secret, 'content-type': 'application/json' },
-  body: JSON.stringify({ hostname: process.env.RUNNER_NAME || 'github-hosted-runner' }),
+  body: JSON.stringify({ hostname: process.env.RUNNER_NAME || 'github-hosted-runner', workflowRunId: process.env.GITHUB_RUN_ID || '' }),
   signal: AbortSignal.timeout(15000),
 });
 if (response.status === 204) {
