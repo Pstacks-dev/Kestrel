@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const installerUrl = new URL('../deploy/install-rust-worker.sh', import.meta.url);
 const workerUnitUrl = new URL('../deploy/kestrel-worker-egress.service', import.meta.url);
@@ -27,4 +29,13 @@ test('manual Docker worker example pins the job image and documents network prer
   assert.match(envExample, /KESTREL_JOB_IMAGE=docker\.io\/library\/node:22-bookworm-slim@sha256:[a-f0-9]{64}/);
   assert.match(envExample, /install and enable/);
   assert.match(workerUnit, /ExecStart=\/usr\/local\/sbin\/kestrel-harden-worker-egress/);
+});
+
+
+test('Rust worker installer and egress firewall scripts pass Bash syntax validation', {
+  skip: process.platform === 'win32',
+}, () => {
+  const firewallUrl = new URL('../deploy/harden-worker-egress.sh', import.meta.url);
+  execFileSync('bash', ['-n', fileURLToPath(installerUrl)]);
+  execFileSync('bash', ['-n', fileURLToPath(firewallUrl)]);
 });
