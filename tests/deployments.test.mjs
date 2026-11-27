@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validImage, validHealthPath, validPublicUrl, workerCanAcceptDeployments } from '../server/routes/deployments.mjs';
+import { validImage, validHealthPath, validPublicUrl, validSecretNames, workerCanAcceptDeployments } from '../server/routes/deployments.mjs';
 import { validArtifactName } from '../server/routes/artifacts.mjs';
 
 test('accepts valid registry image references', () => {
@@ -26,6 +26,16 @@ test('accepts only credential-free HTTP application URLs', () => {
   assert.equal(validPublicUrl('https://app.example.com'), 'https://app.example.com');
   assert.equal(validPublicUrl('javascript:alert(1)'), null);
   assert.equal(validPublicUrl('https://user:pass@example.com'), null);
+});
+
+test('validates deployment secret names using the same environment-variable grammar as the worker', () => {
+  assert.equal(validSecretNames([]), true);
+  assert.equal(validSecretNames(['API_TOKEN', '_PRIVATE', 'TOKEN2']), true);
+  assert.equal(validSecretNames(['2FA_TOKEN']), false);
+  assert.equal(validSecretNames(['BAD-NAME']), false);
+  assert.equal(validSecretNames(['']), false);
+  assert.equal(validSecretNames(Array(51).fill('TOKEN')), false);
+  assert.equal(validSecretNames('TOKEN'), false);
 });
 
 test('allows nested artifact paths but rejects traversal and absolute paths', () => {
