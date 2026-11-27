@@ -6,11 +6,11 @@ every ten minutes and can also run it manually.
 
 ## Configure monitoring
 
-Add the following GitHub Actions secret:
-
-- `KESTREL_PRODUCTION_URL`: the production HTTPS origin, for example
-  `https://kestrel.example.com`. Do not include credentials, query strings or
-  a path.
+The workflow defaults to Kestrel's canonical production origin,
+`https://kestrel-ci-cd.vercel.app`, so monitoring works without an additional
+secret. If the production domain changes, optionally set the GitHub Actions
+secret `KESTREL_PRODUCTION_URL` to the new HTTPS origin. Do not include
+credentials, query strings or a path.
 
 Configure `KESTREL_MIN_READY_WORKERS` in the control-plane environment. The
 default is `1`. Readiness requires at least this many workers with an
