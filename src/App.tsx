@@ -284,8 +284,8 @@ function Landing() {
             <h3>Distributed workers</h3>
             <p>Connect independent execution nodes across machines and environments. Scale capacity without scaling the control plane.</p>
             <div className="feature-metric">
-              <b>03</b>
-              <span>workers connected</span>
+              <b>FLEET</b>
+              <span>capacity scales independently</span>
             </div>
           </article>
           <article className="feature">
@@ -295,8 +295,8 @@ function Landing() {
             <h3>Live execution logs</h3>
             <p>Follow stdout, stderr, job status and exit codes as work happens on the worker.</p>
             <div className="terminal-mini">
-              <span>$ npm run test</span>
-              <b>✓ 42 passed</b>
+              <span>EXAMPLE · npm run test</span>
+              <b>Sample result · 42 passed</b>
             </div>
           </article>
           <article className="feature">
