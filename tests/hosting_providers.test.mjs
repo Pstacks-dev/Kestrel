@@ -256,3 +256,15 @@ test('keeps Node-built static projects eligible for Cloudflare Pages', () => {
   const ids = rankHostingProviders({ runtime: 'node', isStatic: true }, {}).map((provider) => provider.id);
   assert.ok(ids.includes('cloudflare-pages'));
 });
+
+
+test('JavaScript and TypeScript receive the same provider compatibility score as Node.js', () => {
+  const node = rankHostingProviders({ runtime: 'node', needsPersistentProcess: true }, {});
+  const javascript = rankHostingProviders({ runtime: 'javascript', needsPersistentProcess: true }, {});
+  const typescript = rankHostingProviders({ runtime: 'typescript', needsPersistentProcess: true }, {});
+  const summarize = (items) => items.map(({ id, score, reasons }) => ({
+    id, score, supportsRuntime: reasons.includes('Supports the detected runtime'),
+  }));
+  assert.deepEqual(summarize(javascript), summarize(node));
+  assert.deepEqual(summarize(typescript), summarize(node));
+});
