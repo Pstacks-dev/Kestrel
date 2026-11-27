@@ -23,7 +23,10 @@ const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KEST
 const HOST_ROOT = path.resolve(process.env.KESTREL_WORKER_HOST_WORKDIR || ROOT);
 const REPO_URL = process.env.KESTREL_REPOSITORY_URL;
 const CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.KESTREL_CONCURRENCY || 1)));
-const MAX_JOBS = Math.max(0, Math.min(100, Number(process.env.KESTREL_WORKER_MAX_JOBS || 0)));
+const MAX_JOBS = Number(process.env.KESTREL_WORKER_MAX_JOBS || 0);
+if (!Number.isInteger(MAX_JOBS) || MAX_JOBS < 0 || MAX_JOBS > 100) {
+  throw new Error('KESTREL_WORKER_MAX_JOBS must be an integer from 0 to 100');
+}
 const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = resolveWorkerJobNetwork();
