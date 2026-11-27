@@ -11,6 +11,7 @@ import { resolveOciBuildContext } from './oci-context.mjs';
 import { resolveJobWorkingDirectory } from './working-directory.mjs';
 import { resolveWorkerToken, resolveWorkerConnection, resolveWorkerEgress, resolveWorkerExecutor, resolveWorkerJobNetwork } from './config.mjs';
 import { createDrainController } from './drain-controller.mjs';
+import { abortIfLeaseLost } from './lease-guard.mjs';
 
 const { api: API, workerId: WORKER_ID } = resolveWorkerConnection();
 const TOKEN = resolveWorkerToken();
@@ -580,7 +581,7 @@ async function executeManagedImageBuild(build) {
     try {
       await api('/api/workers/managed-image-builds/' + encodeURIComponent(build.id) + '/lease', { leaseToken: build.leaseToken });
     } catch (error) {
-      if (error.message.includes('409') || error.message.includes('expired')) leaseLost = true;
+      if (abortIfLeaseLost(error, managedImageBuildAbortController)) leaseLost = true;
     }
   }, 10000);
   try {
