@@ -27,6 +27,10 @@ const MAX_JOBS = Number(process.env.KESTREL_WORKER_MAX_JOBS || 0);
 if (!Number.isInteger(MAX_JOBS) || MAX_JOBS < 0 || MAX_JOBS > 100) {
   throw new Error('KESTREL_WORKER_MAX_JOBS must be an integer from 0 to 100');
 }
+const IDLE_TIMEOUT_MS = Number(process.env.KESTREL_WORKER_IDLE_TIMEOUT_MS || 0);
+if (!Number.isInteger(IDLE_TIMEOUT_MS) || IDLE_TIMEOUT_MS < 0 || IDLE_TIMEOUT_MS > 600000) {
+  throw new Error('KESTREL_WORKER_IDLE_TIMEOUT_MS must be an integer from 0 to 600000');
+}
 const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = resolveWorkerJobNetwork();
@@ -721,13 +725,20 @@ process.on('SIGINT', () => handleShutdown('SIGINT'));
 const managedImageBuildTask = EXECUTOR === 'docker' && process.env.KESTREL_WORKER_DISABLE_MANAGED_IMAGE_BUILDS !== 'true' ? managedImageBuildLoop() : Promise.resolve();
 async function pollLoop(slot) {
   let completedJobs = 0;
+  let idleSince = Date.now();
   while (!isDraining) {
     try {
       const { job } = await api('/api/workers/claim', { workerId: WORKER_ID });
       if (!job) {
+        if (IDLE_TIMEOUT_MS > 0 && Date.now() - idleSince >= IDLE_TIMEOUT_MS) {
+          isDraining = true;
+          await api('/api/workers/heartbeat', { workerId: WORKER_ID, draining: true }).catch(() => {});
+          break;
+        }
         await new Promise((r) => setTimeout(r, 600));
         continue;
       }
+      idleSince = Date.now();
       if (isDraining) {
         await api(`/api/workers/jobs/${job.id}/release`, { leaseToken: job.leaseToken }).catch(() => {});
         break;
