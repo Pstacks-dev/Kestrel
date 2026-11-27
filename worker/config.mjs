@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 // Resolve the per-worker credential supplied once by the Kestrel admin provisioning flow.
 export function resolveWorkerToken({
-  nodeEnv = process.env.NODE_ENV,
+  nodeEnv = process.env.NODE_ENV || 'production',
   token = process.env.KESTREL_WORKER_TOKEN,
 } = {}) {
   const allowDevelopmentFallback = nodeEnv === 'development' || nodeEnv === 'test';
@@ -16,7 +16,7 @@ export function resolveWorkerToken({
 // Development may use a local control plane and an ephemeral identity. Production
 // workers must be explicitly bound to the provisioned worker record over HTTPS.
 export function resolveWorkerConnection({
-  nodeEnv = process.env.NODE_ENV,
+  nodeEnv = process.env.NODE_ENV || 'production',
   apiUrl = process.env.KESTREL_API_URL,
   workerId = process.env.KESTREL_WORKER_ID,
   hostname = process.env.HOSTNAME || 'worker',
@@ -55,7 +55,7 @@ export function resolveWorkerConnection({
 // Docker-backed production workers can execute untrusted builds and BuildKit
 // containers. Require an explicit host-firewall attestation before starting.
 export function resolveWorkerEgress({
-  nodeEnv = process.env.NODE_ENV,
+  nodeEnv = process.env.NODE_ENV || 'production',
   executor = process.env.KESTREL_WORKER_EXECUTOR || 'docker',
   egressHardened = process.env.KESTREL_EGRESS_HARDENED,
 } = {}) {
@@ -67,7 +67,7 @@ export function resolveWorkerEgress({
 
 
 export function resolveWorkerExecutor({
-  nodeEnv = process.env.NODE_ENV,
+  nodeEnv = process.env.NODE_ENV || 'production',
   executor = process.env.KESTREL_WORKER_EXECUTOR || 'docker',
 } = {}) {
   if (!['docker', 'local', 'mock'].includes(executor)) {
