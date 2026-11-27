@@ -134,6 +134,6 @@ test('signs AWS ECS verification requests with temporary session credentials', a
   });
   assert.equal(request.url, 'https://ecs.eu-west-1.amazonaws.com/');
   assert.equal(request.options.headers['x-amz-security-token'], sessionToken);
-  assert.match(request.options.headers.Authorization, /SignedHeaders=content-type;host;x-amz-date;x-amz-target;x-amz-security-token/);
+  assert.match(request.options.headers.Authorization, /SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-amz-target/);
   assert.equal(result.verified, true);
 });
