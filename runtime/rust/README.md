@@ -62,7 +62,7 @@ Deployment environments can select only workers registered with `runtime=rust`. 
 The Rust worker installer enables this firewall automatically before starting the worker. For manually configured Docker workers, use Docker `bridge` networking only after installing the host firewall. On a dedicated Linux worker, copy the repository to `/opt/kestrel`, then run:
 
 ```sh
-sudo chmod 0755 /opt/kestrel/deploy/harden-worker-egress.sh
+sudo install -m 0755 /opt/kestrel/deploy/harden-worker-egress.sh /usr/local/sbin/kestrel-harden-worker-egress
 sudo install -m 0644 /opt/kestrel/deploy/kestrel-worker-egress.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now kestrel-worker-egress.service
