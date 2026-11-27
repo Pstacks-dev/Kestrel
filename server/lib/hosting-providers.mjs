@@ -51,7 +51,7 @@ export function rankHostingProviders(profileInput, env = process.env) {
     if (profile.isStatic && !provider.static) return null;
     if (profile.isStatic && provider.static) { score += 30; reasons.push('Supports static site hosting'); }
     if (!profile.isStatic && provider.fullStack) { score += 20; reasons.push('Supports application backends'); }
-    if (profile.runtime !== 'unknown' && provider.runtimes.includes(profile.runtime)) { score += 20; reasons.push('Supports the detected runtime'); }
+    if (profile.runtime !== 'unknown' && supportsRuntime) { score += 20; reasons.push('Supports the detected runtime'); }
     if (profile.needsContainer && provider.containers) { score += 25; reasons.push('Supports container deployment'); }
     if (profile.needsContainer && !provider.containers) return null;
     if (provider.requiresContainerImage && !profile.needsContainer) return null;
