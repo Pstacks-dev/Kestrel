@@ -20,7 +20,9 @@ if (response.status === 204) {
 }
 if (!response.ok) throw new Error('Kestrel runner provisioning failed: HTTP ' + response.status);
 const result = await response.json();
-if (!result.ok || !/^wrk_[A-Za-z0-9_-]{20,40}$/.test(result.workerId) || typeof result.token !== 'string' || result.token.length < 32 || /[\r\n]/.test(result.token)) {
+// Worker IDs and credentials are generated as base64url values by the control plane.
+// Enforce the exact 32-byte base64url token representation before writing a shell source file.
+if (!result.ok || !/^wrk_[A-Za-z0-9_-]{20,40}$/.test(result.workerId) || typeof result.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.token)) {
   throw new Error('Kestrel returned an invalid ephemeral worker credential');
 }
 

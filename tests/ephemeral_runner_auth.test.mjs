@@ -95,6 +95,7 @@ test('provisions a single-use worker only for a queued organization', async () =
     assert.equal(res.statusCode, 201);
     assert.match(res.body.workerId, /^wrk_[A-Za-z0-9_-]{20,40}$/);
     assert.equal(res.body.token.length, 43);
+    assert.match(res.body.token, /^[A-Za-z0-9_-]{43}$/);
     assert.equal(res.body.maxJobs, 1);
     assert.equal(inserts.length, 2);
     assert.equal(inserts[0].params[1], 'org-test');
@@ -141,6 +142,7 @@ test('workflow keeps one-time worker tokens out of global GitHub Actions environ
   assert.match(provision, /mode: 0o600/);
   assert.ok(provision.includes('kestrel-worker.env'));
   assert.doesNotMatch(provision, /GITHUB_ENV/);
+  assert.match(provision, /\^\[A-Za-z0-9_-\]\{43\}\$/);
   assert.ok(workflow.includes('source "$RUNNER_TEMP/kestrel-worker.env"'));
   assert.ok(workflow.includes('rm -f "$RUNNER_TEMP/kestrel-worker.env"'));
 });
