@@ -29,6 +29,7 @@ import { registerGitHubAppRoutes } from './routes/github-app.mjs';
 import { registerHostingRoutes } from './routes/hosting.mjs';
 import { registerHostingConnectionRoutes } from './routes/hosting-connections.mjs';
 import { registerManagedDeploymentRoutes } from './routes/managed-deployments.mjs';
+import { registerEphemeralRunnerRoutes } from './routes/ephemeral-runners.mjs';
 import { startManagedHostingAutomation, processManagedHostingQueue } from './lib/managed-hosting-automation.mjs';
 import { reconcileManagedDeploymentReadiness } from './lib/managed-deployment-readiness.mjs';
 import { refreshProviderImageRegistryCredentials } from './lib/oci-registries.mjs';
@@ -153,7 +154,8 @@ async function workerAuth(req, res, next) {
       `select wc.worker_id, w.organization_id, w.state
        from public.worker_credentials wc
        join public.workers w on w.id = wc.worker_id
-       where wc.worker_id = $1 and wc.token_hash = $2 and wc.revoked_at is null`,
+       where wc.worker_id = $1 and wc.token_hash = $2 and wc.revoked_at is null
+         and (w.expires_at is null or w.expires_at > now())`,
       [workerId, sha(token)]
     );
     if (!r.rowCount) {
@@ -337,7 +339,9 @@ app.get('/api/ready', async (_req, res) => {
       to_regclass('public.jobs') is not null as jobs,
       to_regclass('public.managed_hosting_deployments') is not null as deployments,
       to_regclass('public.managed_hosting_image_builds') is not null as image_builds,
-      to_regclass('public.managed_hosting_automation_queue') is not null as automation_queue`);
+      to_regclass('public.managed_hosting_automation_queue') is not null as automation_queue,
+      to_regclass('public.execution_backend_heartbeats') is not null as execution_backend_heartbeats,
+      exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'workers' and column_name = 'ephemeral') as ephemeral_runner_schema`);
     const schemaReady = Object.values(schema.rows[0] || {}).every(Boolean);
     if (!schemaReady) {
       return res.status(503).json({
@@ -355,7 +359,18 @@ app.get('/api/ready', async (_req, res) => {
         and state in ('online','busy')
         and last_seen_at >= now() - interval '45 seconds'`);
     const onlineWorkers = Number(workers.rows[0]?.online || 0);
-    const workerReady = onlineWorkers >= minimumWorkers;
+    const ephemeralRunnerModeRequested = process.env.KESTREL_EXECUTION_MODE === 'github-hosted';
+    const ephemeralRunnerConfigured = ephemeralRunnerModeRequested
+      && String(process.env.KESTREL_EPHEMERAL_RUNNER_SECRET || '').length >= 32;
+    let ephemeralRunnerHeartbeatFresh = false;
+    if (ephemeralRunnerConfigured) {
+      const heartbeat = await query(`select 1 from public.execution_backend_heartbeats
+        where backend = 'github-actions' and last_seen_at >= now() - interval '20 minutes'`);
+      ephemeralRunnerHeartbeatFresh = heartbeat.rowCount > 0;
+    }
+    const workerReady = ephemeralRunnerModeRequested
+      ? ephemeralRunnerConfigured && ephemeralRunnerHeartbeatFresh
+      : onlineWorkers >= minimumWorkers;
     const ready = workerReady && artifactStorageConfigured;
     res.status(ready ? 200 : 503).json({
       ok: ready,
@@ -363,10 +378,18 @@ app.get('/api/ready', async (_req, res) => {
       database: 'connected',
       schema: 'ready',
       artifactStorage: artifactStorageConfigured ? 'configured' : 'missing_configuration',
+      execution: {
+        mode: ephemeralRunnerModeRequested ? 'github-hosted-ephemeral' : 'persistent-workers',
+        dispatchConfigured: ephemeralRunnerConfigured,
+        runnerHeartbeatFresh: ephemeralRunnerHeartbeatFresh,
+        runnerHeartbeatWindowSeconds: 1200,
+      },
       workers: {
-        status: workerReady ? 'ready' : 'degraded',
+        status: ephemeralRunnerHeartbeatFresh ? 'ephemeral_dispatch'
+          : ephemeralRunnerConfigured ? 'awaiting_runner_heartbeat'
+            : workerReady ? 'ready' : 'degraded',
         online: onlineWorkers,
-        minimum: minimumWorkers,
+        minimum: ephemeralRunnerHeartbeatFresh ? 0 : minimumWorkers,
         heartbeatWindowSeconds: 45,
       },
     });
@@ -2071,6 +2094,7 @@ registerGitHubAppRoutes(app, { userAuth, query, transaction });
 registerHostingRoutes(app, { userAuth, query });
 registerHostingConnectionRoutes(app, { userAuth, query, transaction });
 registerManagedDeploymentRoutes(app, { userAuth, query, transaction });
+registerEphemeralRunnerRoutes(app, { query, transaction });
 
 // Safe Error Handling Middleware
 app.use((err, _req, res, _next) => {
