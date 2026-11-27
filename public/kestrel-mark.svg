@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Kestrel mark</title>
+  <rect width="48" height="48" rx="12" fill="#D9F05B"/>
+  <path d="M7.5 29.2C13.1 18.1 22.1 10.4 39.9 6.8L31.4 17.1L43 15.6L31.8 25.7L43.4 27.1L29.9 34.2L22.4 31.4L14.2 42L12.7 32.7L7.5 29.2Z" fill="#171A16"/>
+  <path d="M12.4 28.9L27.8 20.5L21.8 28.1L12.4 32.4M18.5 35.4L29.9 29.8L24.5 36.3" fill="none" stroke="#D9F05B" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="31.7" cy="21.1" r="2.05" fill="#F36C45"/>
+</svg>
