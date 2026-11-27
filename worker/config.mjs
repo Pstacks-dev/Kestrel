@@ -78,3 +78,15 @@ export function resolveWorkerExecutor({
   }
   return executor;
 }
+
+
+export function resolveWorkerJobNetwork({
+  nodeEnv = process.env.NODE_ENV || 'production',
+  network = process.env.KESTREL_JOB_NETWORK,
+} = {}) {
+  const resolved = network || (nodeEnv === 'production' ? 'none' : 'bridge');
+  if (!['bridge', 'none'].includes(resolved)) {
+    throw new Error('KESTREL_JOB_NETWORK must be bridge or none');
+  }
+  return resolved;
+}
