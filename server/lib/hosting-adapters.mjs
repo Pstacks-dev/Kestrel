@@ -28,10 +28,12 @@ async function verifyAwsEcs(credentials, fetchImpl, now) {
   const target = 'AmazonEC2ContainerServiceV20141113.ListClusters';
   const contentType = 'application/x-amz-json-1.1';
   const sessionToken = typeof credentials.sessionToken === 'string' ? credentials.sessionToken.trim() : '';
-  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\nx-amz-date:${amzDate}\nx-amz-target:${target}\n`
-    + (sessionToken ? `x-amz-security-token:${sessionToken}\n` : '');
-  const signedHeaders = 'content-type;host;x-amz-date;x-amz-target'
-    + (sessionToken ? ';x-amz-security-token' : '');
+  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\nx-amz-date:${amzDate}\n`
+    + (sessionToken ? `x-amz-security-token:${sessionToken}\n` : '')
+    + `x-amz-target:${target}\n`;
+  const signedHeaders = 'content-type;host;x-amz-date'
+    + (sessionToken ? ';x-amz-security-token' : '')
+    + ';x-amz-target';
   const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
   const scope = `${date}/${region}/ecs/aws4_request`;
   const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, crypto.createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
