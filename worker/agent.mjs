@@ -9,11 +9,12 @@ import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
 import { resolveJobWorkingDirectory } from './working-directory.mjs';
-import { resolveWorkerToken, resolveWorkerConnection } from './config.mjs';
+import { resolveWorkerToken, resolveWorkerConnection, resolveWorkerEgress } from './config.mjs';
 import { createDrainController } from './drain-controller.mjs';
 
 const { api: API, workerId: WORKER_ID } = resolveWorkerConnection();
 const TOKEN = resolveWorkerToken();
+resolveWorkerEgress();
 const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KESTREL_WORKDIR || '.kestrel-worker');
 // When the agent runs in a Compose container with the host Docker socket mounted,
 // the Docker daemon needs the host-side path for bind mounts, not the agent's path.
