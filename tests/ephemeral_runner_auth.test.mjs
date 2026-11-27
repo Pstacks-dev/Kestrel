@@ -72,3 +72,64 @@ test('provision endpoint returns no work and creates no worker when queue is emp
     else process.env.KESTREL_EPHEMERAL_RUNNER_SECRET = previous;
   }
 });
+
+test('provisions a single-use worker only for a queued organization', async () => {
+  const app = createApp();
+  const inserts = [];
+  registerEphemeralRunnerRoutes(app, {
+    query: async () => ({ rowCount: 0, rows: [] }),
+    transaction: async (fn) => fn({
+      async query(sql, params = []) {
+        if (sql.includes('select p.organization_id')) return { rowCount: 1, rows: [{ organization_id: 'org-test' }] };
+        if (sql.includes('insert into public.workers') || sql.includes('insert into public.worker_credentials')) inserts.push({ sql, params });
+        return { rowCount: 1, rows: [] };
+      },
+    }),
+  });
+  const res = response();
+  const previous = process.env.KESTREL_EPHEMERAL_RUNNER_SECRET;
+  process.env.KESTREL_EPHEMERAL_RUNNER_SECRET = 'd'.repeat(48);
+  try {
+    await app.handlers.get('/api/runners/provision')({ headers: { authorization: 'Bearer ' + 'd'.repeat(48) }, body: { hostname: 'runner-1' } }, res);
+    assert.equal(res.statusCode, 201);
+    assert.match(res.body.workerId, /^wrk_[A-Za-z0-9_-]{20,40}$/);
+    assert.equal(res.body.token.length, 43);
+    assert.equal(res.body.maxJobs, 1);
+    assert.equal(inserts.length, 2);
+    assert.equal(inserts[0].params[1], 'org-test');
+    assert.equal(inserts[1].params[0], res.body.workerId);
+    assert.notEqual(inserts[1].params[1], res.body.token);
+  } finally {
+    if (previous === undefined) delete process.env.KESTREL_EPHEMERAL_RUNNER_SECRET;
+    else process.env.KESTREL_EPHEMERAL_RUNNER_SECRET = previous;
+  }
+});
+
+test('retirement disables an ephemeral worker and revokes its credential', async () => {
+  const app = createApp();
+  const statements = [];
+  registerEphemeralRunnerRoutes(app, {
+    query: async () => ({ rowCount: 0, rows: [] }),
+    transaction: async (fn) => fn({
+      async query(sql, params = []) {
+        statements.push({ sql, params });
+        return { rowCount: 1, rows: [{ id: params[0] }] };
+      },
+    }),
+  });
+  const res = response();
+  const workerId = 'wrk_' + 'e'.repeat(24);
+  const previous = process.env.KESTREL_EPHEMERAL_RUNNER_SECRET;
+  process.env.KESTREL_EPHEMERAL_RUNNER_SECRET = 'e'.repeat(48);
+  try {
+    await app.handlers.get('/api/runners/retire')({ headers: { authorization: 'Bearer ' + 'e'.repeat(48) }, body: { workerId } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.retired, true);
+    assert.equal(statements.length, 2);
+    assert.ok(statements[0].sql.includes("desired_state = 'offline'"));
+    assert.ok(statements[1].sql.includes('worker_credentials'));
+  } finally {
+    if (previous === undefined) delete process.env.KESTREL_EPHEMERAL_RUNNER_SECRET;
+    else process.env.KESTREL_EPHEMERAL_RUNNER_SECRET = previous;
+  }
+});
