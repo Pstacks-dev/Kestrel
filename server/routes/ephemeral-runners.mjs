@@ -26,7 +26,7 @@ export function registerEphemeralRunnerRoutes(app, { query, transaction }) {
     try {
       const provisioned = await transaction(async (client) => {
         const runId = String(req.body?.workflowRunId || '');
-        const workflowRunId = /^\\d{1,24}$/.test(runId) ? runId : null;
+        const workflowRunId = /^\d{1,24}$/.test(runId) ? runId : null;
         await client.query(
           `insert into public.execution_backend_heartbeats(backend, last_seen_at, last_result, workflow_run_id, updated_at)
            values ('github-actions', now(), 'polling', $1, now())
