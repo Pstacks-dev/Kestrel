@@ -75,11 +75,14 @@ function go(p: Page) {
 
 function Brand({ light = false }: { light?: boolean }) {
   return (
-    <button className={`brand ${light ? 'brand-light' : ''}`} onClick={() => go('home')}>
-      <span className="brand-mark">
-        <span />
-      </span>
-      <span>
+    <button
+      type="button"
+      className={`brand ${light ? 'brand-light' : ''}`}
+      onClick={() => go('home')}
+      aria-label="Kestrel home"
+    >
+      <img className="brand-mark" src="/kestrel-mark.svg" alt="" aria-hidden="true" />
+      <span className="brand-wordmark">
         kestrel<span className="brand-dot">.</span>
       </span>
     </button>
