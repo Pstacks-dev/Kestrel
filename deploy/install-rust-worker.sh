@@ -89,6 +89,7 @@ KESTREL_CONCURRENCY=$WORKER_CONCURRENCY
 KESTREL_WORKER_WORKDIR=/var/lib/kestrel/work
 KESTREL_JOB_IMAGE=docker.io/library/node:22-bookworm-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb
 KESTREL_JOB_NETWORK=bridge
+KESTREL_EGRESS_HARDENED=true
 EOF
 chown root:kestrel /etc/kestrel/worker.env
 chmod 0640 /etc/kestrel/worker.env
