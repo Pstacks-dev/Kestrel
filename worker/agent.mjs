@@ -9,12 +9,13 @@ import { getDockerHostWorkspacePath } from './docker-paths.mjs';
 import { buildAndPublishOciImage } from '../server/lib/oci-image-builder.mjs';
 import { resolveOciBuildContext } from './oci-context.mjs';
 import { resolveJobWorkingDirectory } from './working-directory.mjs';
-import { resolveWorkerToken, resolveWorkerConnection, resolveWorkerEgress } from './config.mjs';
+import { resolveWorkerToken, resolveWorkerConnection, resolveWorkerEgress, resolveWorkerExecutor } from './config.mjs';
 import { createDrainController } from './drain-controller.mjs';
 
 const { api: API, workerId: WORKER_ID } = resolveWorkerConnection();
 const TOKEN = resolveWorkerToken();
 resolveWorkerEgress();
+const EXECUTOR = resolveWorkerExecutor();
 const ROOT = path.resolve(process.env.KESTREL_WORKER_WORKDIR || process.env.KESTREL_WORKDIR || '.kestrel-worker');
 // When the agent runs in a Compose container with the host Docker socket mounted,
 // the Docker daemon needs the host-side path for bind mounts, not the agent's path.
@@ -24,7 +25,7 @@ const CONCURRENCY = Math.max(1, Math.min(32, Number(process.env.KESTREL_CONCURRE
 const DOCKER = process.env.KESTREL_DOCKER_BIN || 'docker';
 const JOB_IMAGE = process.env.KESTREL_JOB_IMAGE || 'node:22-bookworm-slim';
 const JOB_NETWORK = process.env.KESTREL_JOB_NETWORK === 'none' ? 'none' : 'bridge';
-const EXECUTOR = process.env.KESTREL_WORKER_EXECUTOR || 'docker'; // 'docker' | 'local' | 'mock'
+// Executor is validated before any worker polling begins.
 
 if (process.env.NODE_ENV === 'production' && !/@sha256:[a-f0-9]{64}$/i.test(JOB_IMAGE) && EXECUTOR === 'docker') {
   throw new Error('Production workers require KESTREL_JOB_IMAGE pinned by immutable sha256 digest');
