@@ -33,8 +33,19 @@ test('mints an installation token scoped to one repository', async () => {
 });
 
 test('rejects invalid installation and repository identifiers before network access', async () => {
-  await assert.rejects(() => createGitHubInstallationToken('x', { config, fetchImpl: () => assert.fail('network must not run') }));
-  await assert.rejects(() => createGitHubInstallationToken('1', { repository: 'https://github.com/acme/app', config, fetchImpl: () => assert.fail('network must not run') }));
+  for (const installationId of ['x', '0', '-1', '9223372036854775808']) {
+    await assert.rejects(() => createGitHubInstallationToken(installationId, {
+      config, fetchImpl: () => assert.fail('network must not run'),
+    }), /Invalid GitHub installation ID/);
+    await assert.rejects(() => getGitHubInstallation(installationId, {
+      config, fetchImpl: () => assert.fail('network must not run'),
+    }), /Invalid GitHub installation ID/);
+  }
+  await assert.rejects(() => createGitHubInstallationToken('1', {
+    repository: 'https://github.com/acme/app',
+    config,
+    fetchImpl: () => assert.fail('network must not run'),
+  }));
 });
 
 test('looks up an installation with an App JWT', async () => {
