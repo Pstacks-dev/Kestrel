@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { isEphemeralRunnerAuthorized, registerEphemeralRunnerRoutes } from '../server/routes/ephemeral-runners.mjs';
 
 function createApp() {
@@ -132,6 +133,16 @@ test('retirement disables an ephemeral worker and revokes its credential', async
     if (previous === undefined) delete process.env.KESTREL_EPHEMERAL_RUNNER_SECRET;
     else process.env.KESTREL_EPHEMERAL_RUNNER_SECRET = previous;
   }
+});
+
+test('workflow keeps one-time worker tokens out of global GitHub Actions environment', async () => {
+  const provision = await readFile(new URL('../scripts/provision-ephemeral-runner.mjs', import.meta.url), 'utf8');
+  const workflow = await readFile(new URL('../.github/workflows/ephemeral-runners.yml', import.meta.url), 'utf8');
+  assert.match(provision, /mode: 0o600/);
+  assert.match(provision, /kestrel-worker\\.env/);
+  assert.doesNotMatch(provision, /GITHUB_ENV/);
+  assert.match(workflow, /source "\$RUNNER_TEMP\\/kestrel-worker\\.env"/);
+  assert.match(workflow, /rm -f "\$RUNNER_TEMP\\/kestrel-worker\\.env"/);
 });
 
 test('ephemeral runner entrypoints and control-plane modules pass Node syntax checks', async () => {
