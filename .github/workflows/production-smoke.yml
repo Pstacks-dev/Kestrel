@@ -28,6 +28,6 @@ jobs:
 
       - name: Check public health and worker readiness
         env:
-          KESTREL_PRODUCTION_URL: ${{ secrets.KESTREL_PRODUCTION_URL }}
+          KESTREL_PRODUCTION_URL: ${{ secrets.KESTREL_PRODUCTION_URL || 'https://kestrel-ci-cd.vercel.app' }}
           KESTREL_SMOKE_TIMEOUT_MS: '15000'
         run: npm run production:smoke
