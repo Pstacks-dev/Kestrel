@@ -339,7 +339,8 @@ app.get('/api/ready', async (_req, res) => {
       to_regclass('public.jobs') is not null as jobs,
       to_regclass('public.managed_hosting_deployments') is not null as deployments,
       to_regclass('public.managed_hosting_image_builds') is not null as image_builds,
-      to_regclass('public.managed_hosting_automation_queue') is not null as automation_queue`);
+      to_regclass('public.managed_hosting_automation_queue') is not null as automation_queue,
+      exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'workers' and column_name = 'ephemeral') as ephemeral_runner_schema`);
     const schemaReady = Object.values(schema.rows[0] || {}).every(Boolean);
     if (!schemaReady) {
       return res.status(503).json({
