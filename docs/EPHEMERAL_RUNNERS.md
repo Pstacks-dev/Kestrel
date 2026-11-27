@@ -16,6 +16,7 @@ Configure the following values only after the control-plane deployment is ready:
 In `Pstacks-dev/Kestrel`:
 
 - Actions variable `KESTREL_API_URL`: `https://kestrel-ci-cd.vercel.app`
+- Actions variable `KESTREL_EPHEMERAL_RUNNERS_ENABLED`: `true` (leave unset until the database migration and both secrets are configured)
 - Actions secret `KESTREL_EPHEMERAL_RUNNER_SECRET`: the exact same random secret configured in Vercel.
 
 The workflow is `.github/workflows/ephemeral-runners.yml`. It checks the queue every five minutes and can also be started manually from the Actions tab. It uses only GitHub-hosted `ubuntu-latest` standard runners, one runner at a time, and provisions a single-use worker credential only when a queued job has no healthy persistent worker.
