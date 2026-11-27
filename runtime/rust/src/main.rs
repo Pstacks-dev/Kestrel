@@ -87,9 +87,9 @@ fn validate_worker_connection(node_env: &str, api: &str, worker_id: &str, explic
 
 fn resolve_job_network(node_env: &str, requested: &str, egress_hardened: &str) -> Result<String> {
     anyhow::ensure!(matches!(requested, "bridge" | "none"), "KESTREL_JOB_NETWORK must be either bridge or none");
-    if node_env == "production" && requested == "bridge" {
+    if node_env == "production" {
         anyhow::ensure!(egress_hardened == "true",
-            "production bridge networking requires the Docker egress firewall and KESTREL_EGRESS_HARDENED=true");
+            "production Rust workers require the Docker egress firewall and KESTREL_EGRESS_HARDENED=true");
     }
     Ok(requested.to_string())
 }
@@ -782,8 +782,9 @@ mod tests {
 
     #[test]
     fn production_job_network_requires_egress_hardening() {
-        assert_eq!(resolve_job_network("production", "none", "").unwrap(), "none");
+        assert!(resolve_job_network("production", "none", "").is_err());
         assert!(resolve_job_network("production", "bridge", "").is_err());
+        assert_eq!(resolve_job_network("production", "none", "true").unwrap(), "none");
         assert_eq!(resolve_job_network("production", "bridge", "true").unwrap(), "bridge");
         assert!(resolve_job_network("production", "host", "true").is_err());
     }
