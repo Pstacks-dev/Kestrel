@@ -4,11 +4,13 @@ import { runProductionSmoke } from '../server/lib/production-smoke.mjs';
 
 test('production smoke verifies liveness and readiness endpoints', async () => {
   const calls = [];
+  const requestOptions = [];
   const result = await runProductionSmoke({
     productionUrl: 'https://kestrel.example.com',
     now: new Date('2026-11-26T12:00:00.000Z'),
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, options) => {
       calls.push(String(url));
+      requestOptions.push(options);
       if (String(url).endsWith('/api/health')) {
         return new Response(JSON.stringify({
           ok: true, service: 'kestrel-control-plane', database: 'connected',
@@ -28,6 +30,7 @@ test('production smoke verifies liveness and readiness endpoints', async () => {
     'https://kestrel.example.com/api/ready',
   ]);
   assert.equal(result.results[1].workers.online, 2);
+  assert.deepEqual(requestOptions.map((options) => options.redirect), ['error', 'error']);
 });
 
 test('production smoke fails closed when worker readiness is degraded', async () => {
@@ -59,4 +62,17 @@ test('production smoke enforces bounded request timeouts', async () => {
     productionUrl: 'https://kestrel.example.com',
     timeoutMs: 100,
   }), /between 1000 and 60000/);
+});
+
+
+test('production smoke fails closed when an endpoint redirects', async () => {
+  let requestOptions;
+  await assert.rejects(runProductionSmoke({
+    productionUrl: 'https://kestrel.example.com',
+    fetchImpl: async (_url, options) => {
+      requestOptions = options;
+      throw new TypeError('redirect mode is error');
+    },
+  }), /redirect mode is error/);
+  assert.equal(requestOptions.redirect, 'error');
 });
