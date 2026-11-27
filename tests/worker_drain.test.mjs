@@ -95,7 +95,7 @@ test('clears the force-exit timer after all executions drain normally', () => {
 
 test('starts and awaits managed OCI build polling and tracks claimed jobs from checkout onward', async () => {
   const source = await readFile(new URL('../worker/agent.mjs', import.meta.url), 'utf8');
-  assert.match(source, /const managedImageBuildTask = EXECUTOR === 'docker' \? managedImageBuildLoop\(\) : Promise\.resolve\(\)/);
+  assert.match(source, /const managedImageBuildTask = EXECUTOR === 'docker' && process\\.env\\.KESTREL_WORKER_DISABLE_MANAGED_IMAGE_BUILDS !== 'true' \\? managedImageBuildLoop\\(\\) : Promise\\.resolve\\(\\)/);
   assert.match(source, /await managedImageBuildTask/);
   assert.match(source, /activeJobs\.set\(job\.id, \{ abortController \}\)/);
   assert.match(source, /activeJobs\.delete\(job\.id\)/);
