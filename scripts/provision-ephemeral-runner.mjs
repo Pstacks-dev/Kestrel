@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 const api = String(process.env.KESTREL_API_URL || '').replace(/\/+$/, '');
 const secret = process.env.KESTREL_EPHEMERAL_RUNNER_SECRET || '';
@@ -19,13 +20,19 @@ if (response.status === 204) {
 }
 if (!response.ok) throw new Error('Kestrel runner provisioning failed: HTTP ' + response.status);
 const result = await response.json();
-if (!result.ok || !/^wrk_[A-Za-z0-9_-]{20,40}$/.test(result.workerId) || typeof result.token !== 'string' || result.token.length < 32) {
+if (!result.ok || !/^wrk_[A-Za-z0-9_-]{20,40}$/.test(result.workerId) || typeof result.token !== 'string' || result.token.length < 32 || /[\r\n]/.test(result.token)) {
   throw new Error('Kestrel returned an invalid ephemeral worker credential');
 }
+
+const runnerTemp = process.env.RUNNER_TEMP;
+if (!runnerTemp || !path.isAbsolute(runnerTemp)) throw new Error('RUNNER_TEMP must be an absolute path');
+const credentialFile = path.join(runnerTemp, 'kestrel-worker.env');
 console.log('::add-mask::' + result.token);
-await fs.appendFile(process.env.GITHUB_ENV, [
+await fs.writeFile(credentialFile, [
   'KESTREL_WORKER_ID=' + result.workerId,
   'KESTREL_WORKER_TOKEN=' + result.token,
-].join('\n') + '\n');
+  '',
+].join('\n'), { mode: 0o600, flag: 'wx' });
+await fs.chmod(credentialFile, 0o600);
 await fs.appendFile(process.env.GITHUB_OUTPUT, 'has_work=true\n');
-console.log('Provisioned one short-lived worker for a queued build.');
+console.log('Provisioned one short-lived worker; credentials are isolated from later Actions steps.');
