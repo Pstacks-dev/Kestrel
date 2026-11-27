@@ -1,0 +1,69 @@
+name: Kestrel ephemeral build runners
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kestrel-ephemeral-build-runners
+  cancel-in-progress: false
+
+jobs:
+  runner:
+    name: Execute one queued build on an ephemeral GitHub-hosted runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout trusted Kestrel runtime
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Kestrel runtime dependencies
+        run: npm ci
+
+      - name: Harden Docker job egress
+        run: sudo bash deploy/harden-worker-egress.sh
+
+      - name: Provision one-time worker credentials
+        id: provision
+        env:
+          KESTREL_API_URL: ${{ vars.KESTREL_API_URL }}
+          KESTREL_EPHEMERAL_RUNNER_SECRET: ${{ secrets.KESTREL_EPHEMERAL_RUNNER_SECRET }}
+        run: node scripts/provision-ephemeral-runner.mjs
+
+      - name: Execute one queued build
+        if: steps.provision.outputs.has_work == 'true'
+        env:
+          NODE_ENV: production
+          KESTREL_API_URL: ${{ vars.KESTREL_API_URL }}
+          KESTREL_WORKER_EXECUTOR: docker
+          KESTREL_WORKER_ID: ${{ env.KESTREL_WORKER_ID }}
+          KESTREL_WORKER_TOKEN: ${{ env.KESTREL_WORKER_TOKEN }}
+          KESTREL_EGRESS_HARDENED: 'true'
+          KESTREL_JOB_NETWORK: bridge
+          KESTREL_WORKER_MAX_JOBS: '1'
+          KESTREL_WORKER_DISABLE_MANAGED_IMAGE_BUILDS: 'true'
+          KESTREL_JOB_IMAGE: docker.io/library/node:22-bookworm-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb
+          KESTREL_WORKDIR: ${{ runner.temp }}/kestrel-work
+          KESTREL_WORKER_WORKDIR: ${{ runner.temp }}/kestrel-work
+          KESTREL_CONCURRENCY: '1'
+        run: npm run start:worker
+
+      - name: Retire ephemeral worker and revoke its credential
+        if: always() && steps.provision.outputs.has_work == 'true'
+        env:
+          KESTREL_API_URL: ${{ vars.KESTREL_API_URL }}
+          KESTREL_EPHEMERAL_RUNNER_SECRET: ${{ secrets.KESTREL_EPHEMERAL_RUNNER_SECRET }}
+          KESTREL_WORKER_ID: ${{ env.KESTREL_WORKER_ID }}
+        run: node scripts/retire-ephemeral-runner.mjs
