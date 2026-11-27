@@ -7,6 +7,11 @@ function fail(res, status, error) {
   return res.status(status).json({ error });
 }
 
+export function validSecretNames(value) {
+  return Array.isArray(value) && value.length <= 50 &&
+    value.every((name) => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name));
+}
+
 export function validPublicUrl(value) {
   if (!value) return null;
   try {
@@ -155,7 +160,7 @@ export function registerDeploymentRoutes(app, { userAuth, query, transaction }) 
     if (!Number.isInteger(Number(healthTimeoutSeconds)) || Number(healthTimeoutSeconds) < 5 || Number(healthTimeoutSeconds) > 300) return fail(res, 400, 'Health timeout must be between 5 and 300 seconds');
     const normalizedUrl = publicUrl ? validPublicUrl(publicUrl) : null;
     if (publicUrl && !normalizedUrl) return fail(res, 400, 'Public URL must be a valid HTTP or HTTPS URL without credentials');
-    if (!Array.isArray(secretNames) || secretNames.length > 50 || secretNames.some((v) => typeof v !== 'string' || !/^[A-Za-z0-9_]{1,128}$/.test(v))) {
+    if (!validSecretNames(secretNames)) {
       return fail(res, 400, 'Secret names must be valid environment variable names');
     }
 
