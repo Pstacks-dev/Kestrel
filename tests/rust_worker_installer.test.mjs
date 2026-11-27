@@ -29,7 +29,8 @@ test('manual Docker worker example pins the job image and documents network prer
   const workerUnit = await readFile(workerUnitUrl, 'utf8');
   assert.match(envExample, /KESTREL_JOB_IMAGE=docker\.io\/library\/node:22-bookworm-slim@sha256:[a-f0-9]{64}/);
   assert.match(envExample, /KESTREL_JOB_NETWORK=none/);
-  assert.match(envExample, /install and enable/);
+  assert.match(envExample, /deploy\/kestrel-worker-egress\.service/);
+  assert.match(envExample, /KESTREL_EGRESS_HARDENED=true/);
   assert.match(workerUnit, /ExecStart=\/usr\/local\/sbin\/kestrel-harden-worker-egress/);
 });
 
